@@ -8,7 +8,8 @@ id_ed25519*
 id_rsa*
 user_password.txt
 user_password.hash
-custom.toml            # contains the Wi-Fi PSK
+# custom.toml holds the derived Wi-Fi PSK
+custom.toml
 known_hosts
 ssh_config
 
