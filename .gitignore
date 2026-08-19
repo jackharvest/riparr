@@ -1,0 +1,26 @@
+# ── Secrets — never commit ────────────────────────────────────────────
+# Build assets live in ~/riparr-build/ (deliberately outside this repo).
+# These patterns are belt-and-braces in case anything is ever copied in.
+riparr_key
+riparr_key.pub
+*.pem
+id_ed25519*
+id_rsa*
+user_password.txt
+user_password.hash
+custom.toml            # contains the Wi-Fi PSK
+known_hosts
+ssh_config
+
+# ── Large binaries ────────────────────────────────────────────────────
+*.img
+*.img.xz
+*.zip
+
+# ── Python ────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+
+# ── macOS ─────────────────────────────────────────────────────────────
+.DS_Store

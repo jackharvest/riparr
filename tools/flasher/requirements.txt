@@ -1,0 +1,5 @@
+# Required
+passlib>=1.7            # SHA-512 crypt; macOS crypt(3) silently emits DES instead
+
+# Optional but strongly recommended on macOS
+pyobjc-framework-CoreWLAN>=10   # live Wi-Fi scan with SSID, band and signal
