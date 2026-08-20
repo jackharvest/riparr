@@ -355,7 +355,27 @@ def run(args):
         # the ext4 root filesystem directly. See tools/preparer/armbian.py for why
         # Armbian's own PRESET_* mechanism cannot be used on a headless box.
         publish(st, phase="provision", message="Applying your settings")
-        rootpart = "%ss%d" % (rdev, partno)
+
+        # After a raw whole-disk write, macOS has to notice the new partition table
+        # before /dev/*s1 exists. It usually rescans when the device is closed, but not
+        # always instantly, and provisioning a node that is not there yet would fail for
+        # a reason nobody could act on.
+        base = "%ss%d" % (dev, partno)          # buffered, e.g. /dev/disk4s1
+        raw = "%ss%d" % (rdev, partno)          # raw, e.g. /dev/rdisk4s1
+        for attempt in range(20):
+            if os.path.exists(base) or os.path.exists(raw):
+                break
+            if attempt == 4:
+                # Nudge the kernel into re-reading the partition table.
+                subprocess.run(["diskutil", "list", dev], capture_output=True)
+            time.sleep(0.5)
+        else:
+            publish(st, phase="error",
+                    message="The card was written, but its partitions never appeared.",
+                    detail="Expected %s. Unplug and replug the card, then try again."
+                           % base)
+            return 1
+
         try:
             import armbian
             port = 9797
@@ -364,7 +384,23 @@ def run(args):
                     if line.startswith("RIPARR_PORT="):
                         port = int(line.split("=", 1)[1].strip())
             cfg = armbian.cfg_from_custom_toml(args.toml, port)
-            armbian.provision(rootpart, cfg)
+
+            # Prefer the raw node -- it is much faster for the MakeMKV copy -- but fall
+            # back to the buffered one. Raw devices on macOS demand aligned IO, and this
+            # path has never been exercised on hardware, so it does not get to be the
+            # single point of failure.
+            rootpart = None
+            first_err = None
+            for cand in ([raw] if os.path.exists(raw) else []) + \
+                        ([base] if os.path.exists(base) else []):
+                try:
+                    armbian.provision(cand, cfg)
+                    rootpart = cand
+                    break
+                except Exception as e:
+                    first_err = first_err or e
+            if rootpart is None:
+                raise first_err or RuntimeError("no usable partition device")
 
             failed = [lbl for lbl, ok, _ in armbian.verify(rootpart, cfg) if not ok]
             if failed:

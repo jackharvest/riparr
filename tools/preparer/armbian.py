@@ -62,6 +62,12 @@ def _run(debugfs, target, script):
     return out
 
 
+def _run_lenient(debugfs, target, script):
+    """Run commands whose failure is expected and fine -- deleting what may not exist."""
+    subprocess.run([debugfs, "-w", "-f", "/dev/stdin", target],
+                   input=script, capture_output=True, text=True)
+
+
 def _put(tmpdir, name, content):
     path = os.path.join(tmpdir, name)
     with open(path, "w") as f:
@@ -147,7 +153,9 @@ def copy_makemkv(target, srcdir, debugfs=None):
     names = sorted(n for n in os.listdir(srcdir) if n.endswith(".tar.gz"))
     if not names:
         return []
-    lines = ["mkdir /root/makemkv", "sif /root/makemkv mode 040755",
+    _run_lenient(debugfs, target,
+                 "".join("rm /root/makemkv/%s\n" % n for n in names) + "mkdir /root/makemkv\n")
+    lines = ["sif /root/makemkv mode 040755",
              "sif /root/makemkv uid 0", "sif /root/makemkv gid 0"]
     for n in names:
         lines += ["write %s /root/makemkv/%s" % (os.path.join(srcdir, n), n),
@@ -185,15 +193,25 @@ def provision(target, cfg, debugfs=None):
                       "RIPARR_PORT=%d\nRIPARR_HOSTNAME=%s\n"
                       % (int(cfg.get("port", 9797)), cfg["hostname"]))
 
-        # rm before write: debugfs will not overwrite an existing name.
+        # debugfs `write` refuses to overwrite an existing name, so everything is
+        # unlinked first. This pass is allowed to fail -- on a fresh card most of these
+        # do not exist yet -- and running it makes provisioning idempotent, so a retry
+        # after a partial failure works instead of dying on "File exists".
+        targets = ["/etc/hostname", "/etc/hosts",
+                   "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf",
+                   "/etc/systemd/network/10-wlan0.network",
+                   "/etc/systemd/system/multi-user.target.wants/wpa_supplicant@wlan0.service",
+                   "/root/.ssh/authorized_keys", "/boot/riparr.conf",
+                   "/root/.not_logged_in_yet"]
+        _run_lenient(debugfs, target, "".join("rm %s\n" % t for t in targets))
+        _run_lenient(debugfs, target, "mkdir /root/.ssh\n")   # fine if it already exists
+
         script = """
-rm /etc/hostname
 write {host} /etc/hostname
 sif /etc/hostname mode 0100644
 sif /etc/hostname uid 0
 sif /etc/hostname gid 0
 
-rm /etc/hosts
 write {hosts} /etc/hosts
 sif /etc/hosts mode 0100644
 sif /etc/hosts uid 0
@@ -211,7 +229,6 @@ sif /etc/systemd/network/10-wlan0.network gid 0
 
 symlink /etc/systemd/system/multi-user.target.wants/wpa_supplicant@wlan0.service /lib/systemd/system/wpa_supplicant@.service
 
-mkdir /root/.ssh
 sif /root/.ssh mode 040700
 sif /root/.ssh uid 0
 sif /root/.ssh gid 0
@@ -224,8 +241,6 @@ write {conf} /boot/riparr.conf
 sif /boot/riparr.conf mode 0100644
 sif /boot/riparr.conf uid 0
 sif /boot/riparr.conf gid 0
-
-rm /root/.not_logged_in_yet
 """.format(host=f_host, hosts=f_hosts, wpa=f_wpa, net=f_net, keys=f_keys, conf=f_conf)
         return _run(debugfs, target, script)
     finally:
