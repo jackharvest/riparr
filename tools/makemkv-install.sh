@@ -137,9 +137,33 @@ mkdir -p tmp && echo accepted > tmp/eula_accepted
 sudo make install
 
 echo "=== 3. Verify ==="
-which makemkvcon
-ldd "$(which makemkvcon)" | sed 's/^/    /'
-makemkvcon --version 2>&1 | head -3 | tee "$LOG/makemkv-version.txt"
+BIN_PATH="$(command -v makemkvcon || echo /usr/bin/makemkvcon)"
+[ -x "$BIN_PATH" ] || { echo "makemkvcon was not installed"; exit 1; }
+echo "    $BIN_PATH"
+ldd "$BIN_PATH" | sed 's/^/    /'
+
+# makemkvcon has no --version and no --help: it exits non-zero and prints usage, which
+# under `set -e` used to abort the script *after* a completely successful build. And
+# there is no cheap way to ask a running makemkvcon either — `-r info disc:99` blocks
+# for 20+ seconds enumerating drives, and the version strings inside the binary belong
+# to bundled libraries, not to MakeMKV.
+#
+# So record it here, where it is already known from the tarball, for anything that
+# wants to display it without paying that cost.
+install -d -m 0755 /usr/local/lib/riparr
+printf '%s\n' "$VER" > /usr/local/lib/riparr/makemkv.version
+chmod 0644 /usr/local/lib/riparr/makemkv.version
+
+# Reaching this line required --accept-eula, so this file records the fact that the
+# installed binary was installed under an accepted licence. The old check looked for
+# ~/.MakeMKV/eula_accepted, which MakeMKV does not create — the bin package's Makefile
+# gate is a different file in the build directory — so it was always false, and the
+# interface kept asking for consent that had already been given.
+printf 'accepted %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  > /usr/local/lib/riparr/makemkv.eula
+chmod 0644 /usr/local/lib/riparr/makemkv.eula
+echo "    version $VER (recorded in /usr/local/lib/riparr/makemkv.version)"
+printf '%s\n' "$VER" > "$LOG/makemkv-version.txt"
 
 echo
 echo "=== 4. Peak memory of a real operation (R1 measurement) ==="

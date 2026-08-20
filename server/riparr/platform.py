@@ -213,22 +213,45 @@ def makemkv_status():
     installed = os.path.exists(binary)
     ver = _makemkv_version(binary) if installed else None
     return {"installed": installed, "version": ver,
-            "eula_accepted": os.path.exists(
-                os.path.expanduser("~/.MakeMKV/eula_accepted")),
+            "eula_accepted": _makemkv_eula_accepted(),
             "key_type": None, "key_expires": None, "days_left": None}
 
 
 _version_cache = {}
 
 
-def _makemkv_version(binary):
-    """The version, read without going near the drive.
+VERSION_FILE = "/usr/local/lib/riparr/makemkv.version"
+EULA_FILE = "/usr/local/lib/riparr/makemkv.eula"
 
-    `makemkvcon -r info` would also print it — and would enumerate every optical device
-    to do so, which is a real drive access and a real memory spike on a 512MB board. The
-    status page polls, so that cost would be paid every few seconds and would collide
-    with a rip in progress. `--version` only prints the banner, and the answer cannot
-    change until the binary does, so it is cached against the binary's mtime.
+
+def _makemkv_eula_accepted():
+    """Whether the installed MakeMKV was installed under an accepted licence.
+
+    This used to look for ~/.MakeMKV/eula_accepted, which MakeMKV never creates — the
+    bin package's Makefile gate is a differently named file inside the build directory,
+    and it is gone once the build is. So this was always False, and the interface went
+    on asking for consent that had already been given and recorded.
+
+    Our installer cannot run without --accept-eula, so it writes EULA_FILE at the point
+    the user's consent was acted on. The legacy path is still honoured for a MakeMKV
+    that arrived some other way.
+    """
+    return (os.path.exists(EULA_FILE)
+            or os.path.exists(os.path.expanduser("~/.MakeMKV/eula_accepted")))
+
+
+def _makemkv_version(binary):
+    """The version, without running makemkvcon at all.
+
+    There is no cheap way to ask the binary. It has no --version and no --help — both
+    print usage and exit non-zero. `-r info disc:99` does print the banner, but it
+    enumerates every optical device first and blocks for 20+ seconds doing it, which is
+    impossible for an endpoint the status page polls and would collide with a rip. The
+    version strings inside the executable belong to bundled libraries, not to MakeMKV.
+
+    So the installer records it at install time, when it is already known from the
+    tarball name. A MakeMKV installed some other way has no such file; report the
+    version as unknown rather than paying 20 seconds to find out.
     """
     try:
         key = (binary, os.path.getmtime(binary))
@@ -236,9 +259,13 @@ def _makemkv_version(binary):
         return None
     if key in _version_cache:
         return _version_cache[key]
-    out = _run([binary, "--version"], timeout=5) or ""
-    m = re.search(r"MakeMKV v([\d.]+)", out)
-    ver = m.group(1) if m else None
+    ver = None
+    try:
+        with open(VERSION_FILE) as f:
+            m = re.match(r"\s*v?([\d.]+)", f.read())
+            ver = m.group(1) if m else None
+    except OSError:
+        pass
     _version_cache.clear()
     _version_cache[key] = ver
     return ver
