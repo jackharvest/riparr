@@ -80,14 +80,45 @@ def _unmount(dev):
     return False, ("Volumes on %s are still mounted after ten seconds." % dev)
 
 
+def _responsible_app():
+    """The application macOS holds responsible for what this process does.
+
+    TCC attributes consent to the nearest enclosing .app bundle up the process tree, so
+    that is the one the user has to grant — naming it saves them guessing which of the
+    dozen entries in the list matters.
+    """
+    pid, found = os.getpid(), None
+    for _ in range(12):
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        if not out:
+            break
+        parent, _, comm = out.partition(" ")
+        if ".app/Contents/MacOS/" in comm:
+            # Keep walking rather than returning here: an interpreter run from a
+            # terminal sits inside Python.app, which owns no consent. The application
+            # that matters is the outermost one, nearest launchd.
+            found = comm.split(".app/")[0].rsplit("/", 1)[-1] + ".app"
+        try:
+            pid = int(parent)
+        except ValueError:
+            break
+        if pid <= 1:
+            break
+    return found or "the application you launched this from"
+
+
 def _explain(err, xerr, rc, rdev):
     """Turn a terse dd failure into something the user can act on."""
     blob = (str(err) + " " + str(xerr)).lower()
     if "operation not permitted" in blob or "not permitted" in blob:
         return ("macOS blocked access to %s.\n\n"
-                "Raw disk access needs Full Disk Access for the program that launched "
-                "this write. Grant it in System Settings > Privacy & Security > Full "
-                "Disk Access, then try again.\n\n%s" % (rdev, err or "(no detail)"))
+                "This is a privacy refusal, not a file permission — running as root "
+                "does not lift it. macOS grants disk access to the *application* the "
+                "write is attributed to, which here is %s.\n\n"
+                "Grant it in System Settings > Privacy & Security > Full Disk Access, "
+                "quit that application completely, reopen it and run this again.\n\n%s"
+                % (rdev, _responsible_app(), err or "(no detail)"))
     if "resource busy" in blob or "busy" in blob or "errno 16" in blob:
         return ("%s is still in use.\n\nThe card had not finished unmounting. Eject it "
                 "in Finder, re-insert it, and try again.\n\n%s" % (rdev, err or ""))

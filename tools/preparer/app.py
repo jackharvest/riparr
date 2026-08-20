@@ -158,7 +158,17 @@ class Bridge:
 
     def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv="",
                         conf=""):
-        """One authorization dialog covers write, provision and eject."""
+        """One authorization dialog covers write, provision and eject.
+
+        Elevation is `sudo -A`, deliberately, and not osascript's `with administrator
+        privileges`. The latter runs the helper through security_authtrampoline, which
+        re-parents it away from the launching application — and macOS attributes disk
+        and removable-volume consent to the *responsible* application, not to the user
+        and not to root. A trampolined helper therefore inherits no consent at all and
+        is refused with EPERM on /dev/rdiskN even as root, while the terminal it was
+        launched from can write the very same card. sudo keeps the writer a direct
+        descendant, so the consent that is already granted still applies.
+        """
         script = os.path.join(RUNDIR, "write.sh")
         with open(script, "w") as f:
             f.write("#!/bin/sh\nexec %s %s --image %s --dev %s --toml %s "
@@ -171,13 +181,27 @@ class Bridge:
                         + ((" --conf " + _q(conf)) if conf else "")))
         os.chmod(script, 0o700)
 
-        osa = ('do shell script "/bin/sh %s" '
-               'with prompt "Riparr needs permission to write to your SD card." '
-               'with administrator privileges' % script.replace('\\', '\\\\').replace('"', '\\"'))
-        p = subprocess.run(["osascript", "-e", osa], capture_output=True, text=True)
+        # sudo asks for the password up to three times. The sentinel makes a cancelled
+        # dialog cancel the whole write instead of asking twice more.
+        cancel = os.path.join(RUNDIR, "cancelled")
+        askpass = os.path.join(RUNDIR, "askpass.sh")
+        with open(askpass, "w") as f:
+            f.write(
+                '#!/bin/sh\n'
+                '[ -f %s ] && exit 1\n'
+                'pw=$(osascript -e \'display dialog "Riparr needs permission to write '
+                'to your SD card." with title "Riparr Preparer" default answer "" '
+                'with hidden answer with icon caution\' -e \'text returned of result\' '
+                '2>/dev/null) || { : > %s; exit 1; }\n'
+                'printf %%s "$pw"\n' % (_q(cancel), _q(cancel)))
+        os.chmod(askpass, 0o700)
+
+        env = dict(os.environ, SUDO_ASKPASS=askpass)
+        p = subprocess.run(["sudo", "-A", "/bin/sh", script],
+                           capture_output=True, text=True, env=env)
         if p.returncode != 0:
             err = (p.stderr or "").strip()
-            if "-128" in err or "User canceled" in err:
+            if os.path.exists(cancel):
                 core_publish(self.progress_path, phase="cancelled",
                              message="Cancelled. Nothing was written to the card.")
             else:
@@ -186,7 +210,7 @@ class Bridge:
                 if cur.get("phase") not in ("error", "done"):
                     core_publish(self.progress_path, phase="error",
                                  message="Could not get permission to write the card.",
-                                 detail=err)
+                                 detail=err or "sudo exited %d." % p.returncode)
 
     def write_status(self):
         try:
