@@ -47,18 +47,19 @@ Last working session: **2026-08-20**
 | | |
 |---|---|
 | **Prepare a card** | `~/riparr-build/prepare` — native macOS window, no terminal |
+| **Set the box up** | the same window, once it's plugged in — no terminal either ([how](tools/preparer/README.md)) |
 | **Find the box** | `tools/find-riparr.sh` — when `riparr.local` will not resolve |
 | **Diagnose a card** | `sudo bash tools/card-report.sh` — **from Terminal.app** ([why](JOURNAL.md)) |
-| **Install on the box** | copy the repo across, then `sudo bash tools/install.sh` |
+| **Install by hand** | copy the repo across, then `sudo bash tools/install.sh` |
 | **Reach it** | `http://riparr.local:9797` — [why 9797](DECISIONS.md) |
 | **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-board) |
 | **Needs** | `brew install e2fsprogs` — the Preparer writes config into ext4 with `debugfs` |
 
-**The next action is not code.** It is re-writing the card so it picks up the mDNS and
-logging fixes, then booting and logging in. [`JOURNAL.md`](JOURNAL.md) has the exact
-steps, and `tools/find-riparr.sh` will locate the box if the name still does not resolve.
+**Riparr runs on the board.** The whole path — write a card, plug it in, and have the
+Preparer find the box and install itself — works end to end and needs no terminal at
+any point. `http://riparr.local:9797` answers.
 
-After that, the week-one hardware validation in
+**The next action is the week-one hardware validation** in
 [`docs/design/risks.md`](docs/design/risks.md):
 
 1. **Does MakeMKV run on an Allwinner H618 with 1 GB?** (R1) Still aarch64, so the

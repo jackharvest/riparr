@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install or upgrade Riparr on a Raspberry Pi.
+# Install or upgrade Riparr on the appliance.
 #
 #   curl -fsSL https://raw.githubusercontent.com/jackharvest/riparr/main/tools/install.sh | sudo bash
 #
@@ -49,7 +49,9 @@ export DEBIAN_FRONTEND=noninteractive
 MISSING=()
 # avahi-daemon is what makes http://<hostname>.local resolve. Raspberry Pi OS Lite
 # usually has it, but "usually" is not good enough for the one address we print.
-for pkg in python3-venv python3-pip git ca-certificates avahi-daemon; do
+# Armbian ships no avahi at all, which is why the Preparer switches on the
+# systemd-resolved responder instead — see the handoff below.
+for pkg in python3-venv python3-pip git ca-certificates avahi-daemon avahi-utils; do
   dpkg -s "$pkg" >/dev/null 2>&1 || MISSING+=("$pkg")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -58,6 +60,56 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   apt-get install -y -qq "${MISSING[@]}" >/dev/null
 fi
 systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
+
+# ── hand the .local name from systemd-resolved to avahi ──
+# The Preparer turns on resolved's mDNS responder so the box is reachable by name
+# *before* Riparr exists — the setup that gets us here depends on it. Installing
+# avahi puts a second responder on UDP 5353 for the same name. Both answer, both
+# answer correctly today, and either can decide tomorrow that the other is a name
+# conflict and rename itself to riparr-2.local — silently breaking the one address
+# this script prints.
+#
+# So: one owner. avahi wins because it also publishes service records, which
+# resolved does not. The handoff is guarded — resolved keeps the name unless avahi
+# is demonstrably answering, because a box that is nameless is much worse than a
+# box with a redundant responder.
+if systemctl is-active --quiet avahi-daemon && command -v avahi-resolve >/dev/null 2>&1; then
+  if avahi-resolve -n "$(hostname).local" >/dev/null 2>&1; then
+    mkdir -p /etc/systemd/resolved.conf.d
+    cat > /etc/systemd/resolved.conf.d/20-riparr-avahi.conf <<'CONF'
+# Written by tools/install.sh. avahi-daemon now owns <hostname>.local; two mDNS
+# responders for one name is how a box silently renames itself to <hostname>-2.
+[Resolve]
+MulticastDNS=no
+CONF
+    systemctl restart systemd-resolved >/dev/null 2>&1 || true
+    ok "avahi owns $(hostname).local (resolved's responder stood down)"
+  else
+    info "avahi is not answering yet — leaving systemd-resolved to hold the name"
+  fi
+fi
+
+# Publish Riparr as a service, not just a name. This is the half avahi does that
+# systemd-resolved cannot, and it is why the handoff above is worth making: the box
+# now shows up in anything that browses Bonjour, with the right port already attached.
+if [ -d /etc/avahi/services ]; then
+  cat > /etc/avahi/services/riparr.service <<SERVICE
+<?xml version="1.0" standalone='no'?><!--*-nxml-*-->
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- Written by tools/install.sh -->
+<service-group>
+  <name replace-wildcards="yes">Riparr on %h</name>
+  <service>
+    <type>_http._tcp</type>
+    <port>$PORT</port>
+    <txt-record>path=/</txt-record>
+  </service>
+</service-group>
+SERVICE
+  systemctl reload avahi-daemon >/dev/null 2>&1 || \
+    systemctl restart avahi-daemon >/dev/null 2>&1 || true
+  ok "advertised as \"Riparr on $(hostname)\" over Bonjour"
+fi
 ok "dependencies present"
 
 # ── 2. account ──
@@ -71,7 +123,7 @@ for g in cdrom video; do
   getent group "$g" >/dev/null && usermod -aG "$g" "$RIPARR_USER"
 done
 install -d -o "$RIPARR_USER" -g "$RIPARR_USER" "$DATA_DIR"
-# The dedicated staging partition (D4) does not exist on stock Raspberry Pi OS. Create
+# The dedicated staging partition (D4) does not exist on a stock image. Create
 # the directory anyway: the service declares it writable, and the status page reports
 # free space from it. Falls back to a plain directory on the root filesystem.
 install -d -o "$RIPARR_USER" -g "$RIPARR_USER" -m 0775 /srv/staging

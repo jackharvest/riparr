@@ -342,3 +342,107 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 
 .hidden { display: none !important; }
+
+/* ── the second half: setting the box up ─────────────────── */
+
+/* The rail entry is dimmed until the card is written, because until then it is not
+   something the person can act on. */
+.steps li.phase2 { margin-top: 8px; }
+.steps li.phase2::before {
+  content: ""; display: block; position: absolute; left: 12px; right: 12px; top: -5px;
+  border-top: 1px solid var(--line-soft);
+}
+.steps li.phase2 { position: relative; }
+
+/* The task list. One row per step, and the row itself carries the state — no badges,
+   no colour-coding beyond the mark, because six green ticks in a column is already
+   the clearest possible "this is going fine". */
+.tasks {
+  list-style: none; padding: 0; margin: 22px 0 0;
+  display: grid; gap: 2px;
+}
+.task {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 10px 12px; border-radius: 9px;
+  transition: background .25s ease;
+}
+.task .ic {
+  width: 18px; flex: none; text-align: center; font-size: 13px; line-height: 20px;
+  color: var(--text-3);
+}
+.task .grow { display: grid; gap: 1px; min-width: 0; }
+.task .t { font-size: 13.5px; color: var(--text-2); }
+.task .d {
+  font-size: 11.5px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.task.waiting { opacity: .45; }
+.task.waiting .d { display: none; }     /* nothing to explain until it starts */
+
+.task.running { background: var(--card); box-shadow: var(--shadow); }
+.task.running .t { color: var(--text); font-weight: 590; }
+.task.running .ic { color: var(--accent); animation: spin 1.1s linear infinite; }
+
+.task.done .ic { color: var(--good); }
+.task.done .t  { color: var(--text-2); }
+.task.done .d  { display: none; }       /* finished steps stop explaining themselves */
+
+.task.failed .ic { color: var(--danger); }
+.task.failed .t  { color: var(--danger); font-weight: 590; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .task.running .ic { animation: none; }
+  .fill.indet { animation: none; }
+}
+
+/* A slimmer bar than the write screen's: here the task list is the primary signal
+   and the bar is only there to say "still moving". */
+.track.slim { height: 4px; margin-top: 20px; }
+
+/* The log is opt-in, monospaced, and scrolled to the bottom as it grows. It is
+   deliberately the same disclosure control as "Show the exact settings file" on the
+   review screen — same gesture, same expectation. */
+.reveal.log pre { max-height: 240px; white-space: pre-wrap; word-break: break-word; }
+
+/* Handoff screen: two physical actions, made big enough to be the only thing read. */
+.next.big {
+  max-width: 300px; gap: 13px; font-size: 14.5px;
+  counter-reset: hand; list-style: none; padding-left: 0;
+}
+.next.big li {
+  counter-increment: hand; display: flex; align-items: center; gap: 11px;
+  padding-left: 0;
+}
+.next.big li::before {
+  content: counter(hand); flex: none;
+  width: 23px; height: 23px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600;
+  display: grid; place-items: center;
+}
+
+.micro.dim { margin-top: 15px; opacity: .75; }
+.micro.dim a { color: var(--text-2); }
+
+/* On the done screen, steps that already happened are stated in the past tense with
+   a tick rather than numbered as instructions. */
+.next li.was-done { list-style: none; display: flex; gap: 9px; align-items: center; }
+.next li.was-done::before { content: "✓"; color: var(--good); font-weight: 700; }
+
+/* The setup screen is the only one whose content can outgrow the window: six task
+   rows plus an open log. Give it a scrolling middle so the progress bar, the
+   percentage and Stop stay put. */
+.setup-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin-right: -8px; padding-right: 8px;   /* keep the scrollbar off the text */
+}
+.setup-body .tasks { margin-top: 18px; }
+.setup-body .reveal { margin-bottom: 6px; }
+
+/* A progress bar is not a spacer. Without this, a flex column that overflows shrinks
+   it to nothing — which reads as "the bar is missing" rather than "the layout is
+   tight", and cost real time to find. */
+.track { flex: none; }
+.meta  { flex: none; }

@@ -24,6 +24,7 @@
     <li data-step="name"><span class="dot"></span>Name &amp; account</li>
     <li data-step="review"><span class="dot"></span>Review</li>
     <li data-step="write"><span class="dot"></span>Write</li>
+    <li class="phase2" data-step="setup"><span class="dot"></span>Set up</li>
   </ol>
 
   <div class="rail-foot">
@@ -143,6 +144,50 @@
       <div class="meta"><span id="write-pct">0%</span><span id="write-detail"></span></div>
       <p class="micro" id="write-warn">Leave the card in place until this finishes.</p>
     </div>
+  </section>
+
+  <!-- ── Handoff: card written, now go put it in the box ───── -->
+  <section class="screen" data-screen="handoff">
+    <div class="write-wrap">
+      <div class="tick">✓</div>
+      <h1>Your card is ready</h1>
+      <p class="lede">Two things to do, then Riparr sets itself up.</p>
+      <ol class="next big">
+        <li>Slide the card into the box</li>
+        <li>Plug in the single USB-C cable</li>
+      </ol>
+      <p class="micro" id="handoff-note">The first start takes a couple of minutes —
+        it resizes the card and joins your Wi-Fi. Nothing to watch.</p>
+      <div class="row-actions center">
+        <button class="primary" id="begin-setup">It's plugged in — continue</button>
+      </div>
+      <p class="micro dim" id="handoff-skip"></p>
+    </div>
+  </section>
+
+  <!-- ── Set up: the second half ───────────────────────────── -->
+  <section class="screen" data-screen="setup">
+    <h1 id="setup-title">Setting up your Riparr</h1>
+    <p class="lede" id="setup-lede">This takes about ten minutes. You can leave it —
+      it doesn't need you.</p>
+
+    <!-- Scrolls on its own so the bar, the percentage and Stop can never be pushed
+         off the bottom of the window by a long task list or an open log. -->
+    <div class="setup-body">
+      <ol class="tasks" id="tasks"></ol>
+      <details class="reveal log" id="log-reveal">
+        <summary>Show what's happening</summary>
+        <pre id="setup-log"></pre>
+      </details>
+    </div>
+
+    <div class="track slim"><div class="fill" id="setup-fill"></div></div>
+    <div class="meta"><span id="setup-pct">0%</span><span id="setup-detail"></span></div>
+
+    <footer class="bar">
+      <div class="hint" id="setup-hint"></div>
+      <button class="ghost" id="setup-cancel">Stop</button>
+    </footer>
   </section>
 
   <!-- ── Done ──────────────────────────────────────────────── -->

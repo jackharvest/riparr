@@ -20,16 +20,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import objc
 from AppKit import (NSApplication, NSWindow, NSApp, NSScreen, NSColor,
+                    NSBitmapImageRep,
                     NSApplicationActivationPolicyRegular, NSBackingStoreBuffered,
                     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable,
                     NSWindowStyleMaskFullSizeContentView, NSWindowTitleHidden,
                     NSMakeRect, NSMakeSize, NSWorkspace)
-from Foundation import NSObject, NSURL, NSString
+from Foundation import NSObject, NSURL, NSString, NSTimer
 from WebKit import (WKWebView, WKWebViewConfiguration, WKUserContentController,
-                    WKUserScript, WKPreferences)
+                    WKUserScript, WKPreferences, WKSnapshotConfiguration)
 
 import core
+import finish
 
 VERSION = "1.0.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -49,6 +51,10 @@ class Bridge:
         self.progress_path = os.path.join(RUNDIR, "progress.json")
         self.write_thread = None
         self.write_error = None
+        # ── the second half ──
+        self.setup_path = os.path.join(RUNDIR, "setup.json")
+        self.finisher = None
+        self.setup_thread = None
 
     # ── initial state ──
     def boot(self):
@@ -212,6 +218,49 @@ class Bridge:
                                  message="Could not get permission to write the card.",
                                  detail=err or "sudo exited %d." % p.returncode)
 
+    # ── the second half: from a powered-on board to a running Riparr ──
+    def start_setup(self, cfg):
+        """Kick off remote setup. Returns immediately; poll setup_status().
+
+        No elevation here, and no password prompt: everything happens on the box over
+        SSH, authenticated by the key the card already carries. That is the whole
+        reason this can be automatic rather than a console the user has to drive.
+        """
+        if self.setup_thread and self.setup_thread.is_alive():
+            return {"ok": False, "error": "Setup is already running."}
+
+        key = os.path.join(self.assets, "riparr_key")
+        if not os.path.exists(key):
+            return {"ok": False,
+                    "error": "The SSH key is missing from your build folder, so the "
+                             "box cannot be reached. Prepare a card again."}
+
+        self.finisher = finish.Finisher(
+            {"hostname": cfg.get("hostname", "riparr"),
+             "port": int(cfg.get("port", core.DEFAULT_PORT)),
+             "user": cfg.get("remote_user", "root"),
+             "key": key,
+             "known_hosts": os.path.join(self.assets, "known_hosts"),
+             "repo": os.path.abspath(os.path.join(HERE, "..", ".."))},
+            self.setup_path)
+        core_publish(self.setup_path, phase="running", message="Starting",
+                     pct=0, steps=[], log=[])
+        self.setup_thread = threading.Thread(target=self.finisher.run, daemon=True)
+        self.setup_thread.start()
+        return {"ok": True}
+
+    def setup_status(self):
+        try:
+            with open(self.setup_path) as f:
+                return json.load(f)
+        except Exception:
+            return {"phase": "idle"}
+
+    def cancel_setup(self):
+        if self.finisher:
+            self.finisher.cancel.set()
+        return {"ok": True}
+
     def write_status(self):
         try:
             with open(self.progress_path) as f:
@@ -287,6 +336,115 @@ class Handler(NSObject):
         self.webview.evaluateJavaScript_completionHandler_(str(js), None)
 
 
+# Sample state for --shot. Driving the real flow needs a card, a network and a board;
+# this paints the same DOM from fixed data so a screen can be looked at on demand.
+SHOTS = {
+    "handoff": """
+      show('handoff');
+      document.querySelector('#handoff-skip').innerHTML =
+        '<a href="#">Skip — I\\'ll set it up myself</a>';
+    """,
+    "setup": """
+      state.hostname = 'riparr'; state.port = 9797;
+      show('setup');
+      renderTasks([
+        {id:'find',      title:'Finding your Riparr',   detail:'Looking for the box on your network', state:'done'},
+        {id:'connect',   title:'Connecting',            detail:'Opening a secure connection', state:'done'},
+        {id:'copy',      title:'Copying Riparr across', detail:'Sending the software to the box', state:'done'},
+        {id:'bootstrap', title:'Preparing the system',  detail:'Installing build tools and recording what the hardware is', state:'done'},
+        {id:'install',   title:'Installing Riparr',     detail:'Building the Python environment — the slowest part, several minutes', state:'running'},
+        {id:'verify',    title:'Checking it answers',   detail:'Making sure the web interface is really up', state:'waiting'}
+      ]);
+      document.querySelector('#setup-fill').style.width = '62%';
+      document.querySelector('#setup-pct').textContent = '62%';
+      document.querySelector('#setup-detail').textContent = 'riparr.local';
+      document.querySelector('#setup-hint').textContent = 'Installing Riparr';
+      document.querySelector('#log-reveal').open = true;
+      document.querySelector('#setup-log').textContent =
+        ['$ cd /root/riparr && sudo bash tools/install.sh',
+         'Installing Riparr',
+         '  port 9797 · /opt/riparr · OrangePi Zero 2W',
+         '1/6  Packages',
+         '  \u2713 avahi owns riparr.local (resolved\u2019s responder stood down)',
+         '  \u2713 dependencies present',
+         '2/6  Account',
+         '  \u2713 user \u2018riparr\u2019 ready; staging at /srv/staging',
+         '3/6  Riparr',
+         '  \u2713 Riparr 0.1.0 in /opt/riparr',
+         '4/6  Python environment',
+         '  installing dependencies (a few minutes on a Zero 2 W)'].join('\\n');
+    """,
+    "done": """
+      state.hostname = 'riparr'; state.port = 9797; state.elapsed = 571;
+      show('done'); renderDone(true);
+    """,
+    "done-skipped": """
+      state.hostname = 'riparr'; state.port = 9797;
+      state.boot = state.boot || {}; state.boot.ssh_config = null;
+      show('done'); renderDone(false);
+    """,
+}
+
+
+class Shot(NSObject):
+    """Render one screen to a PNG, then quit.
+
+    Uses WKWebView's own snapshot rather than `screencapture -l`: a window that is
+    occluded or behind another app has an empty backing store, so screencapture
+    returns a blank image of a view that is rendering perfectly. This does not.
+    """
+
+    def initWithWebview_screen_out_eval_(self, webview, screen, out, evaluate):
+        self = objc.super(Shot, self).init()
+        self.webview = webview
+        self.screen = screen
+        self.out = out
+        self.evaluate = evaluate      # if set, print this instead of snapshotting
+        return self
+
+    # A WKWebView in a window that was never brought to the front does not run CSS
+    # animations. `.screen` starts at opacity 0 and relies on `animation: rise …
+    # forwards` to become visible, so without this the pane snapshots blank while the
+    # un-animated sidebar renders perfectly — which looks like a broken layout and is
+    # not one. Killing animation also makes shots byte-stable between runs.
+    STILL = ("var s=document.createElement('style');"
+             "s.textContent='*{animation:none !important;transition:none !important}"
+             ".screen.on{opacity:1 !important;transform:none !important}';"
+             "document.head.appendChild(s);")
+
+    def fire_(self, timer):
+        js = self.STILL + SHOTS.get(self.screen, "show('%s');" % self.screen)
+        self.webview.evaluateJavaScript_completionHandler_(js, None)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            0.7, self, "snap:", None, False)
+
+    def snap_(self, timer):
+        if self.evaluate:
+            self.webview.evaluateJavaScript_completionHandler_(
+                self.evaluate, self._printed)
+            return
+        conf = WKSnapshotConfiguration.alloc().init()
+        self.webview.takeSnapshotWithConfiguration_completionHandler_(
+            conf, self._write)
+
+    @objc.python_method
+    def _printed(self, value, error):
+        print(error if error is not None else value, flush=True)
+        NSApp().terminate_(None)
+
+    @objc.python_method
+    def _write(self, image, error):
+        if error is not None or image is None:
+            print("snapshot failed: %s" % error, file=sys.stderr, flush=True)
+            NSApp().terminate_(None)
+            return
+        rep = NSBitmapImageRep.imageRepWithData_(image.TIFFRepresentation())
+        data = rep.representationUsingType_properties_(4, {})   # 4 = NSPNGFileType
+        data.writeToFile_atomically_(self.out, True)
+        print(self.out, flush=True)
+        NSApp().terminate_(None)
+
+
 class AppDelegate(NSObject):
     def applicationShouldTerminateAfterLastWindowClosed_(self, app):
         return True
@@ -301,6 +459,12 @@ def main():
     ap = argparse.ArgumentParser(description="Riparr Preparer")
     ap.add_argument("--assets", default=os.path.expanduser("~/riparr-build"),
                     help="directory holding the .img.xz, SSH key and password file")
+    ap.add_argument("--shot", default="",
+                    help="render one screen to a PNG and exit: %s"
+                         % ", ".join(sorted(SHOTS)))
+    ap.add_argument("--shot-out", default="/tmp/riparr-preparer.png")
+    ap.add_argument("--eval", default="",
+                    help="with --shot: print this JS expression instead of a PNG")
     a = ap.parse_args()
     assets = os.path.abspath(os.path.expanduser(a.assets))
     if not os.path.isdir(assets):
@@ -352,7 +516,13 @@ def main():
 
     win.setContentView_(webview)
     win.makeKeyAndOrderFront_(None)
-    app.activateIgnoringOtherApps_(True)
+    if a.shot:
+        shot = Shot.alloc().initWithWebview_screen_out_eval_(
+            webview, a.shot, a.shot_out, a.eval)
+        NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            1.4, shot, "fire:", None, False)
+    else:
+        app.activateIgnoringOtherApps_(True)
     app.run()
 
 

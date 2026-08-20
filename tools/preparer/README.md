@@ -87,3 +87,70 @@ Verified end to end on macOS 26.6.1, Apple Silicon: all screens render, the live
 returns real networks with correct band classification, and the write guards reject
 malformed device identifiers. **It has not yet written a physical card** — see
 [`JOURNAL.md`](../../JOURNAL.md).
+
+---
+
+## The second half: `finish.py`
+
+Writing a card used to be where the Preparer stopped. Everything after it — waiting for
+the box to appear, copying Riparr across, installing it — was a terminal session the
+user had to know how to drive, which is exactly where an appliance stops feeling like
+one.
+
+`finish.py` performs that session instead of describing it. Six steps, each phrased
+twice: once as a sentence for the window, once as the command it actually runs, in a
+log behind a disclosure triangle. **It is deliberately not a console with buttons.**
+Someone setting up a disc ripper should be told what is happening, and be *able* to
+read the raw output — not obliged to.
+
+| Step | What it does |
+|---|---|
+| `find` | Resolves `<host>.local`; if mDNS is silent, sweeps the subnet and offers the SSH key to every host with port 22 open. Only the box accepts it. |
+| `connect` | Confirms the key works and the hostname matches |
+| `copy` | `tar` over the open SSH connection — no rsync needed at either end |
+| `bootstrap` | `tools/bootstrap.sh` |
+| `install` | `tools/install.sh` — the long pole, minutes of pip on a 1 GB A53 |
+| `verify` | Asks the service **from the Mac**, by name and by address |
+
+That last step matters more than it looks: `install.sh` already checks `127.0.0.1` on
+the box, which proves the process runs. It does not prove the address we are about to
+put in front of the user works from *their* machine. Those are different claims.
+
+No elevation and no password prompt — everything happens over SSH with the key the
+card already carries. That is the whole reason it can be automatic.
+
+Three ways in, one code path:
+
+```sh
+python3 finish.py --find-only            # just locate the box
+python3 finish.py --host riparr          # the whole thing, with a live log
+python3 finish.py --progress out.json    # what the GUI polls
+```
+
+**Host keys.** A freshly written card has a brand-new host key, and re-writing the card
+changes it again — so pinning to your global `known_hosts` would fail on every reflash
+with a man-in-the-middle warning that is both alarming and wrong. Instead there is a
+`known_hosts` of our own next to the key, cleared for the target at the start of a run
+(the card was *just* written; a new key is expected), then `accept-new`. Pinned for the
+rest of the session, and a genuine mid-session substitution is still refused.
+
+## Looking at a screen without driving the whole flow
+
+```sh
+~/riparr-build/prepare --shot setup --shot-out /tmp/setup.png
+~/riparr-build/prepare --shot setup --eval "document.querySelectorAll('.task').length"
+```
+
+Screens: `handoff`, `setup`, `done`, `done-skipped`.
+
+Two things this had to work around, both of which look like bugs in the page and are
+not:
+
+- **`screencapture -l <windowid>` returns an empty backing store for an occluded
+  window.** This uses WKWebView's own `takeSnapshotWithConfiguration:` instead, which
+  renders regardless.
+- **A WKWebView in a window that was never brought to the front does not run CSS
+  animations.** `.screen` starts at `opacity: 0` and depends on `animation: rise …
+  forwards` to appear, so the pane snapshots blank while the sidebar renders perfectly.
+  `--shot` injects a stylesheet killing animation first, which also makes shots stable
+  between runs.

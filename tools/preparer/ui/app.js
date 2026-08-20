@@ -14,17 +14,29 @@ const state = {
   port: 9797,
   screen: "card",
   poll: null,
+  logLen: -1,        // so the first poll always paints the log
+  setupUrl: null,
+  elapsed: null,
 };
 
-const ORDER = ["card", "wifi", "name", "review", "write"];
+const ORDER = ["card", "wifi", "name", "review", "write", "setup"];
+
+// Screens that are not themselves rail steps still have a place in the rail. Without
+// this, reaching the handoff or the finish line clears every tick the user just
+// earned, because indexOf returns -1 and nothing counts as behind it.
+const RAIL_AS = { handoff: "setup", failed: null, done: "__all__" };
 
 function show(name) {
   state.screen = name;
   $$(".screen").forEach(s => s.classList.toggle("on", s.dataset.screen === name));
-  const idx = ORDER.indexOf(name);
+
+  const as = name in RAIL_AS ? RAIL_AS[name] : name;
+  if (as === null) return;                       // failure: leave the rail alone
+  const all = as === "__all__";
+  const idx = all ? ORDER.length : ORDER.indexOf(as);
   $$("#steps li").forEach(li => {
     const i = ORDER.indexOf(li.dataset.step);
-    li.classList.toggle("active", i === idx);
+    li.classList.toggle("active", !all && i === idx);
     li.classList.toggle("done", idx > -1 && i < idx);
   });
 }
@@ -218,6 +230,11 @@ const PHASE_TITLE = {
 };
 
 function fmtBytes(n) { return (n / 1e9).toFixed(2) + " GB"; }
+function fmtDur(s) {
+  if (!s || !isFinite(s)) return "";
+  const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+  return m > 0 ? `${m} min ${sec}s` : `${sec}s`;
+}
 function fmtEta(s) {
   if (!s || !isFinite(s)) return "";
   const m = Math.floor(s / 60), sec = Math.floor(s % 60);
@@ -233,9 +250,17 @@ function pollWrite() {
 
     if (phase === "done") {
       clearInterval(state.poll);
-      renderDone();
-      show("done");
-      $$("#steps li").forEach(li => li.classList.add("done"));
+      // The card is written. That used to be the finish line; now it is halfway.
+      // Hand over to the person for the one part only they can do — moving the card
+      // into the box — and pick the work back up when they say it is plugged in.
+      $("#handoff-skip").innerHTML =
+        `<a href="#" id="skip-setup">Skip — I'll set it up myself</a>`;
+      $("#skip-setup").onclick = (e) => {
+        e.preventDefault();
+        show("done");
+        renderDone(false);
+      };
+      show("handoff");
       return;
     }
     if (phase === "error" || phase === "cancelled") {
@@ -270,45 +295,110 @@ function pollWrite() {
   }, 350);
 }
 
+/* ── the second half: card written, box plugged in ──────── */
+const TASK_ICON = { waiting: "○", running: "◐", done: "✓", failed: "✕" };
+
+function renderTasks(steps) {
+  const el = $("#tasks");
+  if (!steps || !steps.length) { el.innerHTML = ""; return; }
+  el.innerHTML = steps.map(s => `
+    <li class="task ${esc(s.state)}">
+      <span class="ic">${TASK_ICON[s.state] || "○"}</span>
+      <span class="grow">
+        <span class="t">${esc(s.title)}</span>
+        <span class="d">${esc(s.detail)}</span>
+      </span>
+    </li>`).join("");
+}
+
+function pollSetup() {
+  clearInterval(state.poll);
+  const logEl = $("#setup-log");
+  state.poll = setInterval(async () => {
+    let st;
+    try { st = await riparr.setup_status(); } catch (e) { return; }
+    const phase = st.phase || "idle";
+
+    renderTasks(st.steps);
+    const pct = st.pct || 0;
+    $("#setup-fill").style.width = pct.toFixed(1) + "%";
+    $("#setup-fill").classList.toggle("indet", phase === "running" && !pct);
+    $("#setup-pct").textContent = pct.toFixed(0) + "%";
+    $("#setup-detail").textContent = st.address
+      ? (st.found_by === "name" ? `${esc(state.hostname)}.local` : st.address)
+      : "";
+    $("#setup-hint").textContent = st.message || "";
+
+    // Only touch the log when it actually changed — this repaints 3x a second.
+    if (st.log && st.log.length !== state.logLen) {
+      state.logLen = st.log.length;
+      logEl.textContent = st.log.join("\n");
+      if ($("#log-reveal").open) logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    if (phase === "done") {
+      clearInterval(state.poll);
+      state.setupUrl = st.url;
+      state.elapsed = st.elapsed;
+      show("done");
+      renderDone(true);
+    } else if (phase === "error" || phase === "cancelled") {
+      clearInterval(state.poll);
+      $("#fail-title").textContent = phase === "cancelled"
+        ? "Setup stopped" : "Setup didn't finish";
+      $("#fail-msg").textContent = st.message || "";
+      $("#fail-detail").textContent = st.detail || "";
+      show("failed");
+    }
+  }, 300);
+}
+
 /* ── the finish line ────────────────────────────────────── */
-function renderDone() {
-  const img = state.boot.images[0] || {};
+function renderDone(installed) {
   const host = state.hostname;
-  const riparr = img.kind === "riparr";
+  const addr = `${host}.local:${state.port}`;
 
-  $("#done-title").textContent = riparr
-    ? "Your Riparr card is ready"
-    : "Your card is ready";
-
-  // Do not promise a web interface that is not on this card. Until a Riparr image
-  // exists, every card written here boots a stock OS image.
-  $("#done-lede").textContent = riparr
-    ? ""
-    : "This card carries a stock Linux image. Riparr isn't installed on it yet, so it "
-      + "will answer over SSH rather than in a browser.";
-
-  const steps = riparr
-    ? ["Slide the card into the box",
-       "Plug in the single USB-C cable",
-       `Wait about two minutes, then open <b>${esc(host)}.local:${esc(state.port)}</b>`]
-    : ["Slide the card into the box",
-       "Plug in the single USB-C cable",
-       `Wait about two minutes, then connect over SSH`];
-  $("#done-steps").innerHTML = steps.map(t => `<li>${t}</li>`).join("");
-
-  const ssh = state.boot.ssh_config
-    ? `ssh -F ${esc(state.boot.ssh_config)} ${esc(host)}`
-    : `ssh riparr@${esc(host)}.local`;
-  $("#done-note").innerHTML = riparr
-    ? "The first-run setup happens in your browser. There is nothing else to install."
-    : `<span class="ssh-line">${ssh}</span>`;
-
-  $("#done-actions").innerHTML =
-    (riparr ? `<button class="primary" id="open-box">Open ${esc(host)}.local:${esc(state.port)}</button>` : "")
-    + `<button class="ghost" id="again">Prepare another card</button>`;
+  if (installed) {
+    // The only ending worth having: it is running, here is the link.
+    $("#done-title").textContent = "Riparr is ready";
+    $("#done-lede").textContent = state.elapsed
+      ? `Set up in ${fmtDur(state.elapsed)}. Everything below is already done.`
+      : "Everything below is already done.";
+    $("#done-steps").innerHTML = [
+      "Card written and checked",
+      "Box found on your network",
+      "Riparr installed and running",
+    ].map(t => `<li class="was-done">${t}</li>`).join("");
+    $("#done-note").innerHTML =
+      "Open it to create your login and finish the short first-run wizard. "
+      + "You won't need this app again unless you prepare another card.";
+    $("#done-actions").innerHTML =
+      `<button class="primary" id="open-box">Open ${esc(addr)}</button>`
+      + `<button class="ghost" id="again">Prepare another card</button>`;
+  } else {
+    // The card is written but the box was never set up — the user skipped it.
+    $("#done-title").textContent = "Your card is ready";
+    $("#done-lede").textContent =
+      "Riparr isn't installed on the box yet. Put the card in, power it on, and run "
+      + "this app again to finish — or do it yourself over SSH.";
+    $("#done-steps").innerHTML = [
+      "Slide the card into the box",
+      "Plug in the single USB-C cable",
+      `Wait about two minutes, then connect over SSH`,
+    ].map(t => `<li>${t}</li>`).join("");
+    const ssh = state.boot.ssh_config
+      ? `ssh -F ${esc(state.boot.ssh_config)} root@${esc(host)}.local`
+      : `ssh root@${esc(host)}.local`;
+    $("#done-note").innerHTML = `<span class="ssh-line">${ssh}</span>`;
+    $("#done-actions").innerHTML =
+      `<button class="primary" id="resume-setup">Set it up for me</button>`
+      + `<button class="ghost" id="again">Prepare another card</button>`;
+  }
 
   const open = $("#open-box");
-  if (open) open.onclick = () => riparr_open(`http://${host}.local:${state.port}`);
+  if (open) open.onclick = () => riparr_open(`http://${addr}`);
+  const resume = $("#resume-setup");
+  if (resume) resume.onclick = () => show("handoff");
   $("#again").onclick = () => { state.disk = null; show("card"); loadDisks(); };
 }
 
@@ -413,8 +503,39 @@ $("#do-write").onclick = async () => {
   pollWrite();
 };
 
+$("#begin-setup").onclick = async () => {
+  state.logLen = -1;
+  $("#setup-log").textContent = "";
+  $("#setup-fill").style.width = "0%";
+  renderTasks(null);
+  $("#setup-hint").textContent = "";
+  show("setup");
+  state.triedSetup = true;
+  const r = await riparr.start_setup({ hostname: state.hostname, port: state.port });
+  if (!r.ok) {
+    $("#fail-title").textContent = "Can't start setup";
+    $("#fail-msg").textContent = r.error;
+    $("#fail-detail").textContent = "";
+    show("failed");
+    return;
+  }
+  pollSetup();
+};
+
+$("#setup-cancel").onclick = async () => {
+  $("#setup-cancel").disabled = true;
+  $("#setup-hint").textContent = "Stopping…";
+  await riparr.cancel_setup();
+};
+
 $("#verify-card").onchange = (e) => { state.verify = e.target.checked; };
-$("#retry").onclick = () => { show("card"); loadDisks(); };
+$("#retry").onclick = () => {
+  // A setup that failed leaves a perfectly good card in a running box. Sending the
+  // user back to "choose a card and erase it" would be actively wrong, so retry means
+  // "try the setup again" whenever that is what failed.
+  if (state.screen === "failed" && state.triedSetup) { show("handoff"); return; }
+  show("card"); loadDisks();
+};
 $$("[data-back]").forEach(b => b.onclick = () => show(b.dataset.back));
 
 init();
