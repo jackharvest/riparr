@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riparr Preparer</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="drag"></div>
+
+<aside class="rail">
+  <div class="brand">
+    <div class="mark">◉</div>
+    <div>
+      <div class="brand-name">Riparr</div>
+      <div class="brand-sub">Preparer</div>
+    </div>
+  </div>
+
+  <ol class="steps" id="steps">
+    <li data-step="card"><span class="dot"></span>SD card</li>
+    <li data-step="wifi"><span class="dot"></span>Wi-Fi</li>
+    <li data-step="name"><span class="dot"></span>Name &amp; account</li>
+    <li data-step="review"><span class="dot"></span>Review</li>
+    <li data-step="write"><span class="dot"></span>Write</li>
+  </ol>
+
+  <div class="rail-foot">
+    <div id="update-slot"></div>
+    <div class="ver">Version <span id="ver">—</span></div>
+  </div>
+</aside>
+
+<main class="pane">
+
+  <!-- ── SD card ───────────────────────────────────────────── -->
+  <section class="screen" data-screen="card">
+    <h1>Choose your SD card</h1>
+    <p class="lede">Only external, removable cards between 4 and 70&nbsp;GB are shown.
+      Your startup disk can never appear in this list.</p>
+    <div id="disk-list" class="list"></div>
+    <div class="row-actions">
+      <button class="ghost" id="rescan-disks">Rescan</button>
+    </div>
+    <div class="spacer"></div>
+    <footer class="bar">
+      <div class="hint" id="card-hint"></div>
+      <button class="primary" id="card-next" disabled>Continue</button>
+    </footer>
+  </section>
+
+  <!-- ── Wi-Fi ─────────────────────────────────────────────── -->
+  <section class="screen" data-screen="wifi">
+    <h1>Join a Wi-Fi network</h1>
+    <p class="lede">The Pi Zero 2W has no 5&nbsp;GHz radio. Networks it cannot reach are
+      shown but can't be selected — this is the single most common reason a box never
+      appears on the network.</p>
+    <div id="wifi-list" class="list scroll"></div>
+    <div class="row-actions">
+      <button class="ghost" id="rescan-wifi">Rescan</button>
+      <button class="ghost" id="manual-wifi">Enter a name manually…</button>
+    </div>
+    <div id="wifi-pw-block" class="hidden">
+      <label class="field">
+        <span>Password for <b id="wifi-pw-for"></b></span>
+        <input type="password" id="wifi-pw" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="micro">Converted to a PBKDF2 key before it is written. The passphrase
+        itself never touches the card.</p>
+    </div>
+    <div class="spacer"></div>
+    <footer class="bar">
+      <button class="ghost" data-back="card">Back</button>
+      <div class="hint" id="wifi-hint"></div>
+      <button class="primary" id="wifi-next" disabled>Continue</button>
+    </footer>
+  </section>
+
+  <!-- ── Name & account ────────────────────────────────────── -->
+  <section class="screen" data-screen="name">
+    <h1>Name your Riparr</h1>
+    <p class="lede">This is the name you'll type into a browser to reach it.</p>
+    <label class="field">
+      <span>Name</span>
+      <input id="hostname" value="riparr" spellcheck="false" autocapitalize="off">
+    </label>
+    <div class="callout" id="host-preview">Reachable at <b>http://riparr.local</b></div>
+    <div class="divider"></div>
+    <h2>System account</h2>
+    <p class="lede">Used only for SSH and the console. This is not the web login — you'll
+      create that on first run.</p>
+    <div class="cred">
+      <div><span class="k">User</span><span class="v" id="acct-user">riparr</span></div>
+      <div><span class="k">Password</span><span class="v mono" id="acct-pw">—</span></div>
+    </div>
+    <p class="micro" id="acct-note"></p>
+    <div class="spacer"></div>
+    <footer class="bar">
+      <button class="ghost" data-back="wifi">Back</button>
+      <div class="hint" id="name-hint"></div>
+      <button class="primary" id="name-next">Continue</button>
+    </footer>
+  </section>
+
+  <!-- ── Review ────────────────────────────────────────────── -->
+  <section class="screen" data-screen="review">
+    <h1>Check before writing</h1>
+    <p class="lede">Everything currently on the card will be erased.</p>
+    <div class="summary" id="summary"></div>
+    <details class="reveal">
+      <summary>Show the exact settings file</summary>
+      <pre id="toml"></pre>
+    </details>
+    <div class="spacer"></div>
+    <footer class="bar">
+      <button class="ghost" data-back="name">Back</button>
+      <div class="hint"></div>
+      <button class="ghost" id="toml-only">Settings only</button>
+      <button class="primary danger" id="do-write">Erase &amp; write</button>
+    </footer>
+  </section>
+
+  <!-- ── Write ─────────────────────────────────────────────── -->
+  <section class="screen" data-screen="write">
+    <div class="write-wrap">
+      <h1 id="write-title">Writing your card</h1>
+      <p class="lede" id="write-msg">Preparing…</p>
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="meta"><span id="write-pct">0%</span><span id="write-detail"></span></div>
+      <p class="micro" id="write-warn">Leave the card in place until this finishes.</p>
+    </div>
+  </section>
+
+  <!-- ── Done ──────────────────────────────────────────────── -->
+  <section class="screen" data-screen="done">
+    <div class="write-wrap">
+      <div class="tick">✓</div>
+      <h1>Your Riparr card is ready</h1>
+      <ol class="next">
+        <li>Slide the card into the box</li>
+        <li>Plug in the single USB-C cable</li>
+        <li>Wait about two minutes, then open <b id="done-url">riparr.local</b></li>
+      </ol>
+      <p class="micro">The first-run setup happens in your browser. There is nothing
+        else to install.</p>
+      <div class="row-actions center">
+        <button class="primary" id="open-box">Open riparr.local</button>
+        <button class="ghost" id="again">Prepare another card</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Failure ───────────────────────────────────────────── -->
+  <section class="screen" data-screen="failed">
+    <div class="write-wrap">
+      <div class="tick bad">!</div>
+      <h1 id="fail-title">That didn't work</h1>
+      <p class="lede" id="fail-msg"></p>
+      <pre class="detail" id="fail-detail"></pre>
+      <div class="row-actions center">
+        <button class="primary" id="retry">Try again</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+<script src="app.js"></script>
+</body>
+</html>
