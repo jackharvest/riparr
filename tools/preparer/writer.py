@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -55,6 +56,47 @@ def _read_back(rdev, count, st):
     return h.hexdigest()
 
 
+def _unmount(dev):
+    """Unmount every volume on the disk, and confirm it actually happened.
+
+    diskutil returning is not the same as the volumes having released. Writing to the
+    raw device while anything is still mounted fails with EBUSY, which previously
+    surfaced only as a dead `dd` and no explanation.
+    """
+    p = subprocess.run(["diskutil", "unmountDisk", dev], capture_output=True, text=True)
+    if p.returncode != 0:
+        p = subprocess.run(["diskutil", "unmountDisk", "force", dev],
+                           capture_output=True, text=True)
+        if p.returncode != 0:
+            return False, ((p.stderr or p.stdout).strip()
+                           + "\n\nClose anything using the card and try again.")
+
+    ident = os.path.basename(dev)
+    for _ in range(20):
+        mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
+        if not any(("/dev/%s" % ident) in line for line in mounts.splitlines()):
+            return True, ""
+        time.sleep(0.5)
+    return False, ("Volumes on %s are still mounted after ten seconds." % dev)
+
+
+def _explain(err, xerr, rc, rdev):
+    """Turn a terse dd failure into something the user can act on."""
+    blob = (str(err) + " " + str(xerr)).lower()
+    if "operation not permitted" in blob or "not permitted" in blob:
+        return ("macOS blocked access to %s.\n\n"
+                "Raw disk access needs Full Disk Access for the program that launched "
+                "this write. Grant it in System Settings > Privacy & Security > Full "
+                "Disk Access, then try again.\n\n%s" % (rdev, err or "(no detail)"))
+    if "resource busy" in blob or "busy" in blob or "errno 16" in blob:
+        return ("%s is still in use.\n\nThe card had not finished unmounting. Eject it "
+                "in Finder, re-insert it, and try again.\n\n%s" % (rdev, err or ""))
+    if "no such file" in blob:
+        return ("%s disappeared.\n\nThe card was removed or the reader dropped it.\n\n%s"
+                % (rdev, err or ""))
+    return (err or xerr or "dd exited %s having written nothing." % rc)
+
+
 def _looks_like_pi_boot(path):
     """A Raspberry Pi boot partition always carries these. An unrelated FAT volume won't."""
     return (os.path.exists(os.path.join(path, "config.txt"))
@@ -76,24 +118,65 @@ def run(args):
             return 1
 
     publish(st, phase="unmount", message="Unmounting the card")
-    subprocess.run(["diskutil", "unmountDisk", dev], capture_output=True)
+    ok, why = _unmount(dev)
+    if not ok:
+        publish(st, phase="error",
+                message="The card could not be unmounted, so nothing was written.",
+                detail=why)
+        return 1
+
+    # Open the raw device before building the pipeline. A failure here names the real
+    # reason -- busy, permissions, gone -- instead of leaving it to be inferred from a
+    # child process that has already exited.
+    try:
+        probe = os.open(rdev, os.O_WRONLY)
+        os.close(probe)
+    except OSError as e:
+        publish(st, phase="error",
+                message="The card could not be opened for writing.",
+                detail=_explain(str(e), "", e.errno, rdev))
+        return 1
 
     total = args.total
     publish(st, phase="write", written=0, total=total, rate=0, eta=0,
             message="Writing the operating system")
 
-    xz = subprocess.Popen(["xz", "-dc", args.image], stdout=subprocess.PIPE)
+    xz = subprocess.Popen(["xz", "-dc", args.image], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE)
     dd = subprocess.Popen(["dd", "of=%s" % rdev, "ibs=1m", "obs=4m"],
                           stdin=subprocess.PIPE,
                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    # Drain both stderr streams on threads. Left unread, a child that fails early fills
+    # its stderr pipe and blocks, and its message -- the one thing that explains the
+    # failure -- is never seen.
+    errs = {}
+
+    def drain(name, stream):
+        try:
+            errs[name] = stream.read().decode("utf-8", "replace")
+        except Exception:
+            errs[name] = ""
+
+    threads = [threading.Thread(target=drain, args=(n, f), daemon=True)
+               for n, f in (("dd", dd.stderr), ("xz", xz.stderr))]
+    for t in threads:
+        t.start()
+
     written, t0, last = 0, time.time(), 0.0
     digest = hashlib.sha256()
+    broke = False
     try:
         while True:
             chunk = xz.stdout.read(4 << 20)
             if not chunk:
                 break
-            dd.stdin.write(chunk)
+            try:
+                dd.stdin.write(chunk)
+            except (BrokenPipeError, OSError):
+                # dd is gone. Do not keep feeding a dead pipe.
+                broke = True
+                break
             digest.update(chunk)
             written += len(chunk)
             now = time.time()
@@ -105,21 +188,47 @@ def run(args):
                         eta=((total - written) / rate) if rate else 0,
                         message="Writing the operating system")
                 last = now
-    except BrokenPipeError:
-        pass
     finally:
+        # Order matters. Closing dd's stdin lets it finish; closing xz's stdout stops it
+        # blocking on a pipe nobody is draining, which is what used to hang forever.
         try:
             dd.stdin.close()
         except Exception:
             pass
-        dd_rc = dd.wait()
-        xz_rc = xz.wait()
+        try:
+            dd_rc = dd.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            dd.kill()
+            dd_rc = -1
+        try:
+            xz.stdout.close()
+        except Exception:
+            pass
+        try:
+            xz_rc = xz.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            xz.terminate()
+            try:
+                xz_rc = xz.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                xz.kill()
+                xz_rc = -1
+        for t in threads:
+            t.join(timeout=5)
 
-    err = (dd.stderr.read().decode("utf-8", "replace") if dd.stderr else "")
+    err = (errs.get("dd") or "").strip()
+    xerr = (errs.get("xz") or "").strip()
+
+    if broke or written == 0:
+        publish(st, phase="error",
+                message="The card could not be written to.",
+                detail=_explain(err, xerr, dd_rc, rdev))
+        return 1
     if dd_rc != 0 or xz_rc != 0:
         publish(st, phase="error",
                 message="The write failed before it finished.",
-                detail=(err.strip() or "dd exited %s, xz exited %s" % (dd_rc, xz_rc)))
+                detail=(err or xerr
+                        or "dd exited %s, xz exited %s" % (dd_rc, xz_rc)))
         return 1
     if total and written < total:
         publish(st, phase="error",
