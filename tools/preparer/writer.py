@@ -7,6 +7,7 @@ terminal. Progress is published as JSON to a file the GUI polls, because a root 
 launched through osascript has no usable pipe back to the parent.
 """
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -75,9 +76,32 @@ def _unmount(dev):
     for _ in range(20):
         mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
         if not any(("/dev/%s" % ident) in line for line in mounts.splitlines()):
-            return True, ""
+            break
         time.sleep(0.5)
-    return False, ("Volumes on %s are still mounted after ten seconds." % dev)
+    else:
+        return False, ("Volumes on %s are still mounted after ten seconds." % dev)
+
+    # Disappearing from `mount` is NOT the same as the device being free. On macOS 26
+    # FAT volumes are served by a userspace FSKit extension
+    # (com.apple.fskit.msdos.appex), which keeps /dev/rdiskNs1 open and can outlive the
+    # unmount by a few seconds. The old check passed here and dd then died on EBUSY.
+    # The only honest test of "can we write this" is to open it.
+    rdev = "/dev/r" + ident
+    last = ""
+    for _ in range(30):
+        try:
+            fd = os.open(rdev, os.O_WRONLY)
+            os.close(fd)
+            return True, ""
+        except OSError as e:
+            last = str(e)
+            if e.errno == errno.EBUSY:
+                time.sleep(0.5)     # something still holds it; give it a moment
+                continue
+            return False, last      # EPERM and friends will not improve by waiting
+    return False, ("%s is still busy fifteen seconds after unmounting.\n\n"
+                   "Something still has the card open. Ejecting it in Finder and "
+                   "re-inserting it clears this.\n\n%s" % (rdev, last))
 
 
 def _responsible_app():
