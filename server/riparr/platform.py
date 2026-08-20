@@ -179,13 +179,14 @@ def optical_diagnosis():
                 "the data connection is up.")
         if gadget:
             hint += (
-                " Two things cause this on this board. Only one of the two USB-C ports "
-                "is a host port (the one further from the edge); the other is a device "
-                "port and can never see what is plugged into it. And the host port has "
-                "both CC pins tied to ground, so it reads as a device to anything on "
-                "the far end of a USB-C-to-USB-C cable — a plain USB-A adapter in the "
-                "middle is what makes it work. A charge-only cable looks identical to "
-                "this too.")
+                " In order of likelihood: the cable or the USB-to-SATA adapter is not "
+                "carrying data — a charge-only USB-C cable is extremely common and "
+                "looks exactly like a dead drive, and a working adapter announces "
+                "itself even with no drive attached, so if nothing appears the adapter "
+                "itself is not running. Then the port: only one of the two USB-C "
+                "sockets is a host (the one further from the board edge), and it has "
+                "both CC pins tied to ground, so a USB-C-to-USB-C cable reads it as a "
+                "device — a USB-A adapter in the middle is what makes that work.")
     return {"drives": drives, "usb": usb, "hint": hint}
 
 
