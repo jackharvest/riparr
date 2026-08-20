@@ -1,0 +1,50 @@
+/* Servarr dark — the Sonarr/Radarr palette, exactly.
+ *
+ * Values taken from Sonarr's frontend/src/Styles/Themes/dark.js and
+ * Variables/{dimensions,fonts}.js (Sonarr, GPL-3.0). Expressed through the
+ * theme.park custom-property contract so Riparr's stylesheet consumes one
+ * variable set regardless of which theme is loaded.
+ *
+ * NOTE: Sonarr and Radarr are GPL-3.0. See DECISIONS.md D12 for the licensing
+ * position this implies for Riparr.
+ */
+:root {
+  /* theme.park contract */
+  --main-bg-color:      #202020;   /* pageBackground */
+  --modal-bg-color:     #2a2a2a;   /* modalBackgroundColor */
+  --modal-header-color: #2a2a2a;   /* pageHeaderBackgroundColor */
+  --modal-footer-color: #2a2a2a;
+  --drop-down-menu-bg:  #333333;   /* toolbarMenuItemBackgroundColor */
+
+  --button-color:       #5d9cec;   /* primaryBackgroundColor */
+  --button-color-hover: #4b91ea;   /* primaryHoverBackgroundColor */
+  --button-text:        #ffffff;
+  --button-text-hover:  #ffffff;
+
+  --accent-color:       93, 156, 236;   /* primaryColor #5d9cec */
+  --accent-color-hover: #4b91ea;
+  --link-color:         #5d9cec;
+  --link-color-hover:   #1b72e2;   /* linkHoverColor */
+  --label-text-color:   #333333;
+
+  --text:               #cccccc;   /* textColor */
+  --text-hover:         #ffffff;
+  --text-muted:         #909293;   /* helpTextColor */
+  --arr-queue-color:    #5d9cec;
+
+  /* Servarr specifics Riparr also honours */
+  --sidebar-bg:         #2a2a2a;   /* sidebarBackgroundColor */
+  --sidebar-fg:         #e1e2e3;   /* sidebarColor */
+  --sidebar-active-bg:  #333333;   /* sidebarActiveBackgroundColor */
+  --toolbar-bg:         #262626;   /* toolbarBackgroundColor */
+  --toolbar-fg:         #e1e2e3;   /* toolbarColor */
+
+  --default-btn-bg:     #333333;   /* defaultBackgroundColor */
+  --default-btn-border: #393f45;   /* defaultBorderColor */
+  --default-btn-hover:  #444444;   /* defaultHoverBackgroundColor */
+
+  --ok-color:           #27c24c;   /* successBackgroundColor */
+  --warn-color:         #ffa500;   /* warningColor */
+  --bad-color:          #f05050;   /* dangerColor */
+  --border-color:       #858585;   /* borderColor */
+}

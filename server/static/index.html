@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Riparr</title>
+<link rel="stylesheet" id="theme" href="/static/themes/servarr.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<!-- ── sign in ───────────────────────────────────────────── -->
+<div id="gate" class="gate hidden">
+  <form class="gate-card" id="login-form">
+    <div class="gate-mark">◉</div>
+    <h1>Riparr</h1>
+    <p class="muted" id="gate-sub">Sign in to continue</p>
+    <label class="f"><span>Username</span><input id="gate-user" autocomplete="username"></label>
+    <label class="f"><span>Password</span><input id="gate-pass" type="password" autocomplete="current-password"></label>
+    <div class="gate-err" id="gate-err"></div>
+    <button class="btn primary wide" type="submit">Sign in</button>
+  </form>
+</div>
+
+<!-- ── first run ─────────────────────────────────────────── -->
+<div id="wizard" class="wizard hidden"></div>
+
+<!-- ── main shell ────────────────────────────────────────── -->
+<div id="shell" class="shell hidden">
+  <header class="topbar">
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+    <a class="logo" href="#/queue"><span class="logo-mark">◉</span> Riparr</a>
+    <label class="search"><span class="mag">⚲</span>
+      <input id="search" placeholder="Search" autocomplete="off"></label>
+    <div class="grow"></div>
+    <div class="pills" id="health-pills"></div>
+    <div class="menu-wrap">
+      <button class="icon-btn" id="user-btn" title="Account">◍</button>
+      <div class="menu hidden" id="user-menu">
+        <a href="#/system/status">System</a>
+        <a href="#/settings/accounts">Change password</a>
+        <a href="#" id="logout">Sign out</a>
+      </div>
+    </div>
+  </header>
+
+  <nav class="sidebar" id="sidebar"></nav>
+
+  <main class="content" id="content"></main>
+</div>
+
+<div class="toast-host" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
