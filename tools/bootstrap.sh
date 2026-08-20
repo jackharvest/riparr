@@ -48,8 +48,10 @@ echo "=== 4. Installing validation tools ==="
 sudo apt-get update -qq
 sudo apt-get install -y -qq usbutils strace hdparm sysstat ethtool iperf3 \
     build-essential pkg-config libssl-dev libexpat1-dev zlib1g-dev \
-    libavcodec-dev libavutil-dev libavformat-dev qtbase5-dev \
+    libavcodec-dev libavutil-dev libavformat-dev \
     less vim curl wget git 2>&1 | tail -3
+# NOTE: qtbase5-dev is deliberately absent. MakeMKV needs it only for the GUI,
+# which we skip with ./configure --disable-gui. It is a large install for nothing.
 
 echo "=== 5. Enabling zram (R1 mitigation: 512MB is tight) ==="
 sudo apt-get install -y -qq zram-tools 2>&1 | tail -1
