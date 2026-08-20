@@ -1,0 +1,40 @@
+[Unit]
+Description=Riparr — disc ripping appliance
+Documentation=https://github.com/jackharvest/riparr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=riparr
+Group=riparr
+# The optical drive is owned by root:cdrom, and the service has to read it.
+SupplementaryGroups=cdrom
+WorkingDirectory=/opt/riparr/server
+
+# The default port, overridden by whatever the preparer wrote to the boot partition.
+# Later assignments win, so the file beats this line when it exists.
+Environment=RIPARR_PORT=9797
+Environment=RIPARR_DB=/var/lib/riparr/riparr.db
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/boot/firmware/riparr.conf
+EnvironmentFile=-/boot/riparr.conf
+
+ExecStart=/opt/riparr/.venv/bin/python -m uvicorn riparr.main:app \
+          --host 0.0.0.0 --port ${RIPARR_PORT}
+
+# The cable gets pulled and discs misbehave; staying up is the whole job (D4).
+Restart=always
+RestartSec=3
+
+# Modest hardening. Deliberately not sandboxed to death: the service needs the optical
+# drive, the staging partition, and the ability to mount a network share.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/riparr /srv/staging
+StateDirectory=riparr
+
+[Install]
+WantedBy=multi-user.target

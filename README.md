@@ -38,7 +38,9 @@ Last working session: **2026-08-19**
 | | |
 |---|---|
 | **Prepare a card** | `~/riparr-build/prepare` — native macOS window, no terminal |
-| **Run the service** | `server/run.sh` → <http://localhost:8000> (mock mode off-Pi) |
+| **Install on the Pi** | `curl -fsSL .../tools/install.sh \| sudo bash` |
+| **Reach it** | `http://riparr.local:9797` — [why 9797](DECISIONS.md) |
+| **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-Pi) |
 
 **The next action is still not code.** It's the week-one hardware validation in
 [`docs/design/risks.md`](docs/design/risks.md):
@@ -48,7 +50,11 @@ Last working session: **2026-08-19**
    Runs inside the same session at no extra cost.
 
 **What is not built:** the rip engine. Queue, history and disc history read real tables
-that nothing populates yet.
+that nothing populates yet — so **Auto Rip has nothing behind it**, even though the switch
+and its readiness checks are real.
+
+**The GitHub repo is not published yet**, so the install one-liner has nothing to fetch.
+Installing from a local checkout works today.
 
 ## Documents
 

@@ -11,6 +11,7 @@ const state = {
   net: null,          // {ssid, secure, hidden, bands}
   wifiPw: "",
   hostname: "riparr",
+  port: 9797,
   screen: "card",
   poll: null,
 };
@@ -157,6 +158,7 @@ function cfg() {
     disk: state.disk ? state.disk.id : null,
     image: state.boot.images.length ? state.boot.images[0].path : null,
     hostname: state.hostname,
+    port: state.port,
     user: "riparr",
     password: state.boot.password,
     ssid: state.net.ssid,
@@ -183,8 +185,9 @@ async function buildReview() {
         ' <span class="tag">stored as a derived key</span>'
       : "none (open network)"],
     ["Reachable at", img && img.kind === "riparr"
-      ? `http://${esc(c.hostname)}.local`
+      ? `http://${esc(c.hostname)}.local:${c.port}`
       : `${esc(c.hostname)}.local <span class="tag">over SSH — this image has no Riparr on it</span>`],
+    ["Riparr port", `${c.port}`],
     ["System account", `${esc(c.user)} · password saved in user_password.txt`],
     ["SSH", state.boot.has_key ? "enabled · key + password" : "enabled · password"],
     ["MakeMKV", state.boot.makemkv
@@ -286,7 +289,7 @@ function renderDone() {
   const steps = riparr
     ? ["Slide the card into the box",
        "Plug in the single USB-C cable",
-       `Wait about two minutes, then open <b>${esc(host)}.local</b>`]
+       `Wait about two minutes, then open <b>${esc(host)}.local:${esc(state.port)}</b>`]
     : ["Slide the card into the box",
        "Plug in the single USB-C cable",
        `Wait about two minutes, then connect over SSH`];
@@ -300,11 +303,11 @@ function renderDone() {
     : `<span class="ssh-line">${ssh}</span>`;
 
   $("#done-actions").innerHTML =
-    (riparr ? `<button class="primary" id="open-box">Open ${esc(host)}.local</button>` : "")
+    (riparr ? `<button class="primary" id="open-box">Open ${esc(host)}.local:${esc(state.port)}</button>` : "")
     + `<button class="ghost" id="again">Prepare another card</button>`;
 
   const open = $("#open-box");
-  if (open) open.onclick = () => riparr_open(`http://${host}.local`);
+  if (open) open.onclick = () => riparr_open(`http://${host}.local:${state.port}`);
   $("#again").onclick = () => { state.disk = null; show("card"); loadDisks(); };
 }
 
@@ -330,6 +333,8 @@ async function init() {
     ? "Generated just now and saved to user_password.txt in your build folder."
     : "Read from user_password.txt in your build folder.";
 
+  state.port = state.boot.default_port || 9797;
+  $("#port").value = state.port;
   renderDisks(state.boot.disks);
   if (state.boot.image_missing) {
     $("#card-hint").textContent =
@@ -355,14 +360,28 @@ $("#wifi-pw").onkeydown = (e) => {
 };
 $("#wifi-next").onclick = () => show("name");
 
+async function refreshHostPreview() {
+  const v = state.hostname, okName = validHost(v);
+  const { ok, message } = await riparr.check_port(state.port);
+  $("#host-preview").innerHTML = okName && ok
+    ? `Reachable at <b>http://${esc(v)}.local:${esc(state.port)}</b>`
+    : `<span style="color:var(--danger)">${
+        !okName ? "Lowercase letters, digits and hyphens only" : esc(message)}</span>`;
+  $("#port-note").textContent = ok && message
+    ? message
+    : "9797 is Riparr's own port, chosen to sit alongside Radarr on 7878 and Sonarr on "
+      + "8989. Change it only if something already uses it.";
+  $("#name-next").disabled = !(okName && ok);
+}
+
+$("#port").oninput = (e) => {
+  state.port = e.target.value.trim();
+  refreshHostPreview();
+};
+
 $("#hostname").oninput = (e) => {
-  const v = e.target.value.trim().toLowerCase();
-  state.hostname = v;
-  const okName = validHost(v);
-  $("#host-preview").innerHTML = okName
-    ? `Reachable at <b>http://${esc(v)}.local</b>`
-    : `<span style="color:var(--danger)">Lowercase letters, digits and hyphens only</span>`;
-  $("#name-next").disabled = !okName;
+  state.hostname = e.target.value.trim().toLowerCase();
+  refreshHostPreview();
 };
 $("#name-next").onclick = async () => { show("review"); await buildReview(); };
 

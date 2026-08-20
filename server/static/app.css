@@ -270,6 +270,43 @@ select option { background: var(--dropdown); }
 .btn.wide { width: 100%; justify-content: center; }
 .btn-row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 
+/* ── auto rip ──────────────────────────────────────────── */
+.autorip {
+  display: flex; gap: 16px; align-items: flex-start;
+  background: var(--panel); border: 1px solid var(--line-2);
+  border-left: 3px solid var(--fg-muted);
+  border-radius: var(--radius); padding: 16px 18px; margin-bottom: 22px;
+}
+.autorip.on {
+  border-left-color: var(--ok);
+  background: linear-gradient(90deg, rgba(39,194,76,.07), transparent 45%), var(--panel);
+}
+.autorip.blocked { border-left-color: var(--warn); }
+
+.ar-switch { flex: none; cursor: pointer; margin-top: 2px; }
+.ar-switch input { display: none; }
+.ar-switch .track {
+  display: block; width: 46px; height: 26px; border-radius: 13px;
+  background: rgba(255,255,255,.16); position: relative; transition: background .16s;
+}
+.ar-switch .track::after {
+  content: ""; position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%; background: #fff;
+  transition: transform .16s;
+}
+.ar-switch input:checked + .track { background: var(--ok); }
+.ar-switch input:checked + .track::after { transform: translateX(20px); }
+.ar-switch.off { cursor: not-allowed; opacity: .45; }
+
+.ar-title { font-size: 16px; color: var(--fg-strong); font-weight: 500; }
+.ar-sub { font-size: 13px; color: var(--fg-muted); margin-top: 3px; }
+.ar-blockers {
+  margin: 10px 0 0; padding-left: 18px; font-size: 12.5px;
+  display: grid; gap: 5px; color: var(--fg-muted);
+}
+.ar-blockers a { color: var(--warn); }
+.ar-blockers a:hover { text-decoration: underline; }
+
 /* ── tables & lists ────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {

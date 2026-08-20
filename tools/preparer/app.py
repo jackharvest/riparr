@@ -68,6 +68,7 @@ class Bridge:
             "ssh_config": (os.path.join(self.assets, "ssh_config")
                            if os.path.exists(os.path.join(self.assets, "ssh_config"))
                            else None),
+            "default_port": core.DEFAULT_PORT,
             "timezone": core.host_timezone(),
             "country": os.environ.get("RIPARR_COUNTRY", "US"),
         }
@@ -83,7 +84,11 @@ class Bridge:
         return core.check_for_update(VERSION)
 
     def preview_toml(self, cfg):
-        return {"toml": self._toml(cfg)}
+        return {"toml": self._toml(cfg), "conf": core.build_conf(cfg)}
+
+    def check_port(self, port):
+        ok, message = core.check_port(port)
+        return {"ok": ok, "message": message}
 
     def save_toml_only(self, cfg):
         out = os.path.join(self.assets, "custom.toml")
@@ -130,6 +135,10 @@ class Bridge:
             f.write(self._toml(cfg))
         os.chmod(toml_path, 0o600)
 
+        conf_path = os.path.join(RUNDIR, "riparr.conf")
+        with open(conf_path, "w") as f:
+            f.write(core.build_conf(cfg))
+
         total = core.uncompressed_size(image)
         sha = core.expected_sha256(image) or ""
         verify = bool(cfg.get("verify", True))
@@ -141,12 +150,14 @@ class Bridge:
         self.write_error = None
         self.write_thread = threading.Thread(
             target=self._run_privileged,
-            args=(image, disk["id"], toml_path, total, sha, verify, mkv), daemon=True)
+            args=(image, disk["id"], toml_path, total, sha, verify, mkv, conf_path),
+            daemon=True)
         self.write_thread.start()
         return {"ok": True, "total": total, "verify": verify,
                 "kind": core.image_kind(image)}
 
-    def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv=""):
+    def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv="",
+                        conf=""):
         """One authorization dialog covers write, provision and eject."""
         script = os.path.join(RUNDIR, "write.sh")
         with open(script, "w") as f:
@@ -156,7 +167,8 @@ class Bridge:
                         _q(image), _q(dev), _q(toml_path),
                         _q(self.progress_path), total, _q(sha),
                         (" --verify" if verify else "")
-                        + ((" --makemkv " + _q(mkv)) if mkv else "")))
+                        + ((" --makemkv " + _q(mkv)) if mkv else "")
+                        + ((" --conf " + _q(conf)) if conf else "")))
         os.chmod(script, 0o700)
 
         osa = ('do shell script "/bin/sh %s" '

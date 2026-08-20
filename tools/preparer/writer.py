@@ -334,6 +334,11 @@ def run(args):
                     message="Could not copy MakeMKV onto the card", detail=str(e))
             time.sleep(1.5)
 
+    if args.conf:
+        with open(os.path.join(boot, "riparr.conf"), "w") as f:
+            f.write(open(args.conf).read())
+        subprocess.run(["sync"])
+
     publish(st, phase="eject", message="Ejecting")
     subprocess.run(["diskutil", "eject", dev], capture_output=True)
 
@@ -350,6 +355,7 @@ def main():
     ap.add_argument("--progress", required=True)
     ap.add_argument("--total", type=int, default=0)
     ap.add_argument("--sha256", default="", help="expected image checksum")
+    ap.add_argument("--conf", default="", help="riparr.conf to place on the boot partition")
     ap.add_argument("--makemkv", default="",
                     help="directory of MakeMKV tarballs to copy onto the boot partition")
     ap.add_argument("--verify", action="store_true",

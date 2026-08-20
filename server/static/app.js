@@ -423,8 +423,10 @@ const views = {};
 views.queue = async () => {
   const { jobs } = await api.get("/api/queue");
   const drives = state.status.drives || [];
+  const ar = await api.get("/api/autorip");
   return `
     ${head("Queue", "Ripping and uploading happen as one overlapping operation.")}
+    ${autoRipPanel(ar)}
     <div class="toolbar">
       <button class="tool" id="t-refresh"><span class="ti">⟳</span>Refresh</button>
       <button class="tool" id="t-eject"><span class="ti">⏏</span>Eject</button>
@@ -451,6 +453,27 @@ views.queue = async () => {
 };
 
 const pct = (a, b) => (b ? Math.min(100, (a / b) * 100).toFixed(1) : 0);
+
+function autoRipPanel(ar) {
+  const on = ar.enabled;
+  return `
+    <div class="autorip ${on ? "on" : ar.ready ? "" : "blocked"}">
+      <label class="ar-switch ${ar.ready ? "" : "off"}">
+        <input type="checkbox" id="autorip" ${on ? "checked" : ""}
+               ${ar.ready ? "" : "disabled"}>
+        <span class="track"></span>
+      </label>
+      <div class="ar-text">
+        <div class="ar-title">Auto Rip</div>
+        <div class="ar-sub">${
+          on ? "Insert a disc and walk away. Riparr does the rest and ejects when it's done."
+          : ar.ready ? "Turn this on and Riparr starts ripping the moment a disc is inserted."
+          : "Not available yet:"}</div>
+        ${ar.ready ? "" : `<ul class="ar-blockers">${ar.blockers.map(b => `
+          <li><a href="${esc(b.where)}"><b>${esc(b.what)}</b></a> — ${esc(b.why)}</li>`).join("")}</ul>`}
+      </div>
+    </div>`;
+}
 
 function driveCard(drives) {
   if (!drives.length) return "";
@@ -874,6 +897,19 @@ function collectSettings() {
 }
 
 function wireContent(section, sub) {
+  const autorip = $("#autorip");
+  if (autorip) autorip.onchange = async () => {
+    const want = autorip.checked;
+    try {
+      const r = await api.post("/api/autorip", { enabled: want });
+      toast(r.enabled ? "Auto Rip is on" : "Auto Rip is off", r.enabled ? "ok" : "");
+      route();
+    } catch (e) {
+      autorip.checked = !want;
+      toast(e.message, "bad");
+    }
+  };
+
   const refresh = $("#t-refresh");
   if (refresh) refresh.onclick = () => route();
   const eject = $("#t-eject");

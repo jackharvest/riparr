@@ -184,12 +184,75 @@ def status(user=Depends(require_user)):
         "drives": P.optical_drives(),
         "share": db.default_share(),
         "setup_complete": bool(db.get("setup_complete")),
+        "autorip": _autorip_state(),
     }
 
 
 @app.post("/api/drive/eject")
 def drive_eject(user=Depends(require_user)):
     return P.eject()
+
+
+# ─────────────────────────────── auto rip ───────────────────────────────
+
+def _autorip_state():
+    """Auto Rip is only offered once it could actually succeed.
+
+    Every blocker names the thing to fix and where to fix it, because a switch that
+    silently does nothing is worse than one that is honestly unavailable.
+    """
+    mk = P.makemkv_status()
+    share = db.default_share()
+    blockers = []
+    if not mk.get("installed"):
+        blockers.append({"what": "MakeMKV isn't installed",
+                         "why": "Riparr needs it to read discs.",
+                         "where": "#/settings/general"})
+    elif not db.get("makemkv_key"):
+        blockers.append({"what": "No MakeMKV key",
+                         "why": "Encrypted discs won't decode without one.",
+                         "where": "#/settings/general"})
+    elif mk.get("days_left") is not None and mk["days_left"] <= 0:
+        blockers.append({"what": "The MakeMKV key has expired",
+                         "why": "Rips will fail until it's replaced.",
+                         "where": "#/settings/general"})
+    if not share:
+        blockers.append({"what": "No library share",
+                         "why": "Finished rips would have nowhere to go.",
+                         "where": "#/settings/library"})
+    elif not share.get("verified_at"):
+        blockers.append({"what": "The share hasn't been tested",
+                         "why": "Riparr writes a test file before trusting it.",
+                         "where": "#/settings/library"})
+    if not P.optical_drives():
+        blockers.append({"what": "No optical drive detected",
+                         "why": "Nothing to read discs with.",
+                         "where": "#/system/status"})
+
+    ready = not blockers
+    enabled = bool(db.get("auto_rip")) and ready
+    return {"enabled": enabled, "ready": ready, "blockers": blockers,
+            "requested": bool(db.get("auto_rip"))}
+
+
+class AutoRip(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/autorip")
+def autorip(user=Depends(require_user)):
+    return _autorip_state()
+
+
+@app.post("/api/autorip")
+def autorip_set(body: AutoRip, user=Depends(require_user)):
+    st = _autorip_state()
+    if body.enabled and not st["ready"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Auto Rip isn't ready yet — %s." % st["blockers"][0]["what"])
+    db.set("auto_rip", body.enabled)
+    return _autorip_state()
 
 
 # ─────────────────────────────── settings ───────────────────────────────

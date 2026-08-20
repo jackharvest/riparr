@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS discs (
 # Defaults are the shipped opinion. The settings reference in docs/guide mirrors these.
 DEFAULTS = {
     "setup_complete": False,
+    "auto_rip": False,
     "theme": "servarr",
     "movie_template": "{Title} ({Year})/{Title} ({Year}).mkv",
     "tv_template": "{Title} ({Year})/Season {Season:00}/"
