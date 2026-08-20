@@ -202,6 +202,7 @@ def status(user=Depends(require_user)):
         "hostname": P.hostname(),
         "system": P.system_status(),
         "storage": dict(storage, **_capacity(storage["free_bytes"])),
+        "optical": P.optical_diagnosis(),
         "wifi": P.wifi_status(),
         "makemkv": P.makemkv_status(),
         "drives": P.optical_drives(),

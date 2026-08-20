@@ -557,7 +557,7 @@ views.queue = async () => {
              ? `A disc is loaded: <b>${esc(drives[0].label || "unknown")}</b>`
              : "Insert a disc and close the tray. Riparr takes it from there."}</p>
       </div></div>`}
-    ${driveCard(drives)}`;
+    ${driveCard(drives, state.status.optical)}`;
 };
 
 const pct = (a, b) => (b ? Math.min(100, (a / b) * 100).toFixed(1) : 0);
@@ -583,8 +583,16 @@ function autoRipPanel(ar) {
     </div>`;
 }
 
-function driveCard(drives) {
-  if (!drives.length) return "";
+function driveCard(drives, optical) {
+  // An empty card used to render as nothing at all, so "no drive" was communicated by
+  // absence — the one case where the user most needs to be told something.
+  if (!drives.length) {
+    const hint = optical && optical.hint;
+    return `<div class="section"><h2>Drive</h2><div>
+      <div class="result bad"><b>No optical drive detected</b>
+      ${hint ? `<div class="why">${esc(hint)}</div>` : ""}</div>
+    </div></div>`;
+  }
   return `<div class="section"><h2>Drive</h2><div><div class="kv">
       ${drives.map(d => `
         <div class="k">${esc(d.device)}</div>

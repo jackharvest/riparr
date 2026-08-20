@@ -122,9 +122,65 @@ def optical_drives():
                  "media": "BD-ROM", "label": "THE_MATRIX", "present": True}]
     out = []
     for dev in sorted(_glob("/dev/sr*")):
-        out.append({"device": dev, "vendor": "", "model": "",
+        name = os.path.basename(dev)
+        # The names are in sysfs; reading them saves showing a nameless drive.
+        vendor = _read("/sys/block/%s/device/vendor" % name).strip()
+        model = _read("/sys/block/%s/device/model" % name).strip()
+        out.append({"device": dev, "vendor": vendor, "model": model,
                     "media": None, "label": None, "present": False})
     return out
+
+
+def _usb_devices():
+    """Everything on the USB bus that is not a root hub.
+
+    Read from sysfs rather than by shelling out to lsusb, which is a separate package
+    and not installed by default.
+    """
+    devs = []
+    for path in _glob("/sys/bus/usb/devices/*"):
+        base = os.path.basename(path)
+        if ":" in base or base.startswith("usb"):
+            continue                      # interfaces and root hubs
+        vid = _read(os.path.join(path, "idVendor")).strip()
+        pid = _read(os.path.join(path, "idProduct")).strip()
+        if not vid:
+            continue
+        name = " ".join(x for x in (
+            _read(os.path.join(path, "manufacturer")).strip(),
+            _read(os.path.join(path, "product")).strip()) if x)
+        devs.append({"id": "%s:%s" % (vid, pid), "name": name or "unnamed device"})
+    return devs
+
+
+def optical_diagnosis():
+    """Why there is no drive — not merely that there isn't one.
+
+    "No optical drive detected" is true and unhelpful: it cannot distinguish a drive
+    that is unplugged from a drive plugged into a port that physically cannot host it.
+    On this board that distinction is the whole answer, because one of the two USB-C
+    ports is wired dr_mode=peripheral and will never enumerate anything.
+    """
+    drives = optical_drives()
+    if drives:
+        return {"drives": drives, "usb": [], "hint": None}
+
+    usb = _usb_devices()
+    if usb:
+        hint = ("Something is attached to USB, but nothing is presenting itself as an "
+                "optical drive: %s. If that is the drive's adapter, it may need its own "
+                "power, or it may be in a mode that hides the disc."
+                % ", ".join("%s (%s)" % (d["name"], d["id"]) for d in usb))
+    else:
+        gadget = bool(_glob("/sys/class/udc/*"))
+        hint = ("Nothing at all is attached to the USB bus — not the drive, not "
+                "anything else. The drive having power and a working tray does not mean "
+                "the data connection is up.")
+        if gadget:
+            hint += (" On this board one USB-C port is a device port, not a host port, "
+                     "and cannot see anything plugged into it. Try the other one. "
+                     "A charge-only USB-C cable looks exactly like this too.")
+    return {"drives": drives, "usb": usb, "hint": hint}
 
 
 def eject(device="/dev/sr0"):
