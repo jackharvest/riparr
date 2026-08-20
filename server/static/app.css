@@ -549,3 +549,12 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
 @keyframes gate-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .gate-wait .spin { animation: none; } }
 .gate-wait p { color: var(--fg-muted); font-size: 13px; margin: 0; }
+
+/* Manual server entry, always present rather than only as a consolation prize when
+   discovery finds nothing. A server that does not advertise itself is not a server
+   that does not exist — and discovery cannot see another subnet at all. */
+.manual-row {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.manual-row input { flex: 1; max-width: none; }

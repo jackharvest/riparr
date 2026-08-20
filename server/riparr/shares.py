@@ -17,6 +17,65 @@ from . import platform as P
 
 SMB_PORT = 445
 
+# The tools this module shells out to. Both come from Debian packages that are not
+# installed by default, and a missing one used to surface as a 500 with
+# FileNotFoundError('smbclient') in the log and nothing at all in the interface.
+SMBCLIENT = "smbclient"
+
+
+class SmbToolMissing(Exception):
+    """smbclient is not on this box. Actionable, so say so rather than crashing."""
+
+    message = (
+        "The tools for talking to network shares aren't installed on this box. "
+        "Re-run the installer to add them:\n\n"
+        "    sudo bash /opt/riparr/tools/install.sh\n\n"
+        "Then try again.")
+
+
+def _auth_file(username, password):
+    """Credentials in a 0600 file, not on the command line.
+
+    `-U user%password` has two problems. A '%' anywhere in the password truncates it
+    there, so a perfectly correct password fails authentication for no visible reason.
+    And argv is world-readable through /proc, so every password typed into the setup
+    wizard would be visible to `ps` for the life of the call.
+
+    An authentication file also gives somewhere to put the domain, which matters:
+    accounts are commonly given as DOMAIN\\user or user@domain, and the domain has to be
+    split out rather than passed through as part of the username.
+    """
+    domain = ""
+    if username and "\\" in username:
+        domain, username = username.split("\\", 1)
+    elif username and "@" in username:
+        username, domain = username.split("@", 1)
+
+    f = tempfile.NamedTemporaryFile("w", suffix=".auth", delete=False)
+    os.chmod(f.name, 0o600)
+    f.write("username = %s\npassword = %s\n" % (username, password))
+    if domain:
+        f.write("domain = %s\n" % domain)
+    f.close()
+    return f.name
+
+
+def _auth_args(username, password):
+    """Returns (args, path_to_clean_up). Anonymous when no username is given."""
+    if not username:
+        return ["-N"], None
+    path = _auth_file(username, password)
+    return ["-A", path], path
+
+
+def _forget(path):
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
 
 def discover(timeout=2.5):
     """mDNS first, then a bounded sweep of the local /24. Returns hosts, not shares."""
@@ -79,9 +138,17 @@ def list_shares(host, username="", password=""):
     """Enumerate the shares a host offers. Guest first, since most NAS boxes allow it."""
     if P.MOCK:
         return {"ok": True, "shares": ["Media", "Movies", "TV", "Backups", "public"]}
-    cmd = ["smbclient", "-L", "//%s" % host, "-g"]
-    cmd += (["-U", "%s%%%s" % (username, password)] if username else ["-N"])
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    auth, tmp = _auth_args(username, password)
+    cmd = [SMBCLIENT, "-L", "//%s" % host, "-g"] + auth
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except FileNotFoundError:
+        raise SmbToolMissing()
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "shares": [],
+                "error": "%s did not answer within 20 seconds." % host}
+    finally:
+        _forget(tmp)
     if p.returncode != 0:
         return {"ok": False, "error": _clean(p.stderr or p.stdout), "shares": []}
     shares = [l.split("|")[1] for l in p.stdout.splitlines()
@@ -111,8 +178,8 @@ def test_write(host, share, path, username="", password=""):
         local = f.name
     remote_dir = (path or "").strip("/")
     remote = "%s/%s.txt" % (remote_dir, token) if remote_dir else "%s.txt" % token
-    auth = ["-U", "%s%%%s" % (username, password)] if username else ["-N"]
-    base = ["smbclient", "//%s/%s" % (host, share)] + auth + ["-c"]
+    auth, authfile = _auth_args(username, password)
+    base = [SMBCLIENT, "//%s/%s" % (host, share)] + auth + ["-c"]
 
     try:
         p = subprocess.run(base + ['put "%s" "%s"' % (local, remote)],
@@ -139,9 +206,17 @@ def test_write(host, share, path, username="", password=""):
                     "error": "The file read back different from what was written."}
         return {"ok": True, "wrote": token, "verified": True,
                 "target": "//%s/%s/%s" % (host, share, remote_dir)}
+    except FileNotFoundError:
+        raise SmbToolMissing()
     except subprocess.TimeoutExpired:
         return {"ok": False, "stage": "timeout",
                 "error": "The share did not respond within 45 seconds."}
+    finally:
+        _forget(authfile)
+        try:
+            os.unlink(local)
+        except OSError:
+            pass
 
 
 def _clean(s):

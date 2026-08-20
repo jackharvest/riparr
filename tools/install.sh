@@ -51,7 +51,11 @@ MISSING=()
 # usually has it, but "usually" is not good enough for the one address we print.
 # Armbian ships no avahi at all, which is why the Preparer switches on the
 # systemd-resolved responder instead — see the handoff below.
-for pkg in python3-venv python3-pip git ca-certificates avahi-daemon avahi-utils; do
+# smbclient and cifs-utils are how the box talks to a network share -- the first to
+# browse and test it, the second to mount it. Neither is installed by default, and
+# without smbclient the share step of the first-run wizard fails with a bare 500.
+for pkg in python3-venv python3-pip git ca-certificates avahi-daemon avahi-utils \
+           smbclient cifs-utils; do
   dpkg -s "$pkg" >/dev/null 2>&1 || MISSING+=("$pkg")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then

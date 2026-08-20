@@ -295,6 +295,17 @@ class ShareCreate(ShareTest):
     name: str = ""
 
 
+@app.exception_handler(SH.SmbToolMissing)
+def _smb_tool_missing(request, exc):
+    """A missing smbclient is a fixable setup problem, not a server fault.
+
+    Unhandled it becomes a 500, which tells the user "Request failed (500)" and puts
+    the only useful sentence — FileNotFoundError: 'smbclient' — in a log they will
+    never read.
+    """
+    return JSONResponse(status_code=503, content={"detail": exc.message})
+
+
 @app.get("/api/shares")
 def shares_list(user=Depends(require_user)):
     return {"shares": db.list_shares()}

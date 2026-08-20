@@ -221,9 +221,14 @@ const wizard = {
       <p class="muted">Riparr looks for network shares on your LAN, then writes a real
         test file and reads it back. A wrong path found now is a wrong path you never
         discover at 3am on your first rip.</p>
-      <div class="section"><h2>Network shares<span class="grow"></span><button class="btn" id="w-scan">Scan again</button>
-        </header>
+      <div class="section"><h2>Network shares<span class="grow"></span><button class="btn" id="w-scan">Scan again</button></h2>
         <div class="body" id="w-hosts"><div class="result busy"><span class="spin"></span>Looking for shares…</div></div>
+        <div class="manual-row">
+          <input id="w-manual" placeholder="server name or IP — e.g. mothership.example.lan">
+          <button class="btn" id="w-manual-go">Use this server</button>
+        </div>
+        <p class="help">Discovery only finds servers that advertise themselves. Type one
+          in if yours doesn't, or if it's on another subnet.</p>
       </div>
       <div id="w-detail"></div>
       <div class="wz-actions">
@@ -234,6 +239,10 @@ const wizard = {
     $("#w-skip").onclick = () => this.next();
     $("#w-go").onclick = () => this.next();
     $("#w-scan").onclick = () => this.scanHosts();
+    $("#w-manual-go").onclick = () => this.pickHost($("#w-manual").value.trim());
+    $("#w-manual").onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); $("#w-manual-go").click(); }
+    };
     this.scanHosts();
   },
 
@@ -243,12 +252,8 @@ const wizard = {
     let hosts = [];
     try { hosts = (await api.post("/api/shares/discover")).hosts; } catch (e) {}
     if (!hosts.length) {
-      box.innerHTML = `<div class="result bad">Nothing found. You can enter a server
-        name by hand below.</div>
-        <label class="f" style="margin-top:12px"><span>Server</span>
-        <input id="w-manual" placeholder="tower.local"></label>
-        <button class="btn" id="w-manual-go">Use this server</button>`;
-      $("#w-manual-go").onclick = () => this.pickHost($("#w-manual").value.trim());
+      box.innerHTML = `<div class="result">Nothing advertised itself. Type the server
+        name below — discovery finding nothing does not mean there is nothing there.</div>`;
       return;
     }
     box.innerHTML = hosts.map(h => `
@@ -266,46 +271,93 @@ const wizard = {
     });
   },
 
-  async pickHost(host) {
+  async pickHost(host, creds) {
     if (!host) return;
     this.data.host = host;
+    // Carry credentials across a re-browse. The share list itself is behind
+    // authentication on most servers, so asking anonymously and only then offering a
+    // username means the list is empty exactly when it matters.
+    const user = creds ? creds.user : (this.data.suser || "");
+    const pass = creds ? creds.pass : (this.data.spass || "");
+    this.data.suser = user;
+    this.data.spass = pass;
+
     const d = $("#w-detail");
     d.innerHTML = `<div class="section"><div>
       <div class="result busy"><span class="spin"></span>Asking ${esc(host)} what it offers…</div>
     </div></div>`;
     let res;
-    try { res = await api.post("/api/shares/browse", { host }); }
-    catch (e) { res = { ok: false, error: e.message, shares: [] }; }
+    try {
+      res = await api.post("/api/shares/browse",
+                           { host, username: user, password: pass });
+    } catch (e) { res = { ok: false, error: e.message, shares: [] }; }
 
+    const needsAuth = !res.ok && /LOGON_FAILURE|ACCESS_DENIED|NT_STATUS_ACCESS/i.test(res.error || "");
     d.innerHTML = `<div class="card">
-      <header><h3>${esc(host)}</h3></h2><div>
-        ${res.ok ? "" : `<div class="result bad"><b>Couldn't list shares</b>
+      <header><h3>${esc(host)}</h3></header>
+      <div>
+        ${res.ok ? "" : `<div class="result ${needsAuth ? "" : "bad"}"><b>${
+            needsAuth ? "This server wants a username and password"
+                      : "Couldn't list shares"}</b>
            <div class="why">${esc(res.error)}</div></div>`}
+        <div class="grid2">
+          <label class="f"><span>Username</span>
+            <input id="w-suser" value="${esc(user)}" autocomplete="off"
+                   placeholder="DOMAIN\\user or user"></label>
+          <label class="f"><span>Password</span>
+            <input id="w-spass" type="password" value="${esc(pass)}"
+                   autocomplete="new-password"></label>
+        </div>
+        <div class="btn-row" style="margin:-4px 0 14px">
+          <button class="btn" id="w-recheck">List shares with these credentials</button>
+        </div>
         <label class="f"><span>Share</span>
-          ${res.shares.length
-            ? `<select id="w-share">${res.shares.map(s => `<option>${esc(s)}</option>`).join("")}</select>`
-            : `<input id="w-share" placeholder="Media">`}
+          <input id="w-share" list="w-sharelist" placeholder="OTHER">
+          <datalist id="w-sharelist">${
+            res.shares.map(s => `<option value="${esc(s)}"></option>`).join("")}</datalist>
+          <span class="help">${res.shares.length
+            ? "Pick one, or type a share that wasn't listed."
+            : "Type the share name — it doesn't have to be one we could list."}</span>
         </label>
         <label class="f"><span>Folder inside the share</span>
-          <input id="w-path" placeholder="Movies">
+          <input id="w-path" placeholder="RiparrDumps">
           <span class="help">Leave empty to use the top level.</span></label>
-        <div class="grid2">
-          <label class="f"><span>Username <span class="muted">(optional)</span></span>
-            <input id="w-suser"></label>
-          <label class="f"><span>Password <span class="muted">(optional)</span></span>
-            <input id="w-spass" type="password"></label>
-        </div>
         <div class="btn-row">
           <button class="btn primary" id="w-test">Test write</button>
         </div>
         <div id="w-testres"></div>
       </div></div>`;
 
+    // Re-ask the server, this time as somebody. Keeps whatever share and folder were
+    // already typed, so entering a password does not throw the rest away.
+    $("#w-recheck").onclick = () => {
+      this.data.share = $("#w-share").value.trim();
+      this.data.path = $("#w-path").value.trim();
+      this.pickHost(host, { user: $("#w-suser").value.trim(),
+                            pass: $("#w-spass").value });
+    };
+    if (this.data.share) $("#w-share").value = this.data.share;
+    if (this.data.path) $("#w-path").value = this.data.path;
+    $$("#w-detail input").forEach(i => {
+      i.onkeydown = (e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        (i.id === "w-suser" || i.id === "w-spass" ? $("#w-recheck") : $("#w-test")).click();
+      };
+    });
+
     $("#w-test").onclick = async () => {
       const body = {
         host, share: $("#w-share").value.trim(), path: $("#w-path").value.trim(),
         username: $("#w-suser").value.trim(), password: $("#w-spass").value,
       };
+      if (!body.share) {
+        $("#w-testres").innerHTML =
+          `<div class="result bad"><b>Which share?</b>
+           Enter the share name — for \\\\server\\OTHER\\RiparrDumps that is
+           <code>OTHER</code>, with <code>RiparrDumps</code> as the folder.</div>`;
+        return;
+      }
       const out = $("#w-testres");
       out.innerHTML = `<div class="result busy"><span class="spin"></span>Writing a test
         file and reading it back…</div>`;
