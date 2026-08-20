@@ -53,6 +53,14 @@ else
   say downloading 0.15 "Downloading MakeMKV from makemkv.com" ""
 fi
 
+# The script installs its own build dependencies if they are absent, which on a box
+# where only install.sh was ever run is a few minutes of apt before any compiling. Say
+# so, rather than showing "Building" while nothing is being built.
+if ! dpkg -s build-essential >/dev/null 2>&1; then
+  say building 0.25 "Installing build tools" \
+      "MakeMKV is compiled on the device; this needs a compiler first."
+fi
+
 say building 0.35 "Building MakeMKV for this device" \
     "This is the long part — around half an hour on this board."
 
@@ -66,7 +74,15 @@ fi
 rc=$?
 
 if [ $rc -ne 0 ]; then
-  say error 0 "MakeMKV didn't finish building." "$(tail -n 20 "$LOG")"
+  # The build's stderr -- where compiler errors land -- goes to a separate file, so
+  # the wrapper log alone can say "BUILD FAILED" and nothing about why.
+  detail="$(tail -n 20 "$LOG")"
+  for t in /root/validation/makemkv-oss-build.time; do
+    [ -s "$t" ] && detail="$detail
+--- build errors ---
+$(tail -n 20 "$t")"
+  done
+  say error 0 "MakeMKV didn't finish building." "$detail"
   exit $rc
 fi
 

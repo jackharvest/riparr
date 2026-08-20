@@ -76,12 +76,51 @@ VER=$(basename "$BIN" | sed 's/makemkv-bin-//')
 LOG="$HOME/validation"; mkdir -p "$LOG"
 echo "=== MakeMKV $VER · $(uname -m) · $(nproc) cores · $(free -m | awk '/Mem:/{print $2}') MB RAM ==="
 
+# ── build dependencies ──
+# This has to stand on its own. It is reachable from the web interface, where nobody
+# has run bootstrap.sh and there may be no compiler on the box at all, and the failure
+# mode without this is a C++ build dying on a missing header several minutes in.
+#
+# `time` is the GNU one, from its own package -- Debian does not ship /usr/bin/time by
+# default, and bash's `time` keyword is not a substitute for `-v`. Missing it used to
+# abort the build before make ever started.
+DEPS="build-essential pkg-config libssl-dev libexpat1-dev zlib1g-dev
+      libavcodec-dev libavutil-dev libavformat-dev time"
+MISSING=""
+for pkg in $DEPS; do
+  dpkg -s "$pkg" >/dev/null 2>&1 || MISSING="$MISSING $pkg"
+done
+if [ -n "$MISSING" ]; then
+  echo "=== 0. Build tools:$MISSING ==="
+  if [ "$(id -u)" = 0 ]; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    # shellcheck disable=SC2086
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $MISSING \
+      || { echo "Could not install build tools:$MISSING"; exit 2; }
+  else
+    echo "Not running as root; install these first:"
+    echo "    sudo apt-get install -y$MISSING"
+    exit 2
+  fi
+fi
+
+# Qt5 is deliberately absent: MakeMKV needs it only for the GUI, which --disable-gui
+# skips. It is a large install for nothing on a headless box.
+
 echo "=== 1. Build OSS libraries (libmakemkv, libdriveio) — the slow part ==="
 cd "$OSS"
 # --disable-gui avoids pulling in Qt5, which is a large and pointless install headless
 ./configure --disable-gui --prefix=/usr 2>&1 | tail -15
-/usr/bin/time -v make -j"$JOBS" 2> "$LOG/makemkv-oss-build.time" || {
-    echo "BUILD FAILED — check $LOG/makemkv-oss-build.time"
+
+# Peak RSS here is the R1 measurement, so measure it when we can -- but never let the
+# measurement be the reason the build does not happen.
+TIME=""
+[ -x /usr/bin/time ] && TIME="/usr/bin/time -v"
+# stderr carries both the timing report and any compiler errors, which is what makes
+# this file worth printing on failure.
+$TIME make -j"$JOBS" 2> "$LOG/makemkv-oss-build.time" || {
+    echo "BUILD FAILED — last lines of $LOG/makemkv-oss-build.time:"
+    tail -25 "$LOG/makemkv-oss-build.time" | sed 's/^/    /'
     grep -iE "maximum resident|Elapsed" "$LOG/makemkv-oss-build.time" || true
     echo "If this was an OOM: re-run with --jobs 1, or confirm zram is active (free -h)."
     exit 1

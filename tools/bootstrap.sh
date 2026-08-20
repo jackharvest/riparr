@@ -51,7 +51,10 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq usbutils strace hdparm sysstat ethtool iperf3 \
     build-essential pkg-config libssl-dev libexpat1-dev zlib1g-dev \
     libavcodec-dev libavutil-dev libavformat-dev \
-    less vim curl wget git 2>&1 | tail -3
+    less vim curl wget git time 2>&1 | tail -3
+# `time` is GNU time (/usr/bin/time). Debian does not ship it by default and bash's
+# `time` keyword has no -v, so makemkv-install.sh cannot measure peak build RSS
+# without it — which is the whole of the R1 measurement.
 # NOTE: qtbase5-dev is deliberately absent. MakeMKV needs it only for the GUI,
 # which we skip with ./configure --disable-gui. It is a large install for nothing.
 
