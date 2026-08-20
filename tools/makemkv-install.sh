@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds and installs MakeMKV on the Pi. Run ON the Pi, after tools/bootstrap.sh.
+# Builds and installs MakeMKV on the appliance, after tools/bootstrap.sh.
 #
 # makemkvcon links against libmakemkv.so.1 and libdriveio.so.0, which only exist
 # in the OSS package -- so the OSS build cannot be skipped even though an official
@@ -8,7 +8,13 @@
 # Usage:  ./makemkv-install.sh --accept-eula [--jobs N] [--srcdir DIR]
 set -euo pipefail
 
-JOBS=2                      # 512MB RAM: high -j will OOM during C++ compilation
+# Run from a systemd unit there may be no HOME at all, and `set -u` turns that into a
+# fatal error on this line -- before any argument is parsed, so even an explicit
+# --srcdir cannot save it.
+: "${HOME:=/root}"
+export HOME
+
+JOBS=2                      # a high -j risks OOM during C++ compilation
 SRC="$HOME/makemkv"
 ACCEPT=0
 while [ $# -gt 0 ]; do
