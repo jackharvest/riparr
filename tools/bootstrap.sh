@@ -41,7 +41,8 @@ echo "=== 3. Hardware inventory ==="
   echo; echo "### wifi";   iwconfig 2>/dev/null | head -20; ip -br addr
   echo; echo "### sd card"; cat /sys/block/mmcblk0/device/name 2>/dev/null; \
         cat /sys/block/mmcblk0/device/cid 2>/dev/null
-  echo; echo "### throttle"; vcgencmd get_throttled 2>/dev/null; vcgencmd measure_temp 2>/dev/null
+  echo; echo "### throttle"; vcgencmd get_throttled 2>/dev/null || echo "(no vcgencmd — not a Broadcom board)"
+  echo "### thermal";  for z in /sys/class/thermal/thermal_zone*/temp; do [ -r "$z" ] && echo "$z: $(cat $z)"; done
 } > "$OUT/hardware-inventory.txt" 2>&1
 cat "$OUT/hardware-inventory.txt"
 
@@ -54,11 +55,21 @@ sudo apt-get install -y -qq usbutils strace hdparm sysstat ethtool iperf3 \
 # NOTE: qtbase5-dev is deliberately absent. MakeMKV needs it only for the GUI,
 # which we skip with ./configure --disable-gui. It is a large install for nothing.
 
-echo "=== 5. Enabling zram (R1 mitigation: 512MB is tight) ==="
-sudo apt-get install -y -qq zram-tools 2>&1 | tail -1
-echo "ALGO=lz4" | sudo tee /etc/default/zramswap >/dev/null
-echo "PERCENT=50" | sudo tee -a /etc/default/zramswap >/dev/null
-sudo systemctl restart zramswap 2>/dev/null || true
+echo "=== 5. Enabling zram (R1 mitigation: memory is tight) ==="
+# Armbian manages zram itself through armbian-zram-config. Installing zram-tools on
+# top of it puts two managers on the same job, which is how you end up with no swap
+# at all rather than twice as much.
+if [ -f /etc/default/armbian-zram-config ]; then
+  # Armbian already ships ENABLED=true with ZRAM_PERCENTAGE defaulting to 50, which is
+  # exactly what we would have configured. Touching it would be change for its own sake.
+  echo "  Armbian manages zram (armbian-zram-config, 50% by default) — left alone"
+else
+  sudo apt-get install -y -qq zram-tools 2>&1 | tail -1
+  echo "ALGO=lz4" | sudo tee /etc/default/zramswap >/dev/null
+  echo "PERCENT=50" | sudo tee -a /etc/default/zramswap >/dev/null
+  sudo systemctl restart zramswap 2>/dev/null || true
+fi
+swapon --show 2>/dev/null || true
 free -h
 
 echo
