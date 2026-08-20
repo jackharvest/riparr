@@ -30,8 +30,10 @@ that cost time to discover. Those two reload context fastest.
 
 ## Status
 
-**Early implementation.** The SD preparer and the Riparr service both exist and run. **No
-hardware has been validated and the test card has never been written.**
+**Early implementation.** The SD preparer and the Riparr service both exist and run.
+**The card is written and provisioned but has never been booted, and no hardware has been
+validated.** Nothing blocks the first boot — see [`JOURNAL.md`](JOURNAL.md) for the exact
+state of the card and the next seven steps.
 
 Last working session: **2026-08-19**
 
