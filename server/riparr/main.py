@@ -5,13 +5,15 @@ which is what makes Homepage widgets and multi-unit setups nearly free later.
 import os
 import time
 
-from fastapi import FastAPI, HTTPException, Request, Response, Depends
+from fastapi import (FastAPI, File, HTTPException, Request, Response, Depends,
+                     UploadFile)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from itsdangerous import URLSafeSerializer, BadSignature
 
-from . import __version__, db, makemkv as MK, platform as P, shares as SH, updater
+from . import (__version__, db, makemkv as MK, platform as P, shares as SH,
+               system as SY, updater)
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
@@ -31,6 +33,8 @@ def _secret():
 def _startup():
     db.init()
     _secret()
+    SY.init()
+    SY.start_scheduler()
 
 
 # ─────────────────────────────── auth ───────────────────────────────
@@ -510,6 +514,93 @@ async def config_import(request: Request, user=Depends(require_user)):
     for k, v in (body.get("settings") or {}).items():
         if k != "session_secret":
             db.set(k, v)
+    return {"ok": True}
+
+
+# ──────────────────── system: tasks, events, logs, backups ────────────────────
+
+@app.get("/api/system/tasks")
+def system_tasks(user=Depends(require_user)):
+    return {"scheduled": SY.task_list(), "queue": SY.task_history(limit=20)}
+
+
+@app.post("/api/system/tasks/{name}")
+def system_task_run(name: str, user=Depends(require_user)):
+    r = SY.run_task(name, trigger="manual")
+    if r is None:
+        raise HTTPException(status_code=404, detail="No such task")
+    return r
+
+
+@app.get("/api/system/events")
+def system_events(limit: int = 50, offset: int = 0, levels: str = "",
+                  user=Depends(require_user)):
+    wanted = [l for l in levels.split(",") if l] or None
+    return SY.events(limit=min(limit, 200), offset=offset, levels=wanted)
+
+
+@app.delete("/api/system/events")
+def system_events_clear(user=Depends(require_user)):
+    SY.clear_events()
+    return {"ok": True}
+
+
+@app.get("/api/system/logs")
+def system_logs(user=Depends(require_user)):
+    return {"path": SY.LOG_DIR, "files": SY.log_files()}
+
+
+@app.get("/api/system/logs/{name}")
+def system_log_download(name: str, user=Depends(require_user)):
+    path = SY.log_path(name)
+    if not path:
+        raise HTTPException(status_code=404, detail="No such log file")
+    return FileResponse(path, media_type="text/plain", filename=name)
+
+
+@app.delete("/api/system/logs")
+def system_logs_clear(user=Depends(require_user)):
+    return {"ok": True, "deleted": SY.delete_log_files()}
+
+
+@app.get("/api/system/backups")
+def system_backups(user=Depends(require_user)):
+    return {"path": SY.BACKUP_DIR, "keep": SY.BACKUP_KEEP, "backups": SY.backups()}
+
+
+@app.post("/api/system/backups/upload")
+async def system_backup_upload(file: UploadFile = File(...), user=Depends(require_user)):
+    r = SY.import_backup(file.filename or "upload", await file.read())
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error", "Restore failed"))
+    return r
+
+
+@app.post("/api/system/backups")
+def system_backup_create(user=Depends(require_user)):
+    return SY.create_backup(kind="manual")
+
+
+@app.get("/api/system/backups/{name}")
+def system_backup_download(name: str, user=Depends(require_user)):
+    path = SY.backup_path(name)
+    if not path:
+        raise HTTPException(status_code=404, detail="No such backup")
+    return FileResponse(path, media_type="application/zip", filename=name)
+
+
+@app.post("/api/system/backups/{name}/restore")
+def system_backup_restore(name: str, user=Depends(require_user)):
+    r = SY.restore_backup(name)
+    if not r.get("ok"):
+        raise HTTPException(status_code=404, detail=r.get("error", "Restore failed"))
+    return r
+
+
+@app.delete("/api/system/backups/{name}")
+def system_backup_delete(name: str, user=Depends(require_user)):
+    if not SY.delete_backup(name):
+        raise HTTPException(status_code=404, detail="No such backup")
     return {"ok": True}
 
 

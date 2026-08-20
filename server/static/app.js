@@ -113,6 +113,57 @@ function capacityPhrase(st) {
   if (st.mode === "stream") return `<b>Streaming</b> — discs are never refused for space`;
   return `<b>Not enough room</b> to rip safely`;
 }
+/* ── formatting for the System tables ─────────────────────
+   Prowlarr's wording, because these tables are read the same way: a relative time for
+   anything within a few days, an absolute one past that. */
+function since(ts) {
+  if (!ts) return "—";
+  const d = ts - Date.now() / 1000;
+  const fut = d > 0, s = Math.abs(d);
+  if (s < 45) return fut ? "in a moment" : "just now";
+  const n = (v, u) => `${Math.round(v)} ${u}${Math.round(v) === 1 ? "" : "s"}`;
+  const t = s < 3600 ? n(s / 60, "minute")
+          : s < 86400 ? n(s / 3600, "hour")
+          : n(s / 86400, "day");
+  return fut ? `in ${t}` : `${t} ago`;
+}
+
+function hms(sec) {
+  if (sec == null) return "—";
+  const s = Math.max(0, Math.round(sec));
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
+}
+
+function interval(sec) {
+  if (!sec) return "—";
+  if (sec % 86400 === 0) return `${sec / 86400} day${sec === 86400 ? "" : "s"}`;
+  if (sec % 3600 === 0) return `${sec / 3600} hour${sec === 3600 ? "" : "s"}`;
+  return `${Math.round(sec / 60)} minutes`;
+}
+
+/* Today gets a clock time, yesterday gets a word, anything older gets a date -- the
+   same three-way split the *arrs use, and the reason their tables stay scannable. */
+function stamp(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000), now = new Date();
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = (day(now) - day(d)) / 86400000;
+  if (diff === 0) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                          .replace(" ", "").toLowerCase();
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+function filesize(b) {
+  if (b == null) return "—";
+  if (b < 1024) return `${b} B`;
+  const u = ["KiB", "MiB", "GiB", "TiB"];
+  let v = b / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${u[i]}`;
+}
+
 function uptime(sec) {
   const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -162,7 +213,7 @@ const wizard = {
     w.classList.remove("hidden");
     w.innerHTML = `
       <div class="wz-head">
-        <div class="logo"><span class="logo-mark">◉</span> Riparr</div>
+        <div class="logo"><img class="logo-mark" src="/static/img/riparr-mark.png" alt=""> <span class="logo-word">Riparr</span></div>
         <div class="wz-rail">${this.steps.map((_, i) =>
           `<div class="${i <= this.step ? "done" : ""}"></div>`).join("")}</div>
       </div>
@@ -557,10 +608,10 @@ views.queue = async () => {
     ${head("Queue", "Ripping and uploading happen as one overlapping operation.")}
     ${autoRipPanel(ar)}
     <div class="toolbar">
-      <button class="tool" id="t-refresh"><span class="ti">⟳</span>Refresh</button>
-      <button class="tool" id="t-eject"><span class="ti">⏏</span>Eject</button>
-      <a class="tool sep" href="#/settings/library"><span class="ti">⚙</span>Options</a>
-      <a class="tool" href="#/system/status"><span class="ti">▣</span>Status</a>
+      <button class="tool" id="t-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
+      <button class="tool" id="t-eject"><span class="ti">${icon("eject")}</span>Eject</button>
+      <a class="tool sep" href="#/settings/library"><span class="ti">${icon("gears")}</span>Options</a>
+      <a class="tool" href="#/system/status"><span class="ti">${icon("laptop")}</span>Status</a>
     </div>
     ${jobs.length ? `<div class="card"><table>
       <thead><tr><th>Title</th><th>Mode</th><th>Rip</th><th>Upload</th><th>State</th></tr></thead>
@@ -572,7 +623,7 @@ views.queue = async () => {
         <td><span class="badge">${esc(j.state)}</span></td>
       </tr>`).join("")}</tbody></table></div>`
     : `<div class="card"><div class="empty-state">
-        <div class="big">◎</div>
+        <div class="big">${icon("compact-disc")}</div>
         <h2>Nothing in the queue</h2>
         <p>${drives.length && drives[0].present
              ? `A disc is loaded: <b>${esc(drives[0].label || "unknown")}</b>`
@@ -642,7 +693,7 @@ views.history = async () => {
         <td><span class="badge ${j.state === "done" ? "ok" : "bad"}">${esc(j.state)}</span>
           ${j.error ? `<div class="s muted">${esc(j.error)}</div>` : ""}</td>
       </tr>`).join("")}</tbody></table></div>`
-    : `<div class="card"><div class="empty-state"><div class="big">◷</div>
+    : `<div class="card"><div class="empty-state"><div class="big">${icon("clock-rotate-left")}</div>
         <h2>No history yet</h2><p>Finished rips will appear here.</p></div></div>`}`;
 };
 
@@ -656,7 +707,7 @@ views.discs = async () => {
         <td class="muted">${ago(d.ripped_at)}</td>
         <td><button class="btn" data-forget="${esc(d.fingerprint)}">Forget</button></td>
       </tr>`).join("")}</tbody></table></div>`
-    : `<div class="card"><div class="empty-state"><div class="big">◎</div>
+    : `<div class="card"><div class="empty-state"><div class="big">${icon("compact-disc")}</div>
         <h2>No discs recorded</h2>
         <p>Once Riparr rips a disc it remembers it, so reinserting it is refused
            instead of costing you forty minutes.</p></div></div>`}`;
@@ -696,7 +747,7 @@ settingsPages.library = async (s) => {
           </div>
           <button class="btn danger" data-del-share="${sh.id}">Remove</button>
         </div>`).join("")
-      : `<div class="empty-state"><div class="big">▤</div><h2>No share configured</h2>
+      : `<div class="empty-state"><div class="big">${icon("hard-drive")}</div><h2>No share configured</h2>
           <p>Finished rips have nowhere to go until you add one.</p></div>`}
       <div id="share-add"></div>
     </div></div>
@@ -868,8 +919,19 @@ settingsPages.general = async (s) => {
     </div></div>${saveBar()}`;
 };
 
-/* ── system ── */
-const SYSTEM_TABS = [["status", "Status"], ["updates", "Updates"], ["backup", "Backup"]];
+/* ── system ──────────────────────────────────────────────────────────────────
+   Six pages in Prowlarr's order. The shape is copied deliberately: full-width
+   sections stacked down the page, a 21px heading with a rule under it, a toolbar of
+   icon-over-label buttons where a page has actions, and tables at 14px with bold
+   sentence-case headers. The *arrs put nothing side by side here and neither do we. */
+const SYSTEM_TABS = [
+  ["status",  "Status"],
+  ["tasks",   "Tasks"],
+  ["backup",  "Backup"],
+  ["updates", "Updates"],
+  ["events",  "Events"],
+  ["logs",    "Log Files"],
+];
 
 views.system = async (sub = "status") => {
   const body = await (systemPages[sub] || systemPages.status)();
@@ -879,90 +941,307 @@ views.system = async (sub = "status") => {
 
 const systemPages = {};
 
+/* ── Status ── */
 systemPages.status = async () => {
   const st = await api.get("/api/status");
   state.status = st;
-  const sys = st.system, m = st.makemkv;
+  const sys = st.system, m = st.makemkv, s = st.storage;
+
+  const health = healthMessages(st);
+  const healthRows = health.length
+    ? health.map(h => `<tr>
+        <td class="stat">${icon(h.level === "bad" ? "circle-exclamation" : "triangle-exclamation",
+                                h.level === "bad" ? "bad" : "warn")}</td>
+        <td>${h.message}</td>
+        <td class="act">${h.href
+          ? `<a class="icon-btn" href="${h.href}" title="${esc(h.action || "Fix")}"
+               >${icon("gears")}</a>` : ""}</td></tr>`).join("")
+    : `<tr><td class="stat">${icon("circle-check", "ok")}</td>
+         <td colspan="2">No issues. Everything Riparr can check is working.</td></tr>`;
+
   return `
-    ${sys.mock ? `<div class="result busy" style="margin-bottom:16px">
-      <b>Development mode</b>This process isn't running on Pi hardware, so system,
-      drive and share readings are simulated.</div>` : ""}
-    <div class="grid2">
-      <div class="section"><h2>Appliance</h2><div><div class="kv">
+    ${sys.mock ? `<div class="alert warn"><b>Development mode.</b>
+      This process isn't running on Pi hardware, so system, drive and share readings
+      are simulated.</div>` : ""}
+
+    <div class="section"><h2>Health</h2>
+      <table><tbody>${healthRows}</tbody></table>
+      <div class="alert">Health checks re-run every six hours, and whenever you open
+        this page. You can force one from
+        <a href="#/system/tasks">Tasks</a>; anything logged along the way is on
+        <a href="#/system/events">Events</a>.</div>
+    </div>
+
+    <div class="section"><h2>About</h2>
+      <div class="kv">
+        <div class="k">Version</div><div class="v">${esc(st.version)}</div>
         <div class="k">Model</div><div class="v">${esc(sys.model)}</div>
         <div class="k">Operating system</div><div class="v">${esc(sys.os)}</div>
-        <div class="k">Riparr version</div><div class="v">${esc(st.version)}</div>
-        <div class="k">Up for</div><div class="v">${uptime(sys.uptime_seconds)}</div>
+        <div class="k">Kernel</div><div class="v">${esc(sys.kernel || "—")}</div>
+        <div class="k">Mode</div><div class="v">${sys.mock ? "Development (simulated)" : "Appliance"}</div>
         <div class="k">Memory</div><div class="v">${sys.memory_used_mb} of ${sys.memory_total_mb} MB</div>
         <div class="k">Temperature</div><div class="v">${sys.cpu_temp_c ?? "—"} °C
           ${sys.throttled ? '<span class="badge warn">throttled</span>' : ""}</div>
-      </div></div></div>
-      <div class="section"><h2>Storage</h2><div>
-        <p style="font-size:15px;color:var(--fg-strong)">${capacityPhrase(st.storage)}</p>
-        ${st.storage.dedicated === false ? `<div class="result bad" style="margin-top:10px">
-          <b>No staging partition</b>Rips are sharing the system filesystem, so a stalled
-          upload queue could fill the root filesystem and take the box down.
-          ${esc(st.storage.path || "")}</div>` : ""}
-        <div class="bar" style="margin:12px 0 8px">
-          <i style="width:${pct(st.storage.used_bytes, st.storage.total_bytes)}%"></i></div>
-        <p class="muted" style="font-size:12px">Buffer, not permanent storage — files
-          leave as they're written.</p>
-      </div></div>
-      <div class="section"><h2>Disc reading<span class="grow"></span><span class="badge ${m.installed ? "ok" : "bad"}">${m.installed ? "Ready" : "Missing"}</span></h2><div><div class="kv">
+        <div class="k">Uptime</div><div class="v">${uptime(sys.uptime_seconds)}</div>
+      </div>
+    </div>
+
+    <div class="section"><h2>Storage</h2>
+      <div class="kv">
+        <div class="k">Capacity</div><div class="v">${capacityPhrase(s)}</div>
+        <div class="k">Staging path</div><div class="v">${esc(s.path || "—")}
+          ${s.dedicated === false ? '<span class="badge bad">shared with root</span>' : ""}</div>
+        <div class="k">Used</div><div class="v">${filesize(s.used_bytes)}
+          of ${filesize(s.total_bytes)}</div>
+      </div>
+      <div class="bar" style="margin:4px 0 8px"><i style="width:${pct(s.used_bytes, s.total_bytes)}%"></i></div>
+      <p class="muted" style="font-size:13px">Buffer, not permanent storage — files
+        leave as they're written.</p>
+      ${s.dedicated === false ? `<div class="alert bad"><b>No staging partition.</b>
+        Rips are sharing the system filesystem, so a stalled upload queue could fill the
+        root filesystem and take the box down.</div>` : ""}
+    </div>
+
+    <div class="section"><h2>Disc reading<span class="grow"></span>
+      <span class="badge ${m.installed ? "ok" : "bad"}">${m.installed ? "Ready" : "Missing"}</span></h2>
+      <div class="kv">
         <div class="k">MakeMKV</div><div class="v">${m.installed ? esc(m.version || "installed") : "not installed"}</div>
         <div class="k">Key</div><div class="v">${m.key_expires
-          ? `expires ${esc(m.key_expires)} — ${m.days_left} days` : "none"}</div>
-      </div></div></div>
-      <div class="section"><h2>Network</h2><div><div class="kv">
-        <div class="k">Wi-Fi</div><div class="v">${
-          st.wifi.ssid
-            ? `${esc(st.wifi.ssid)}${st.wifi.band ? ` <span class="muted">· ${esc(st.wifi.band)} GHz</span>` : ""}`
-            : "offline"}</div>
-        <div class="k">Signal</div><div class="v">${
-          st.wifi.signal == null ? "—"
-            : `${signalBars(st.wifi.signal)} ${st.wifi.signal}%`}</div>
+          ? `expires ${esc(m.key_expires)} — ${m.days_left} days`
+          : "none"}</div>
+        <div class="k">Drive</div><div class="v">${(st.drives && st.drives.length)
+          ? st.drives.map(d => esc(d.name || d.device)).join(", ")
+          : `<span class="muted">${esc((st.optical && st.optical.summary) || "no drive detected")}</span>`}</div>
+      </div>
+    </div>
+
+    <div class="section"><h2>Network</h2>
+      <div class="kv">
+        <div class="k">Wi-Fi</div><div class="v">${st.wifi.ssid
+          ? `${esc(st.wifi.ssid)}${st.wifi.band ? ` <span class="muted">· ${esc(st.wifi.band)} GHz</span>` : ""}`
+          : "offline"}</div>
+        <div class="k">Signal</div><div class="v">${st.wifi.signal == null ? "—"
+          : `${signalBars(st.wifi.signal)} ${st.wifi.signal}%`}</div>
         <div class="k">Address</div><div class="v">${esc(st.wifi.ip || "—")}</div>
+        <div class="k">Hostname</div><div class="v">${esc(st.hostname)}.local</div>
         <div class="k">Share</div><div class="v">${st.share
           ? `//${esc(st.share.host)}/${esc(st.share.path)}` : "not configured"}</div>
-      </div></div></div>
+      </div>
+    </div>
+
+    <div class="section"><h2>More Info</h2>
+      <div class="kv">
+        <div class="k">Source</div><div class="v">
+          <a href="https://github.com/jackharvest/riparr" target="_blank" rel="noopener">github.com/jackharvest/riparr</a></div>
+        <div class="k">Feature requests</div><div class="v">
+          <a href="https://github.com/jackharvest/riparr/issues" target="_blank" rel="noopener">github.com/jackharvest/riparr/issues</a></div>
+        <div class="k">MakeMKV</div><div class="v">
+          <a href="https://www.makemkv.com/forum/" target="_blank" rel="noopener">makemkv.com/forum</a></div>
+      </div>
     </div>`;
 };
 
+/* Health is derived here rather than server-side because every message needs a link to
+   the screen that fixes it, and only the client knows the routes. */
+function healthMessages(st) {
+  const out = [];
+  const m = st.makemkv;
+  if (!m.installed)
+    out.push({ level: "bad", message: "MakeMKV is not installed, so no disc can be read.",
+               href: "#/settings/makemkv", action: "Install MakeMKV" });
+  else if (m.days_left != null && m.days_left <= 0)
+    out.push({ level: "bad", message: "The MakeMKV key has expired. Rips will fail until it is replaced.",
+               href: "#/settings/makemkv", action: "Update the key" });
+  else if (m.days_left != null && m.days_left <= (state.settings?.warn_key_days ?? 7))
+    out.push({ level: "warn", message: `The MakeMKV key expires in ${m.days_left} day(s).`,
+               href: "#/settings/makemkv", action: "Update the key" });
+
+  if (!st.drives || !st.drives.length)
+    out.push({ level: "bad", message: `No optical drive detected — ${
+      esc((st.optical && st.optical.summary) || "nothing is on the USB bus")}.`,
+      href: "#/system/status", action: "Details" });
+
+  if (!st.share)
+    out.push({ level: "warn", message: "No network share configured, so finished rips have nowhere to go.",
+               href: "#/settings/share", action: "Add a share" });
+
+  if (!st.wifi.connected)
+    out.push({ level: "bad", message: "Wi-Fi is not connected.",
+               href: "#/settings/network", action: "Network settings" });
+
+  if (st.storage.dedicated === false)
+    out.push({ level: "warn", message: "Rips are staged on the system filesystem, not a dedicated partition.",
+               href: "#/system/status", action: "Details" });
+
+  if (st.storage.mode === "degraded")
+    out.push({ level: "warn", message: "Not enough free space to rip safely.",
+               href: "#/system/status", action: "Details" });
+
+  return out;
+}
+
+/* ── Tasks ── */
+systemPages.tasks = async () => {
+  const t = await api.get("/api/system/tasks");
+  const rows = t.scheduled.map(s => `<tr>
+      <td>${esc(s.label)}</td>
+      <td>${interval(s.interval)}</td>
+      <td>${since(s.last_execution)}</td>
+      <td>${s.last_duration == null ? "—" : hms(s.last_duration)}</td>
+      <td>${since(s.next_execution)}</td>
+      <td class="act"><button class="icon-btn" data-task="${esc(s.name)}"
+          title="Run now">${icon("arrows-rotate")}</button></td>
+    </tr>`).join("");
+
+  const queue = t.queue.length ? t.queue.map(q => `<tr>
+      <td class="stat">${q.error ? icon("circle-exclamation", "bad")
+                                 : q.ended_at ? icon("check", "ok") : icon("clock")}</td>
+      <td>${esc(q.label)}</td>
+      <td>${since(q.queued_at)}</td>
+      <td>${since(q.started_at)}</td>
+      <td>${since(q.ended_at)}</td>
+      <td>${q.ended_at && q.started_at ? hms(q.ended_at - q.started_at) : "—"}</td>
+      <td>${q.error ? `<span class="badge bad">${esc(q.error)}</span>` : ""}</td>
+    </tr>`).join("")
+    : `<tr><td colspan="7" class="muted">Nothing has run yet.</td></tr>`;
+
+  return `
+    <div class="section"><h2>Scheduled</h2>
+      <table>
+        <thead><tr><th>Name</th><th>Interval</th><th>Last Execution</th>
+          <th>Last Duration</th><th>Next Execution</th><th class="act"></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="section"><h2>Queue</h2>
+      <table>
+        <thead><tr><th class="stat"></th><th>Name</th><th>Queued</th><th>Started</th>
+          <th>Ended</th><th>Duration</th><th></th></tr></thead>
+        <tbody>${queue}</tbody>
+      </table>
+    </div>`;
+};
+
+/* ── Backup ── */
+systemPages.backup = async () => {
+  const b = await api.get("/api/system/backups");
+  const rows = b.backups.length ? b.backups.map(x => `<tr>
+      <td class="stat">${icon(x.kind === "scheduled" ? "clock" : "file-zipper")}</td>
+      <td><a href="/api/system/backups/${encodeURIComponent(x.name)}">${esc(x.name)}</a></td>
+      <td>${filesize(x.size)}</td>
+      <td>${stamp(x.modified)}</td>
+      <td class="act">
+        <button class="icon-btn" data-restore="${esc(x.name)}" title="Restore">${icon("clock-rotate-left")}</button>
+        <button class="icon-btn" data-delbackup="${esc(x.name)}" title="Delete">${icon("trash-can")}</button>
+      </td></tr>`).join("")
+    : `<tr><td colspan="5" class="muted">No backups yet.</td></tr>`;
+
+  return `
+    <div class="toolbar">
+      <button class="tool" id="bk-now"><span class="ti">${icon("file-zipper")}</span>Backup<br>Now</button>
+      <button class="tool" id="bk-upload"><span class="ti">${icon("upload")}</span>Restore<br>Backup</button>
+      <input type="file" id="bk-file" accept=".zip,application/zip,.json,application/json" class="hidden">
+    </div>
+    <div class="alert">Backups are written to <code>${esc(b.path)}</code> and hold your
+      settings, shares and disc history — everything that is not re-derivable. A backup
+      runs on its own every seven days and the last ${b.keep} are kept.
+      <br>Share passwords are deliberately left out, so a restore asks for them again.</div>
+    <div class="section"><h2>Backups</h2>
+      <table>
+        <thead><tr><th class="stat"></th><th>Name</th><th>Size</th><th>Time</th>
+          <th class="act"></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+};
+
+/* ── Updates ── */
 systemPages.updates = async () => {
   const u = await api.get("/api/update");
   const kind = u.status === "update" ? "warn" : u.status === "current" ? "ok" : "";
-  return `<div class="section"><h2>Riparr updates<span class="grow"></span><span class="badge ${kind}">${esc(u.status)}</span></h2><div>
+  return `
+    <div class="toolbar">
+      <button class="tool" id="upd-check"><span class="ti">${icon("arrows-rotate")}</span>Check<br>Again</button>
+      <button class="tool" id="upd-install" ${u.can_install ? "" : "disabled"}>
+        <span class="ti">${icon("download")}</span>Install<br>Latest</button>
+    </div>
+    <div class="section"><h2>Riparr updates<span class="grow"></span>
+      <span class="badge ${kind}">${esc(u.status)}</span></h2>
       <div class="kv">
-        <div class="k">Installed</div><div class="v">${esc(u.current)}</div>
+        <div class="k">Installed</div><div class="v">${esc(u.current)}
+          <span class="badge ok">Currently Installed</span></div>
         <div class="k">Latest</div><div class="v">${esc(u.latest || "—")}</div>
         <div class="k">Source</div><div class="v">
           <a href="https://github.com/${esc(u.repo)}" target="_blank" rel="noopener">github.com/${esc(u.repo)}</a></div>
       </div>
-      <div class="result ${u.status === "update" ? "busy" : ""}" style="margin-top:16px">
-        ${esc(u.message || "")}</div>
-      ${u.notes ? `<div class="card" style="margin-top:14px"><header><h3>Release notes</h3></header>
-        <div class="body"><pre style="white-space:pre-wrap;font-size:12.5px;color:var(--fg)">${esc(u.notes)}</pre></div></div>` : ""}
-      <div class="btn-row" style="margin-top:14px">
-        <button class="btn" id="upd-check">Check again</button>
-        <button class="btn primary" id="upd-install" ${u.can_install ? "" : "disabled"}>
-          Install update</button>
-      </div>
+      <div class="alert ${u.status === "update" ? "warn" : ""}">${esc(u.message || "")}</div>
       ${!u.can_install && u.status === "update"
-        ? `<p class="help muted" style="margin-top:8px">Updates install on the appliance
+        ? `<p class="muted" style="font-size:13px">Updates install on the appliance
            itself. This process is running in development mode.</p>` : ""}
-    </div></div>`;
+    </div>
+    ${u.notes ? `<div class="section"><h2>Release notes</h2>
+      <pre class="notes">${esc(u.notes)}</pre></div>` : ""}`;
 };
 
-systemPages.backup = async () => `
-  <div class="section"><h2>Settings backup</h2><div>
-    <p class="muted">Export once you're set up. Rebuilding a card then becomes a
-      thirty-second job instead of repeating this whole setup.</p>
-    <div class="btn-row" style="margin-top:14px">
-      <a class="btn primary" href="/api/config/export" download>Export settings</a>
-      <button class="btn" id="import-btn">Import settings</button>
-      <input type="file" id="import-file" accept="application/json" class="hidden">
+/* ── Events ── */
+const EVENT_LEVELS = { info: ["circle-info", ""], warning: ["triangle-exclamation", "warn"],
+                       warn: ["triangle-exclamation", "warn"], error: ["circle-exclamation", "bad"],
+                       critical: ["circle-exclamation", "bad"], debug: ["circle", "muted"] };
+
+systemPages.events = async () => {
+  const e = await api.get("/api/system/events?limit=100");
+  const rows = e.events.length ? e.events.map(x => {
+    const [ic, cls] = EVENT_LEVELS[x.level] || EVENT_LEVELS.info;
+    return `<tr>
+      <td class="stat">${icon(ic, cls)}</td>
+      <td>${stamp(x.at)}</td>
+      <td>${esc(x.component)}</td>
+      <td>${esc(x.message)}</td></tr>`;
+  }).join("")
+    : `<tr><td colspan="4" class="muted">Nothing logged yet.</td></tr>`;
+
+  return `
+    <div class="toolbar">
+      <button class="tool" id="ev-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
+      <button class="tool" id="ev-clear"><span class="ti">${icon("trash-can")}</span>Clear</button>
     </div>
-  </div></div>`;
+    <div class="section"><h2>Events<span class="grow"></span>
+      <span class="muted" style="font-size:13px">${e.total} recorded</span></h2>
+      <table>
+        <thead><tr><th class="stat"></th><th>Time</th><th>Component</th><th>Message</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+};
+
+/* ── Log Files ── */
+systemPages.logs = async () => {
+  const l = await api.get("/api/system/logs");
+  const rows = l.files.length ? l.files.map(f => `<tr>
+      <td>${esc(f.name)}</td>
+      <td>${filesize(f.size)}</td>
+      <td>${stamp(f.modified)}</td>
+      <td class="act"><a href="/api/system/logs/${encodeURIComponent(f.name)}"
+        download>Download</a></td></tr>`).join("")
+    : `<tr><td colspan="4" class="muted">No log files yet.</td></tr>`;
+
+  return `
+    <div class="toolbar">
+      <button class="tool" id="lg-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
+      <button class="tool" id="lg-delete"><span class="ti">${icon("trash-can")}</span>Delete</button>
+    </div>
+    <div class="alert">Log files are in <code>${esc(l.path)}</code>.
+      <br><code>riparr.txt</code> is the ordinary record; <code>riparr.debug.txt</code>
+      keeps everything and is the one to send if you are asking for help. Each is capped
+      at 1 MB and rotated five times, because every write is a write to the SD card.</div>
+    <div class="section"><h2>Files</h2>
+      <table>
+        <thead><tr><th>Filename</th><th>Size</th><th>Last Write Time</th>
+          <th class="act"></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+};
 
 /* ── shared fragments ── */
 function head(title, sub) {
@@ -986,12 +1265,12 @@ function saveBar() {
    *arr apps put sub-navigation in the sidebar, expanded under the active section,
    rather than in a tab strip above the content. */
 const NAV = [
-  { id: "queue",   label: "Queue",   icon: "▤", href: "#/queue" },
-  { id: "history", label: "History", icon: "◷", href: "#/history" },
-  { id: "discs",   label: "Discs",   icon: "◎", href: "#/discs" },
-  { id: "settings", label: "Settings", icon: "⚙", href: "#/settings/library",
+  { id: "queue",   label: "Queue",   icon: "table", href: "#/queue" },
+  { id: "history", label: "History", icon: "clock-rotate-left", href: "#/history" },
+  { id: "discs",   label: "Discs",   icon: "compact-disc", href: "#/discs" },
+  { id: "settings", label: "Settings", icon: "gears", href: "#/settings/library",
     children: SETTINGS_TABS.map(([k, l]) => ({ key: k, label: l, href: `#/settings/${k}` })) },
-  { id: "system",  label: "System",  icon: "▣", href: "#/system/status",
+  { id: "system",  label: "System",  icon: "laptop", href: "#/system/status",
     children: SYSTEM_TABS.map(([k, l]) => ({ key: k, label: l, href: `#/system/${k}` })) },
 ];
 
@@ -1015,7 +1294,7 @@ function renderSidebar(section, sub) {
     const on = n.id === section;
     const badge = badges[n.id] ? `<span class="nav-badge">${badges[n.id]}</span>` : "";
     let html = `<a class="nav-top ${on ? "on" : ""}" href="${n.href}">
-      <span class="ico">${n.icon}</span>${n.label}${badge}</a>`;
+      <span class="ico">${icon(n.icon)}</span>${n.label}${badge}</a>`;
     if (on && n.children) {
       html += n.children.map(c =>
         `<a class="nav-sub ${c.key === sub ? "on" : ""}" href="${c.href}">${c.label}</a>`).join("");
@@ -1039,9 +1318,10 @@ async function route() {
     content.innerHTML = await view(sub);
   } catch (e) {
     content.innerHTML = `<div class="card"><div class="empty-state">
-      <div class="big">!</div><h2>Couldn't load that</h2><p>${esc(e.message)}</p></div></div>`;
+      <div class="big">${icon("triangle-exclamation")}</div><h2>Couldn't load that</h2><p>${esc(e.message)}</p></div></div>`;
     return;
   }
+  paintIcons(content);
   wireContent(section, sub);
   $("#sidebar").classList.remove("open");
 }
@@ -1071,6 +1351,93 @@ function wireContent(section, sub) {
       autorip.checked = !want;
       toast(e.message, "bad");
     }
+  };
+
+  /* ── System: Tasks, Backup, Events, Log Files ── */
+  $$("[data-task]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const r = await api.post(`/api/system/tasks/${b.dataset.task}`);
+      toast(r.error ? `${r.label} failed: ${r.error}` : `${r.label} finished`,
+            r.error ? "bad" : "ok");
+    } catch (e) { toast(e.message, "bad"); }
+    route();
+  });
+
+  const bkNow = $("#bk-now");
+  if (bkNow) bkNow.onclick = async () => {
+    bkNow.disabled = true;
+    try {
+      const r = await api.post("/api/system/backups");
+      toast(`Backup written — ${filesize(r.size)}`, "ok");
+    } catch (e) { toast(e.message, "bad"); }
+    route();
+  };
+
+  const bkUpload = $("#bk-upload"), bkFile = $("#bk-file");
+  if (bkUpload) {
+    bkUpload.onclick = () => bkFile.click();
+    bkFile.onchange = async () => {
+      const f = bkFile.files[0];
+      if (!f) return;
+      if (!confirm(`Restore from ${f.name}?\n\nThis overwrites your current settings.`)) {
+        bkFile.value = "";
+        return;
+      }
+      const fd = new FormData();
+      fd.append("file", f);
+      try {
+        // FormData, so no JSON Content-Type -- the browser has to set the boundary.
+        const r = await fetch("/api/system/backups/upload", { method: "POST", body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || "Restore failed");
+        toast(`Restored ${d.settings} setting(s). ${d.note}`, "ok");
+      } catch (e) { toast(e.message, "bad"); }
+      bkFile.value = "";
+      route();
+    };
+  }
+
+  $$("[data-restore]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.restore;
+    if (!confirm(`Restore ${name}?\n\nThis overwrites your current settings. `
+                 + `Share passwords are not in a backup and will have to be re-entered.`)) return;
+    try {
+      const r = await api.post(`/api/system/backups/${encodeURIComponent(name)}/restore`);
+      toast(`Restored ${r.settings} setting(s). ${r.note}`, "ok");
+    } catch (e) { toast(e.message, "bad"); }
+    route();
+  });
+
+  $$("[data-delbackup]").forEach(b => b.onclick = async () => {
+    const name = b.dataset.delbackup;
+    if (!confirm(`Delete ${name}?`)) return;
+    try { await api.del(`/api/system/backups/${encodeURIComponent(name)}`); }
+    catch (e) { toast(e.message, "bad"); }
+    route();
+  });
+
+  const evRefresh = $("#ev-refresh");
+  if (evRefresh) evRefresh.onclick = () => route();
+  const evClear = $("#ev-clear");
+  if (evClear) evClear.onclick = async () => {
+    if (!confirm("Clear the event log?\n\nThe log files on disk are not touched.")) return;
+    try { await api.del("/api/system/events"); toast("Event log cleared", "ok"); }
+    catch (e) { toast(e.message, "bad"); }
+    route();
+  };
+
+  const lgRefresh = $("#lg-refresh");
+  if (lgRefresh) lgRefresh.onclick = () => route();
+  const lgDelete = $("#lg-delete");
+  if (lgDelete) lgDelete.onclick = async () => {
+    if (!confirm("Delete the rotated log files?\n\nThe two files currently being "
+                 + "written to are kept.")) return;
+    try {
+      const r = await api.del("/api/system/logs");
+      toast(r.deleted ? `Deleted ${r.deleted} file(s)` : "Nothing to delete", "ok");
+    } catch (e) { toast(e.message, "bad"); }
+    route();
   };
 
   const refresh = $("#t-refresh");
@@ -1311,6 +1678,7 @@ const showUnreachable = () => showWaiting(
   { retry: true, spin: false });
 
 async function boot() {
+  paintIcons();          // the static chrome in index.html
   let setup;
   for (let attempt = 0; ; attempt++) {
     try { setup = await api.get("/api/setup/state"); break; }

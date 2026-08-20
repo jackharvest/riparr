@@ -6,6 +6,18 @@
  * Fallbacks keep this readable with no theme file loaded at all.
  */
 
+/* The wordmark face. Russo One (SIL OFL 1.1 — see fonts/RussoOne-OFL.txt) is used for
+   the "Riparr" name only, never for body copy: the *arr look is Roboto everywhere, and
+   the brand face earns its place by being the one thing that is *not* Roboto.
+   swap keeps the name visible in Roboto while the 13 KB woff2 arrives. */
+@font-face {
+  font-family: "Russo One";
+  src: url("/static/fonts/RussoOne-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg:        var(--main-bg-color, #1f1f1f);
   --panel:     var(--modal-bg-color, #333);
@@ -42,6 +54,25 @@
   --topbar-h: 60px;   /* headerHeight */
   --side-w:  210px;   /* sidebarWidth */
   --radius:   4px;
+
+  /* Icon sizes, measured off a running Prowlarr 2.4.0 rather than guessed. Every one
+     of these is a font-size: an .ic is 1em square, so the context sets the size. */
+  --ic-nav:     14px;  /* PageSidebarItem                       */
+  --ic-tool:    21px;  /* PageToolbarButton                     */
+  --ic-row:     12px;  /* IconButton inside a table row         */
+  --ic-header:  14px;  /* PageHeader actions                    */
+  --ic-empty:   48px;  /* our own: empty-state illustration     */
+}
+
+/* Font Awesome's own inline-SVG metrics (svg-inline--fa). Height 1em is the whole
+   point: it makes an icon exactly as tall as the text beside it, at any size. */
+.ic {
+  display: inline-block;
+  height: 1em;
+  width: auto;
+  min-width: 1em;
+  vertical-align: -.125em;
+  overflow: visible;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -81,17 +112,25 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
   border-bottom: 1px solid var(--line); z-index: 40;
 }
 .logo {
-  font-size: 18px; font-weight: 300; color: var(--fg-strong);
-  display: flex; align-items: center; gap: 8px; letter-spacing: .02em;
+  color: var(--fg-strong);
+  display: flex; align-items: center; gap: 9px;
 }
-.logo-mark { color: var(--accent); font-size: 20px; }
+/* Russo One is a display face: it sets much heavier than Roboto at the same size, so
+   the wordmark is stepped down to 17px and given a little tracking to stop the double
+   'r' closing up. Capitalisation is left to the markup -- "Riparr", not "RIPARR". */
+.logo-word {
+  font-family: "Russo One", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 17px; font-weight: 400; letter-spacing: .045em;
+  line-height: 1;
+}
+.logo-mark { width: 30px; height: 30px; display: block; flex: none; }
 .hamburger {
   display: none; background: none; border: 0; color: var(--fg);
-  font-size: 18px; cursor: pointer;
+  font-size: 17px; cursor: pointer; line-height: 1;
 }
 .icon-btn {
-  background: none; border: 0; color: var(--fg); font-size: 17px;
-  cursor: pointer; padding: 6px 9px; border-radius: var(--radius);
+  background: none; border: 0; color: var(--fg); font-size: var(--ic-header);
+  cursor: pointer; padding: 8px 10px; border-radius: var(--radius);
   line-height: 1;
 }
 .icon-btn:hover { color: var(--fg-strong); background: rgba(255,255,255,.06); }
@@ -101,8 +140,8 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
   border-bottom: 1px solid var(--line-2); padding: 3px 2px; min-width: 260px;
 }
 .search .mag {
-  color: var(--fg-muted); font-size: 14px; line-height: 1;
-  transform: rotate(-45deg); display: inline-block;
+  color: var(--fg-muted); font-size: var(--ic-header); line-height: 1;
+  display: inline-flex;
 }
 /* Outranks the global input styling below, which would otherwise draw a box. */
 .topbar .search input {
@@ -138,9 +177,11 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
   padding: 12px 0; overflow-y: auto; z-index: 30;
   display: flex; flex-direction: column;
 }
+/* Geometry from Prowlarr's PageSidebarItem: 45px rows, 12px/24px padding, an 18px
+   icon column with a 7px gutter, children indented to 35px. */
 .sidebar a.nav-top {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 18px; color: var(--fg); font-size: 14px;
+  display: flex; align-items: center;
+  padding: 12px 24px; color: var(--fg); font-size: 14px; min-height: 45px;
   border-left: 3px solid transparent;
 }
 .sidebar a.nav-top:hover { color: var(--fg-strong); background: rgba(255,255,255,.05); }
@@ -150,12 +191,16 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
 }
 .sidebar a.nav-sub {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 7px 18px 7px 46px; font-size: 13.5px; color: var(--fg);
+  padding: 10px 24px 10px 52px; font-size: 14px; color: var(--fg);
   border-left: 3px solid transparent;
 }
 .sidebar a.nav-sub:hover { color: var(--fg-strong); background: rgba(255,255,255,.04); }
 .sidebar a.nav-sub.on { color: var(--accent); border-left-color: var(--accent); }
-.sidebar .ico { width: 17px; text-align: center; opacity: .85; font-size: 13px; }
+.sidebar .ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; margin-right: 7px; flex: none;
+  font-size: var(--ic-nav); opacity: .9;
+}
 .nav-badge {
   background: var(--warn); color: #1a1a1a; font-size: 10.5px; font-weight: 600;
   border-radius: 3px; padding: 1px 6px; margin-left: auto;
@@ -185,11 +230,16 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
 .tabs a:hover { color: var(--fg-strong); background: rgba(255,255,255,.05); }
 .tabs a.on { color: var(--fg-strong); border-bottom-color: var(--accent); }
 
-.section { margin-bottom: 30px; }
+/* Prowlarr's FieldSet/legend, measured: 20px between sections, a 21px/400 heading with
+   a full-width rule under it and 21px of air below that. Sections are full width and
+   stacked — the *arrs never put two of these side by side, which is why an interface
+   built out of side-by-side cards reads as "not quite an *arr" however close the
+   colours are. */
+.section { margin-bottom: 20px; }
 .section > h2 {
-  font-size: 19px; font-weight: 300; color: var(--fg-strong);
-  padding-bottom: 9px; margin-bottom: 16px; border-bottom: 1px solid var(--line-2);
-  display: flex; align-items: center; gap: 11px;
+  font-size: 21px; font-weight: 400; color: var(--fg);
+  padding-bottom: 6px; margin-bottom: 21px; border-bottom: 1px solid var(--line-2);
+  display: flex; align-items: center; gap: 11px; width: 100%;
 }
 .section > h2 .grow { flex: 1; }
 
@@ -198,14 +248,20 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
   display: flex; align-items: stretch; gap: 4px; flex-wrap: wrap;
   padding-bottom: 14px; margin-bottom: 20px; border-bottom: 1px solid var(--line);
 }
+/* PageToolbarButton: a 60px square, 21px icon, 11px label under it. */
 .tool {
   background: none; border: 0; cursor: pointer; color: var(--toolbar-fg, var(--fg));
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 5px; padding: 6px 10px; border-radius: var(--radius); font-size: 11px;
-  min-width: 60px;   /* toolbarButtonWidth */
+  gap: 4px; padding: 4px 3px 0; border-radius: var(--radius);
+  font-size: 11px; line-height: 1.2; text-align: center;
+  min-width: 60px; min-height: 60px;   /* toolbarButtonWidth */
 }
-.tool:hover { background: rgba(255,255,255,.07); color: var(--fg-strong); }
-.tool .ti { font-size: 17px; line-height: 1; }
+.tool:hover:not(:disabled) { background: rgba(255,255,255,.07); color: var(--fg-strong); }
+.tool:disabled { opacity: .4; cursor: default; }
+.tool .ti {
+  font-size: var(--ic-tool); line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; height: 24px;
+}
 .tool.sep { border-left: 1px solid var(--line-2); margin-left: 20px; padding-left: 20px; }
 
 .card {
@@ -400,18 +456,28 @@ select option { background: var(--dropdown); }
 .grid2 .f .help { margin-left: 0; }
 
 /* ── tables & lists ────────────────────────────────────── */
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Prowlarr's Table: 14px throughout, 8px cells, bold sentence-case headers. Not the
+   uppercase letter-spaced micro-header this used to have -- that is a dashboard
+   convention, and the *arrs deliberately do not use it. */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th {
-  text-align: left; font-weight: 500; font-size: 11.5px; color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: .05em;
-  padding: 9px 14px; border-bottom: 1px solid var(--line-2);
+  text-align: left; font-weight: 700; font-size: 14px; color: var(--fg);
+  padding: 8px; border-bottom: 1px solid var(--line-2); white-space: nowrap;
 }
-td { padding: 11px 14px; border-bottom: 1px solid var(--line); }
-tr:last-child td { border-bottom: 0; }
+td { padding: 8px; border-bottom: 1px solid var(--line); color: var(--fg); }
+tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: rgba(255,255,255,.035); }
+th.num, td.num { text-align: right; }
+/* The trailing actions column: icon buttons, right-aligned, 12px like Prowlarr's. */
+th.act, td.act { text-align: right; white-space: nowrap; width: 1%; }
+td.act .icon-btn { font-size: var(--ic-row); padding: 5px 6px; }
+/* A leading status-icon column, e.g. the level dot on Events. */
+th.stat, td.stat { width: 1%; padding-left: 12px; padding-right: 4px; }
+td.stat .ic { font-size: var(--ic-nav); }
 
 .empty-state { text-align: center; padding: 46px 20px; color: var(--fg-muted); }
-.empty-state .big { font-size: 34px; opacity: .35; margin-bottom: 12px; }
+.empty-state .big { font-size: var(--ic-empty); opacity: .3; margin-bottom: 16px;
+                    display: block; line-height: 1; }
 .empty-state h2 { margin-bottom: 6px; }
 
 .rowitem {
@@ -437,9 +503,20 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
 .bar > i { display: block; height: 100%; background: var(--queue); border-radius: 3px; }
 .bar.dual > i.sent { background: var(--ok); }
 
-.kv { display: grid; grid-template-columns: minmax(92px, 38%) 1fr; gap: 9px 14px; font-size: 13px; }
-.kv .k { color: var(--fg-muted); overflow-wrap: anywhere; }
-.kv .v { color: var(--fg-strong); overflow-wrap: anywhere; min-width: 0; }
+/* DescriptionList: a 160px right-aligned bold label column with the value at 180px,
+   exactly as Prowlarr's System > Status "About" block does it. Grid rather than
+   float/margin, because grid degrades to a stack on narrow screens for free. */
+.kv {
+  display: grid; grid-template-columns: 160px 1fr; column-gap: 20px; row-gap: 0;
+  font-size: 14px; margin-bottom: 10px;
+}
+.kv .k {
+  color: var(--fg); font-weight: 700; text-align: right;
+  overflow-wrap: anywhere; line-height: 21px;
+}
+.kv .v {
+  color: var(--fg); overflow-wrap: anywhere; min-width: 0; line-height: 21px;
+}
 
 /* ── sign in ───────────────────────────────────────────── */
 .gate {
@@ -451,8 +528,12 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
   border: 1px solid var(--line); border-radius: 6px; padding: 30px 26px;
   text-align: center; box-shadow: 0 14px 44px rgba(0,0,0,.4);
 }
-.gate-mark { font-size: 36px; color: var(--accent); line-height: 1; }
-.gate-card h1 { font-weight: 300; margin: 8px 0 2px; }
+.gate-mark { width: 64px; height: 64px; display: block; margin: 0 auto; }
+.gate-card h1 {
+  font-family: "Russo One", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 25px; font-weight: 400; letter-spacing: .045em;
+  margin: 12px 0 3px;
+}
 /* The gate is a narrow card, not a settings page. The *arr form geometry — a fixed
    150px right-aligned label column — has nowhere to go in 288px of content, so it
    wraps the input onto its own line while the label keeps its 150px box and stays
@@ -492,6 +573,20 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
   display: flex; gap: 10px; align-items: center;
   margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line);
 }
+
+/* Prowlarr's Alert: a full-width 15px panel with a 1px tinted border, used for the
+   standing explanatory note at the top of a page (where the log files live, what the
+   health icons mean). Distinct from .result, which reports the outcome of an action. */
+.alert {
+  border: 1px solid var(--alert-bd, #31708f);
+  background: var(--alert-bg, #253d50);
+  color: var(--fg);
+  border-radius: var(--radius); padding: 15px; margin: 5px 0 20px;
+  font-size: 14px; line-height: 1.5;
+}
+.alert.warn { --alert-bd: #ec971f; --alert-bg: #3d3223; }
+.alert.bad  { --alert-bd: #d43f3a; --alert-bg: #442726; }
+.alert p + p { margin-top: 4px; }
 
 .result {
   border-radius: var(--radius); padding: 12px 14px; font-size: 13px;
@@ -534,7 +629,7 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
   .sidebar.open { transform: none; }
   .content { margin-left: 0; padding: 18px 16px 50px; }
   .kv { grid-template-columns: 1fr; gap: 2px 0; }
-  .kv .k { margin-top: 9px; }
+  .kv .k { margin-top: 9px; text-align: left; }
 }
 
 /* Shown while the service is still coming up. A login form is the wrong answer to
@@ -584,3 +679,68 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
 }
 .keyoffer .muted { font-size: 12px; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+/* Release notes come out of a GitHub release body: preformatted, but it has to wrap or
+   a long line pushes the whole page sideways. */
+.notes {
+  white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+  color: var(--fg); background: rgba(0,0,0,.22);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 12px 14px; max-height: 460px; overflow: auto;
+}
+code {
+  font-family: ui-monospace, Menlo, monospace; font-size: .92em;
+  background: rgba(255,255,255,.07); border-radius: 3px; padding: 1px 5px;
+}
+/* Status-tinted icons inside tables. */
+.ic.ok { color: var(--ok); } .ic.warn { color: var(--warn); }
+.ic.bad { color: var(--bad); } .ic.muted { color: var(--fg-muted); }
+
+/* ── Auto Rip ──────────────────────────────────────────────
+   The one deliberate exception to CheckInput.css (see the .switch note above): this is
+   a hero control on the Queue page, not a settings row, so it gets a real toggle. The
+   markup for it has existed since the queue page was written; the styling had not, so
+   the track rendered as a bare browser checkbox. */
+.autorip {
+  display: flex; align-items: flex-start; gap: 16px;
+  padding: 18px 20px; margin-bottom: 20px;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: rgba(255,255,255,.03);
+}
+.autorip.on {
+  border-color: rgba(var(--accent-rgb), .45);
+  background: rgba(var(--accent-rgb), .08);
+}
+.autorip.blocked { opacity: .92; }
+
+.ar-switch { position: relative; flex: none; cursor: pointer; padding-top: 2px; }
+.ar-switch.off { cursor: not-allowed; }
+.ar-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ar-switch .track {
+  display: block; width: 46px; height: 26px; border-radius: 13px;
+  background: rgba(255,255,255,.16); border: 1px solid var(--line-2);
+  transition: background .15s, border-color .15s;
+}
+.ar-switch .track::after {
+  content: ""; display: block;
+  width: 20px; height: 20px; margin: 2px; border-radius: 50%;
+  background: #fff; transition: transform .15s;
+}
+.ar-switch input:checked + .track {
+  background: var(--btn); border-color: var(--btn);
+}
+.ar-switch input:checked + .track::after { transform: translateX(20px); }
+.ar-switch input:disabled + .track { opacity: .4; }
+.ar-switch input:focus-visible + .track {
+  box-shadow: 0 0 0 3px var(--input-focus-sh);
+}
+
+.ar-text { min-width: 0; }
+.ar-title { font-size: 16px; color: var(--fg-strong); margin-bottom: 2px; }
+.ar-sub { font-size: 13px; color: var(--fg-muted); }
+.ar-blockers {
+  margin: 8px 0 0 18px; padding: 0; display: grid; gap: 5px;
+  font-size: 13px; color: var(--fg);
+}
+.ar-blockers li { padding-left: 3px; }

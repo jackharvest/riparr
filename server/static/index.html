@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Riparr</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/img/riparr-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/img/riparr-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/img/riparr-180.png">
+<meta name="theme-color" content="#241155">
+<link rel="preload" href="/static/fonts/RussoOne-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" id="theme" href="/static/themes/servarr.css">
 <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -12,7 +17,7 @@
 <!-- ── sign in ───────────────────────────────────────────── -->
 <div id="gate" class="gate hidden">
   <form class="gate-card" id="login-form">
-    <div class="gate-mark">◉</div>
+    <img class="gate-mark" src="/static/img/riparr-mark.png" alt="">
     <h1>Riparr</h1>
     <p class="muted" id="gate-sub">Sign in to continue</p>
     <label class="f"><span>Username</span><input id="gate-user" autocomplete="username"></label>
@@ -25,7 +30,7 @@
        sibling rather than replacing the form's markup, so the submit handler bound
        at load time survives. -->
   <div class="gate-card hidden" id="gate-waiting">
-    <div class="gate-mark">◉</div>
+    <img class="gate-mark" src="/static/img/riparr-mark.png" alt="">
     <h1>Riparr</h1>
     <div class="gate-wait">
       <div class="spin" id="gate-spin"></div>
@@ -41,14 +46,14 @@
 <!-- ── main shell ────────────────────────────────────────── -->
 <div id="shell" class="shell hidden">
   <header class="topbar">
-    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
-    <a class="logo" href="#/queue"><span class="logo-mark">◉</span> Riparr</a>
-    <label class="search"><span class="mag">⚲</span>
+    <button class="hamburger" id="hamburger" aria-label="Menu" data-ic="bars"></button>
+    <a class="logo" href="#/queue"><img class="logo-mark" src="/static/img/riparr-mark.png" alt=""> <span class="logo-word">Riparr</span></a>
+    <label class="search"><span class="mag" data-ic="magnifying-glass"></span>
       <input id="search" placeholder="Search" autocomplete="off"></label>
     <div class="grow"></div>
     <div class="pills" id="health-pills"></div>
     <div class="menu-wrap">
-      <button class="icon-btn" id="user-btn" title="Account">◍</button>
+      <button class="icon-btn" id="user-btn" title="Account" data-ic="user"></button>
       <div class="menu hidden" id="user-menu">
         <a href="#/system/status">System</a>
         <a href="#/settings/general">Change password</a>
@@ -63,6 +68,7 @@
 </div>
 
 <div class="toast-host" id="toasts"></div>
+<script src="/static/icons.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
