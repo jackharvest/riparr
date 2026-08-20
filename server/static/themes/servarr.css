@@ -43,6 +43,16 @@
   --default-btn-border: #393f45;   /* defaultBorderColor */
   --default-btn-hover:  #444444;   /* defaultHoverBackgroundColor */
 
+  /* Form inputs, from the same dark.js. The pale border on a dark field is Sonarr's
+     own choice, not a mistake -- it is what makes their inputs read as inputs. */
+  --input-bg:           #333333;   /* inputBackgroundColor */
+  --input-border:       #dde6e9;   /* inputBorderColor */
+  --input-readonly-bg:  #222222;   /* inputReadOnlyBackgroundColor */
+  --input-focus-border: #66afe9;   /* inputFocusBorderColor */
+  --input-focus-shadow: rgba(102, 175, 233, 0.6);
+  --input-shadow:       rgba(0, 0, 0, 0.075);
+  --advanced-label:     #ff902b;   /* advancedFormLabelColor */
+
   --ok-color:           #27c24c;   /* successBackgroundColor */
   --warn-color:         #ffa500;   /* warningColor */
   --bad-color:          #f05050;   /* dangerColor */

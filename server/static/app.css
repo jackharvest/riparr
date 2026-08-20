@@ -224,88 +224,180 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px,1fr)); gap: 16px; }
 .card .body { min-width: 0; }
 
-/* ── forms ─────────────────────────────────────────────── */
-.f { display: block; margin-bottom: 15px; }
-.f > span { display: block; font-size: 12.5px; color: var(--fg); margin-bottom: 5px; }
-.f .help { display: block; font-size: 11.5px; color: var(--fg-muted); margin-top: 4px; }
-input[type=text], input[type=password], input[type=number], input:not([type]), select, textarea {
-  width: 100%; max-width: 460px; font: inherit; font-size: 13px;
-  background: rgba(0,0,0,.28); color: var(--fg-strong);
-  border: 1px solid var(--line-2); border-radius: var(--radius);
-  padding: 7px 10px;
+/* ── forms ─────────────────────────────────────────────
+ * Geometry from Sonarr: FormGroup.css, FormLabel.css, FormInputGroup.css, Input.css
+ * and Variables/dimensions.js. Rows are horizontal with a fixed, right-aligned bold
+ * label column, collapsing to stacked below the large breakpoint -- not label-above-
+ * input, which is what this used to be and what made it read as "not quite an *arr".
+ */
+:root {
+  --input-bg-c:     var(--input-bg, rgba(0,0,0,.28));
+  --input-bd-c:     var(--input-border, var(--line-2));
+  --input-focus-c:  var(--input-focus-border, var(--accent));
+  --input-focus-sh: var(--input-focus-shadow, rgba(var(--accent-rgb), .5));
+  --input-sh:       var(--input-shadow, rgba(0,0,0,.075));
+
+  --form-label-w:   150px;  /* formLabelSmallWidth */
+  --form-label-gap: 20px;   /* formLabelRightMarginWidth */
+  --form-group-w:   650px;  /* formGroupSmallWidth */
+  --bp-large:       1200px; /* breakpointLarge */
 }
+
+.f {
+  display: flex;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  max-width: var(--form-group-w);
+}
+.f > span:first-child {
+  display: flex;
+  flex: 0 0 var(--form-label-w);
+  justify-content: flex-end;
+  margin-right: var(--form-label-gap);
+  padding-top: 8px;
+  min-height: 35px;
+  text-align: end;
+  font-weight: bold;
+  font-size: 14px;
+  color: var(--fg);
+}
+
+/* Help text wraps onto its own line and lines up under the field, not the label. */
+.f .help {
+  flex: 0 0 100%;
+  margin-top: 5px;
+  margin-left: calc(var(--form-label-w) + var(--form-label-gap));
+  color: var(--fg-muted);
+  line-height: 20px;
+  font-size: 13px;
+}
+
+@media (max-width: 1200px) {
+  .f > span:first-child {
+    flex: 0 0 100%;
+    justify-content: flex-start;
+    text-align: start;
+    min-height: 0;
+    padding-top: 0;
+    margin: 0 0 5px;
+  }
+  .f .help { margin-left: 0; }
+}
+
+input[type=text], input[type=password], input[type=number], input:not([type]),
+select, textarea {
+  padding: 6px 16px;
+  width: 100%;
+  height: 35px;
+  font: inherit;
+  font-size: 14px;
+  border: 1px solid var(--input-bd-c);
+  border-radius: 4px;
+  background: var(--input-bg-c);
+  box-shadow: inset 0 1px 1px var(--input-sh);
+  color: var(--fg-strong);
+}
+textarea { height: auto; min-height: 74px; resize: vertical;
+           font-family: ui-monospace, Menlo, monospace; }
 input:focus, select:focus, textarea:focus {
-  outline: none; border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), .25);
+  outline: 0;
+  border-color: var(--input-focus-c);
+  box-shadow: inset 0 1px 1px var(--input-sh), 0 0 8px var(--input-focus-sh);
 }
-textarea { min-height: 74px; resize: vertical; font-family: ui-monospace, Menlo, monospace; }
 select option { background: var(--dropdown); }
 
-.switch { display: flex; align-items: center; gap: 11px; margin-bottom: 14px; cursor: pointer; }
-.switch input { display: none; }
-.switch .track {
-  width: 38px; height: 21px; border-radius: 11px; background: rgba(255,255,255,.16);
-  position: relative; transition: background .16s; flex: none;
+/* Must come after the block above: same specificity, so source order decides. Without
+   this the inputs keep width:100%, which gives them a full-width flex basis and wraps
+   them onto their own line instead of sitting beside the label. */
+.f > input, .f > select, .f > textarea {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
 }
-.switch .track::after {
-  content: ""; position: absolute; top: 2.5px; left: 2.5px;
-  width: 16px; height: 16px; border-radius: 50%; background: #fff;
-  transition: transform .16s;
-}
-.switch input:checked + .track { background: var(--accent); }
-.switch input:checked + .track::after { transform: translateX(17px); }
-.switch .lbl { font-size: 13px; }
-.switch .lbl small { display: block; color: var(--fg-muted); font-size: 11.5px; }
 
-.btn {
-  font: inherit; font-size: 13px; padding: 7px 15px; cursor: pointer;
-  border-radius: var(--radius); border: 1px solid var(--btn-bd);
-  background: var(--btn-bg); color: var(--fg-strong);
+/* CheckInput.css: a 20px square, not an iOS toggle. The one deliberate exception is
+   Auto Rip, which is a hero control rather than a settings row. */
+.switch {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 20px;
+  cursor: pointer;
+  max-width: var(--form-group-w);
 }
-.btn:hover:not(:disabled) { background: var(--btn-bg-hover); }
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn.primary { background: var(--btn); border-color: transparent; color: var(--btn-text); }
-.btn.primary:hover:not(:disabled) { background: var(--btn-hover); }
-.btn.danger { background: var(--bad); border-color: transparent; color: #fff; }
-.btn.wide { width: 100%; justify-content: center; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track {
+  flex: 0 0 auto;
+  margin-top: 7px;
+  margin-right: 5px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #ccc;
+  border-radius: 2px;
+  background: var(--white, #fff);
+  color: #fff;
+  text-align: center;
+  line-height: 18px;
+  font-size: 14px;
+  transition: background .12s, border-color .12s;
+}
+.switch input:checked + .track {
+  background: var(--btn);
+  border-color: var(--btn);
+}
+.switch input:checked + .track::after { content: "✓"; display: block; }
+.switch input:focus + .track {
+  outline: 0;
+  border-color: var(--input-focus-c);
+  box-shadow: inset 0 1px 1px var(--input-sh), 0 0 8px var(--input-focus-sh);
+}
+.switch .lbl { min-height: 21px; padding-top: 6px; font-weight: normal; font-size: 14px; }
+.switch .lbl small {
+  display: block; color: var(--fg-muted); font-size: 13px;
+  line-height: 20px; margin-top: 5px;
+}
+
+/* ── buttons ───────────────────────────────────────────
+ * Sonarr Components/Link/Button.css plus the button tokens from dark.js.
+ * Medium is 6px 16px there, which is what these use.
+ */
+.btn {
+  display: inline-block;
+  overflow: hidden;
+  padding: 6px 16px;
+  border: 1px solid var(--default-btn-border, var(--line-2));
+  border-radius: 4px;
+  background: var(--default-btn-bg, rgba(255,255,255,.06));
+  color: var(--fg-strong);
+  font: inherit;
+  font-size: 14px;
+  vertical-align: middle;
+  text-align: center;
+  white-space: nowrap;
+  line-height: normal;
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) {
+  background: var(--default-btn-hover, rgba(255,255,255,.12));
+  text-decoration: none;
+}
+.btn:disabled { opacity: .65; cursor: not-allowed; }
+
+.btn.primary { border-color: var(--btn); background: var(--btn); color: #fff; }
+.btn.primary:hover:not(:disabled) { background: var(--btn-hover); border-color: var(--btn-hover); }
+
+.btn.danger { border-color: var(--bad); background: var(--bad); color: #fff; }
+.btn.danger:hover:not(:disabled) { filter: brightness(.92); }
+
 .btn-row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 
-/* ── auto rip ──────────────────────────────────────────── */
-.autorip {
-  display: flex; gap: 16px; align-items: flex-start;
-  background: var(--panel); border: 1px solid var(--line-2);
-  border-left: 3px solid var(--fg-muted);
-  border-radius: var(--radius); padding: 16px 18px; margin-bottom: 22px;
+/* Side-by-side fields have no room for a 150px label column, so they stack. */
+.grid2 .f { display: block; max-width: none; }
+.grid2 .f > span:first-child {
+  display: block; flex: none; text-align: start;
+  min-height: 0; padding-top: 0; margin: 0 0 5px;
 }
-.autorip.on {
-  border-left-color: var(--ok);
-  background: linear-gradient(90deg, rgba(39,194,76,.07), transparent 45%), var(--panel);
-}
-.autorip.blocked { border-left-color: var(--warn); }
-
-.ar-switch { flex: none; cursor: pointer; margin-top: 2px; }
-.ar-switch input { display: none; }
-.ar-switch .track {
-  display: block; width: 46px; height: 26px; border-radius: 13px;
-  background: rgba(255,255,255,.16); position: relative; transition: background .16s;
-}
-.ar-switch .track::after {
-  content: ""; position: absolute; top: 3px; left: 3px;
-  width: 20px; height: 20px; border-radius: 50%; background: #fff;
-  transition: transform .16s;
-}
-.ar-switch input:checked + .track { background: var(--ok); }
-.ar-switch input:checked + .track::after { transform: translateX(20px); }
-.ar-switch.off { cursor: not-allowed; opacity: .45; }
-
-.ar-title { font-size: 16px; color: var(--fg-strong); font-weight: 500; }
-.ar-sub { font-size: 13px; color: var(--fg-muted); margin-top: 3px; }
-.ar-blockers {
-  margin: 10px 0 0; padding-left: 18px; font-size: 12.5px;
-  display: grid; gap: 5px; color: var(--fg-muted);
-}
-.ar-blockers a { color: var(--warn); }
-.ar-blockers a:hover { text-decoration: underline; }
+.grid2 .f > input, .grid2 .f > select, .grid2 .f > textarea { width: 100%; }
+.grid2 .f .help { margin-left: 0; }
 
 /* ── tables & lists ────────────────────────────────────── */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
