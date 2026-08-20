@@ -98,7 +98,11 @@ def _unmount(dev):
             if e.errno == errno.EBUSY:
                 time.sleep(0.5)     # something still holds it; give it a moment
                 continue
-            return False, last      # EPERM and friends will not improve by waiting
+            # Not busy, but not openable either -- a permission refusal, most likely.
+            # The unmount genuinely did succeed, and saying "could not be unmounted"
+            # here would send the user hunting the wrong problem. Hand off to the
+            # pre-open probe below, which routes the real errno through _explain().
+            return True, ""
     return False, ("%s is still busy fifteen seconds after unmounting.\n\n"
                    "Something still has the card open. Ejecting it in Finder and "
                    "re-inserting it clears this.\n\n%s" % (rdev, last))
