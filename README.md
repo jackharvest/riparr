@@ -55,18 +55,23 @@ Last working session: **2026-08-20**
 | **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-board) |
 | **Needs** | `brew install e2fsprogs` — the Preparer writes config into ext4 with `debugfs` |
 
-**Riparr runs on the board.** The whole path — write a card, plug it in, and have the
-Preparer find the box and install itself — works end to end and needs no terminal at
-any point. `http://riparr.local:9797` answers.
+**Riparr runs on the board, and is set up.** The whole path — write a card, plug it in,
+let the Preparer find the box and install itself, then finish in a browser — works end
+to end with no terminal at any point. MakeMKV installs from a button. Account, share
+and first-run wizard are all done on real hardware.
 
-**The next action is the week-one hardware validation** in
+**The one thing unfinished is the optical drive**, which has never appeared on the USB
+bus. The Pi side is healthy; the leading suspect is the USB-C-to-USB-C connection —
+these boards tie both CC pins to ground, so the port reads as a device to the far end.
+[`JOURNAL.md`](JOURNAL.md) has the full diagnosis and what to try.
+
+**After that, the last open design risk** in
 [`docs/design/risks.md`](docs/design/risks.md):
 
-1. **Does MakeMKV run on an Allwinner H618 with 1 GB?** (R1) Still aarch64, so the
-   official arm64 binary applies; 1 GB is double the originally budgeted 512 MB, so this
-   is downgraded from "gates the form factor" to "verify it".
-2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design below.
-   Runs inside the same session at no extra cost.
+1. ~~**Does MakeMKV run on an Allwinner H618 with 1 GB?** (R1)~~ — **retired
+   2026-08-20.** It builds and runs: 307 MB peak RSS, 3:57 wall clock, no swap touched.
+2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design below,
+   and is now the only unanswered design risk. Needs a disc and a working drive.
 
 **What is not built:** the rip engine. Queue, history and disc history read real tables
 that nothing populates yet — so **Auto Rip has nothing behind it**, even though the switch
