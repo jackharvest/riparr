@@ -719,6 +719,10 @@ systemPages.status = async () => {
       </div></div></div>
       <div class="section"><h2>Storage</h2><div>
         <p style="font-size:15px;color:var(--fg-strong)">${capacityPhrase(st.storage)}</p>
+        ${st.storage.dedicated === false ? `<div class="result bad" style="margin-top:10px">
+          <b>No staging partition</b>Rips are sharing the system filesystem, so a stalled
+          upload queue could fill the root filesystem and take the box down.
+          ${esc(st.storage.path || "")}</div>` : ""}
         <div class="bar" style="margin:12px 0 8px">
           <i style="width:${pct(st.storage.used_bytes, st.storage.total_bytes)}%"></i></div>
         <p class="muted" style="font-size:12px">Buffer, not permanent storage — files

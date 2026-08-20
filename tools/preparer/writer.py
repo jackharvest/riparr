@@ -7,12 +7,21 @@ terminal. Progress is published as JSON to a file the GUI polls, because a root 
 launched through osascript has no usable pipe back to the parent.
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def publish(path, **kw):
@@ -23,10 +32,25 @@ def publish(path, **kw):
     os.replace(tmp, path)
 
 
+def _looks_like_pi_boot(path):
+    """A Raspberry Pi boot partition always carries these. An unrelated FAT volume won't."""
+    return (os.path.exists(os.path.join(path, "config.txt"))
+            and os.path.exists(os.path.join(path, "cmdline.txt")))
+
+
 def run(args):
     dev = "/dev/%s" % args.dev
     rdev = "/dev/r%s" % args.dev          # raw device: markedly faster than buffered
     st = args.progress
+
+    if args.sha256:
+        publish(st, phase="verify-image", message="Checking the operating system image")
+        actual = _sha256(args.image)
+        if actual != args.sha256:
+            publish(st, phase="error",
+                    message="The operating system image is damaged. Nothing was written.",
+                    detail="expected %s\ngot      %s" % (args.sha256[:32], actual[:32]))
+            return 1
 
     publish(st, phase="unmount", message="Unmounting the card")
     subprocess.run(["diskutil", "unmountDisk", dev], capture_output=True)
@@ -95,12 +119,20 @@ def run(args):
             break
         time.sleep(1.5)
     if not boot:
-        # Fall back to any FAT volume — on some readers the mount line omits the device.
+        # Some readers omit the device from the mount line, so fall back to scanning FAT
+        # volumes — but ONLY ones that actually look like a freshly written Pi boot
+        # partition. The old code took any msdos volume, which on a machine with a camera
+        # card or USB stick attached would have written custom.toml (containing the
+        # derived Wi-Fi PSK and the account password hash) onto unrelated removable media.
         mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
         for line in mounts.splitlines():
-            if "msdos" in line and "/Volumes/" in line:
-                boot = line.split(" on ")[1].split(" (")[0]
-                break
+            if "msdos" not in line or "/Volumes/" not in line:
+                continue
+            cand = line.split(" on ")[1].split(" (")[0]
+            if not _looks_like_pi_boot(cand):
+                continue
+            boot = cand
+            break
     if not boot:
         publish(st, phase="error",
                 message="The card was written, but its boot partition never mounted.",
@@ -140,6 +172,7 @@ def main():
     ap.add_argument("--toml", required=True)
     ap.add_argument("--progress", required=True)
     ap.add_argument("--total", type=int, default=0)
+    ap.add_argument("--sha256", default="", help="expected image checksum")
     args = ap.parse_args()
 
     if not args.dev.startswith("disk") or "/" in args.dev:

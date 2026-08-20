@@ -195,6 +195,7 @@ async function buildReview() {
 /* ── step 5: write ──────────────────────────────────────── */
 const PHASE_TITLE = {
   auth: "Waiting for permission",
+  "verify-image": "Checking the image",
   unmount: "Preparing the card",
   write: "Writing your card",
   flush: "Finishing the write",

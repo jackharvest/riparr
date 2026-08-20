@@ -278,6 +278,25 @@ def host_timezone():
 
 # ────────────────────────────── Assets ──────────────────────────────
 
+def expected_sha256(image_path):
+    """Read the checksum sidecar if there is one.
+
+    Raspberry Pi publishes these and we already download them; not checking meant a
+    corrupted image produced a card that failed later, mysteriously, on the Pi.
+    Format is `<hex>  <filename>`; the filename inside may differ from ours if the
+    image was renamed, so only the hex is used.
+    """
+    for cand in (image_path + ".sha256", os.path.splitext(image_path)[0] + ".sha256"):
+        if os.path.exists(cand):
+            try:
+                first = open(cand).read().split()
+                if first and len(first[0]) == 64:
+                    return first[0].lower()
+            except OSError:
+                pass
+    return None
+
+
 def find_images(assets):
     """Every .img.xz in the assets dir, newest first."""
     try:
@@ -289,7 +308,8 @@ def find_images(assets):
         p = os.path.join(assets, n)
         out.append({"name": n, "path": p,
                     "size": os.path.getsize(p),
-                    "mtime": os.path.getmtime(p)})
+                    "mtime": os.path.getmtime(p),
+                    "sha256": expected_sha256(p)})
     out.sort(key=lambda d: d["mtime"], reverse=True)
     return out
 

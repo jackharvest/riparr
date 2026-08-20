@@ -63,15 +63,30 @@ def system_status():
 
 
 def storage_status():
-    """Staging capacity, expressed so the UI can talk in discs rather than gigabytes."""
+    """Staging capacity, expressed so the UI can talk in discs rather than gigabytes.
+
+    Falls back to whatever filesystem holds the staging path when the dedicated staging
+    partition (D4) does not exist. Stock Raspberry Pi OS resizes rootfs to fill the card,
+    so on any image that is not yet a Riparr image there is no /srv/staging — and a
+    statvfs on a missing path would otherwise 500 the entire status page.
+    """
     if MOCK:
         total, free = 22.8 * 2**30, 16.1 * 2**30
-    else:
-        st = os.statvfs(STAGING)
-        total = st.f_blocks * st.f_frsize
-        free = st.f_bavail * st.f_frsize
+        return {"total_bytes": int(total), "free_bytes": int(free),
+                "used_bytes": int(total - free), "path": STAGING, "dedicated": True}
+
+    path, dedicated = STAGING, True
+    if not os.path.isdir(path):
+        path, dedicated = "/", False
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return {"total_bytes": 0, "free_bytes": 0, "used_bytes": 0,
+                "path": path, "dedicated": False, "error": "staging is not readable"}
+    total = st.f_blocks * st.f_frsize
+    free = st.f_bavail * st.f_frsize
     return {"total_bytes": int(total), "free_bytes": int(free),
-            "used_bytes": int(total - free)}
+            "used_bytes": int(total - free), "path": path, "dedicated": dedicated}
 
 
 STAGING = "/srv/staging" if IS_APPLIANCE else "/tmp/riparr-staging"
