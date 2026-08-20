@@ -1,5 +1,8 @@
 fastapi>=0.110
-uvicorn[standard]>=0.27
+# Not uvicorn[standard]: that pulls uvloop, httptools and watchfiles, which are native
+# builds worth minutes of CPU on a Zero 2 W and a hard failure if a wheel is missing.
+# The UI polls over plain HTTP and uses no websockets, so the pure-Python stack is enough.
+uvicorn>=0.27
 passlib>=1.7
 itsdangerous>=2.1
 python-multipart>=0.0.9

@@ -2,7 +2,8 @@
 # Run FIRST after SSH-ing in. Captures the volatile first-boot journal before
 # it is lost, then makes logging persistent for every boot after this one.
 set -uo pipefail
-OUT=/home/riparr/validation
+# $HOME, not /home/riparr: the login account is whatever was set in the Preparer.
+OUT="$HOME/validation"
 mkdir -p "$OUT"
 
 echo "=== 1. Rescuing first-boot journal (volatile, lost on reboot) ==="

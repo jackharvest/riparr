@@ -17,6 +17,10 @@ WorkingDirectory=/opt/riparr/server
 Environment=RIPARR_PORT=9797
 Environment=RIPARR_DB=/var/lib/riparr/riparr.db
 Environment=PYTHONUNBUFFERED=1
+# The service account may be the login account the Imager created, whose home is under
+# /home — which ProtectHome= hides. Point HOME at the state directory instead, so
+# ~/.MakeMKV resolves somewhere that exists and is writable.
+Environment=HOME=/var/lib/riparr
 EnvironmentFile=-/boot/firmware/riparr.conf
 EnvironmentFile=-/boot/riparr.conf
 
@@ -33,7 +37,10 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
 ProtectHome=yes
-ReadWritePaths=/var/lib/riparr /srv/staging
+# The leading '-' matters: on stock Raspberry Pi OS the dedicated staging partition (D4)
+# does not exist yet, and systemd refuses to start a unit whose ReadWritePaths= names a
+# missing directory. Without it, first boot ends with a service that never starts.
+ReadWritePaths=/var/lib/riparr -/srv/staging
 StateDirectory=riparr
 
 [Install]

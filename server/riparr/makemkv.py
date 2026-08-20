@@ -99,7 +99,7 @@ def info():
         "homepage": HOMEPAGE,
         "key_topic": FORUM_KEY_TOPIC,
         "install": dict(_state),
-        "installable": P.IS_APPLIANCE,
+        "installable": can_install()[0],
     }
 
 
@@ -113,11 +113,35 @@ def install_status():
         return dict(_state)
 
 
+def can_install():
+    """Whether this process could actually complete an install.
+
+    The build installs apt packages and writes to /usr/local, so it needs root. The
+    service runs unprivileged with NoNewPrivileges=yes, which means sudo cannot help it
+    either. Saying so plainly beats letting the build fail three minutes in with a
+    permission error nobody can act on.
+    """
+    if not P.IS_APPLIANCE:
+        return False, "MakeMKV installs on the appliance only."
+    if os.geteuid() == 0:
+        return True, ""
+    return False, (
+        "Riparr runs unprivileged, so it cannot install MakeMKV for you. Sign in over "
+        "SSH and run:\n\n"
+        "    sudo bash /opt/riparr/tools/makemkv-install.sh --accept-eula "
+        "--srcdir /boot/firmware/makemkv --jobs 1\n\n"
+        "It takes a while to build on this board. This page picks it up as soon as it "
+        "finishes.")
+
+
 def start_install(accepted_eula):
     """Begin an install. Refuses without explicit consent — this is the whole point."""
     if not accepted_eula:
         return {"ok": False,
                 "error": "MakeMKV's licence agreement has to be accepted first."}
+    ok, why = can_install()
+    if not ok:
+        return {"ok": False, "error": why}
     with _lock:
         if _state["phase"] in ("downloading", "verifying", "building"):
             return {"ok": False, "error": "An install is already running."}

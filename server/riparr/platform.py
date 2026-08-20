@@ -189,15 +189,37 @@ def makemkv_status():
                 "key_type": "beta", "key_expires": "2026-10-14", "days_left": 56}
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     installed = os.path.exists(binary)
-    ver = None
-    if installed:
-        out = _run([binary, "-r", "info"]) or ""
-        m = re.search(r"MakeMKV v([\d.]+)", out)
-        ver = m.group(1) if m else None
+    ver = _makemkv_version(binary) if installed else None
     return {"installed": installed, "version": ver,
             "eula_accepted": os.path.exists(
                 os.path.expanduser("~/.MakeMKV/eula_accepted")),
             "key_type": None, "key_expires": None, "days_left": None}
+
+
+_version_cache = {}
+
+
+def _makemkv_version(binary):
+    """The version, read without going near the drive.
+
+    `makemkvcon -r info` would also print it — and would enumerate every optical device
+    to do so, which is a real drive access and a real memory spike on a 512MB board. The
+    status page polls, so that cost would be paid every few seconds and would collide
+    with a rip in progress. `--version` only prints the banner, and the answer cannot
+    change until the binary does, so it is cached against the binary's mtime.
+    """
+    try:
+        key = (binary, os.path.getmtime(binary))
+    except OSError:
+        return None
+    if key in _version_cache:
+        return _version_cache[key]
+    out = _run([binary, "--version"], timeout=5) or ""
+    m = re.search(r"MakeMKV v([\d.]+)", out)
+    ver = m.group(1) if m else None
+    _version_cache.clear()
+    _version_cache[key] = ver
+    return ver
 
 
 # ─────────────────────────────── helpers ───────────────────────────────

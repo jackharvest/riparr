@@ -42,7 +42,9 @@ info "port $PORT · $INSTALL_DIR · $(cat /proc/device-tree/model 2>/dev/null | 
 say "1/6  Packages"
 export DEBIAN_FRONTEND=noninteractive
 MISSING=()
-for pkg in python3-venv python3-pip git ca-certificates; do
+# avahi-daemon is what makes http://<hostname>.local resolve. Raspberry Pi OS Lite
+# usually has it, but "usually" is not good enough for the one address we print.
+for pkg in python3-venv python3-pip git ca-certificates avahi-daemon; do
   dpkg -s "$pkg" >/dev/null 2>&1 || MISSING+=("$pkg")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -50,6 +52,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   apt-get update -qq
   apt-get install -y -qq "${MISSING[@]}" >/dev/null
 fi
+systemctl enable --now avahi-daemon >/dev/null 2>&1 || true
 ok "dependencies present"
 
 # ── 2. account ──
@@ -58,30 +61,64 @@ if ! id -u "$RIPARR_USER" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir /var/lib/"$RIPARR_USER" \
           --shell /usr/sbin/nologin "$RIPARR_USER"
 fi
-# The optical drive is root:cdrom; without this the service cannot read a disc.
-getent group cdrom >/dev/null && usermod -aG cdrom "$RIPARR_USER"
+# The optical drive is root:cdrom, and vcgencmd (temperature, throttling) needs video.
+for g in cdrom video; do
+  getent group "$g" >/dev/null && usermod -aG "$g" "$RIPARR_USER"
+done
 install -d -o "$RIPARR_USER" -g "$RIPARR_USER" "$DATA_DIR"
-ok "user '$RIPARR_USER' in group cdrom"
+# The dedicated staging partition (D4) does not exist on stock Raspberry Pi OS. Create
+# the directory anyway: the service declares it writable, and the status page reports
+# free space from it. Falls back to a plain directory on the root filesystem.
+install -d -o "$RIPARR_USER" -g "$RIPARR_USER" -m 0775 /srv/staging
+ok "user '$RIPARR_USER' ready; staging at /srv/staging"
 
 # ── 3. source ──
 say "3/6  Riparr"
 UPGRADE=no
-if [ -d "$INSTALL_DIR/.git" ]; then
-  UPGRADE=yes
-  info "updating existing install"
-  git -C "$INSTALL_DIR" fetch --quiet origin "$BRANCH"
-  git -C "$INSTALL_DIR" reset --hard --quiet "origin/$BRANCH"
-elif [ -f "$(dirname "$0")/../server/riparr/main.py" ]; then
-  # Running from a checkout already on the device: install from it, do not re-download.
+[ -d "$INSTALL_DIR" ] && UPGRADE=yes
+
+# A checkout sitting next to this script wins over the network. The repository may not be
+# published yet, and even when it is, someone who copied a working tree to the device
+# meant to install *that*.
+SRC=""
+if [ -f "$(dirname "$0")/../server/riparr/main.py" ]; then
   SRC="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+
+# Re-installing throws the tree away, so park the virtualenv and put it back afterwards.
+# Rebuilding it costs several minutes of wheel installs on a Zero 2 W.
+KEEP_VENV=""
+if [ "$SRC" != "$INSTALL_DIR" ] && [ -d "$INSTALL_DIR/.venv" ]; then
+  KEEP_VENV=$(mktemp -d)
+  mv "$INSTALL_DIR/.venv" "$KEEP_VENV/.venv"
+fi
+
+if [ -n "$SRC" ] && [ "$SRC" = "$INSTALL_DIR" ]; then
+  info "installing in place from $SRC"
+elif [ -n "$SRC" ]; then
   info "installing from $SRC"
-  [ "$SRC" = "$INSTALL_DIR" ] || { rm -rf "$INSTALL_DIR"; cp -a "$SRC" "$INSTALL_DIR"; }
+  rm -rf "$INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR"
+  # --exclude .venv: a working tree copied off a Mac carries a virtualenv full of
+  # x86/arm64-Darwin binaries that would sit in /opt doing nothing but confusing people.
+  tar -cf - -C "$SRC" --exclude=.venv . | tar -xf - -C "$INSTALL_DIR"
+elif [ -d "$INSTALL_DIR/.git" ]; then
+  info "updating existing install"
+  if git -C "$INSTALL_DIR" fetch --quiet origin "$BRANCH" 2>/dev/null; then
+    git -C "$INSTALL_DIR" reset --hard --quiet "origin/$BRANCH"
+  else
+    # Not fatal: an unreachable origin should reinstall what is already here, not abort
+    # halfway and leave the box without a service.
+    info "could not reach $REPO_URL — keeping the copy already installed"
+  fi
 else
   info "cloning $REPO_URL"
   rm -rf "$INSTALL_DIR"
   git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR" \
     || die "Could not download Riparr from $REPO_URL. Check the network and try again."
 fi
+
+[ -n "$KEEP_VENV" ] && { rm -rf "$INSTALL_DIR/.venv"; mv "$KEEP_VENV/.venv" "$INSTALL_DIR/.venv"; rmdir "$KEEP_VENV"; }
 VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$INSTALL_DIR/server/riparr/__init__.py" 2>/dev/null || echo "?")
 ok "Riparr $VERSION in $INSTALL_DIR"
 
