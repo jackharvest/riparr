@@ -138,19 +138,73 @@ def eject(device="/dev/sr0"):
 
 # ─────────────────────────────── wi-fi ───────────────────────────────
 
+def _wifi_iface():
+    for path in _glob("/sys/class/net/*/wireless"):
+        return path.split("/")[4]
+    return None
+
+
+def _dbm_to_quality(dbm):
+    """dBm to a 0-100 bar, the way most wireless UIs do it.
+
+    -50 and better is full, -100 is nothing, linear between. This is a presentation
+    number and a lossy one, which is exactly why the dBm is reported alongside it
+    rather than instead of it.
+    """
+    if dbm is None:
+        return None
+    return max(0, min(100, int(round(2 * (dbm + 100)))))
+
+
 def wifi_status():
+    """What the box is actually associated with.
+
+    This used to ask `nmcli`, which does not exist here: the image runs
+    systemd-networkd with wpa_supplicant and ships no NetworkManager at all. Every
+    lookup therefore returned nothing, and the interface reported a perfectly healthy
+    5 GHz link as "not connected" with no SSID. `iw` is present, and says more than
+    nmcli would have — the real signal in dBm, the frequency, and the negotiated rate.
+    """
     if MOCK:
         return {"connected": True, "ssid": "HomeNetwork", "signal": 78,
-                "band": "2.4", "ip": "192.168.1.84", "mode": "client"}
-    out = _run(["nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL", "dev", "wifi"]) or ""
-    for line in out.splitlines():
-        f = line.split(":")
-        if f and f[0] == "yes":
-            return {"connected": True, "ssid": f[1],
-                    "signal": int(f[2]) if len(f) > 2 and f[2].isdigit() else None,
-                    "band": "2.4", "ip": _ip(), "mode": "client"}
-    return {"connected": False, "ssid": None, "signal": None,
-            "band": None, "ip": _ip(), "mode": "client"}
+                "signal_dbm": -52, "band": "2.4", "freq_mhz": 2437,
+                "bitrate_mbps": 72.2, "ip": "192.168.1.84",
+                "iface": "wlan0", "mode": "client"}
+
+    iface = _wifi_iface() or "wlan0"
+    base = {"connected": False, "ssid": None, "signal": None, "signal_dbm": None,
+            "band": None, "freq_mhz": None, "bitrate_mbps": None,
+            "ip": _ip(), "iface": iface, "mode": "client"}
+
+    out = _run(["iw", "dev", iface, "link"], timeout=5) or ""
+    if "Connected to" not in out:
+        return base
+
+    def grab(pattern, cast=str):
+        m = re.search(pattern, out)
+        if not m:
+            return None
+        try:
+            return cast(m.group(1))
+        except (TypeError, ValueError):
+            return None
+
+    dbm = grab(r"signal:\s*(-?\d+)\s*dBm", int)
+    freq = grab(r"freq:\s*(\d+)", int)
+    base.update({
+        "connected": True,
+        "ssid": grab(r"SSID:\s*(.+)", lambda v: v.strip()),
+        "signal_dbm": dbm,
+        "signal": _dbm_to_quality(dbm),
+        "freq_mhz": freq,
+        # The band is worth surfacing: 5 GHz is several times the throughput the
+        # design was originally sized against, and it is the single number that most
+        # changes how long a rip takes to land on the share.
+        "band": None if not freq else ("6" if freq >= 5925 else
+                                       "5" if freq >= 4900 else "2.4"),
+        "bitrate_mbps": grab(r"tx bitrate:\s*([\d.]+)", float),
+    })
+    return base
 
 
 def wifi_scan():

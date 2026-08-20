@@ -13,6 +13,7 @@ length.
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -288,6 +289,66 @@ def _run():
     except Exception as e:
         _set(phase="error", progress=0,
              message="The install stopped unexpectedly.", detail=str(e))
+
+
+# ── the current beta key ──
+# MakeMKV is free while it is in beta, and GuinpinSoft publishes a registration key on
+# their forum that they roll over roughly monthly. Everyone running a beta is expected
+# to fetch it themselves, notice when it lapses, and paste in the new one — which is a
+# chore this box is in a much better position to do than its owner.
+#
+# This is a forum page, not an API, so it will break one day. Every failure path here
+# ends in "here is the link, paste it yourself" rather than an error, because that is
+# exactly as good as the situation before this existed.
+_key_cache = {"at": 0, "value": None}
+KEY_TTL = 6 * 3600
+KEY_RE = re.compile(r"\bT-[A-Za-z0-9@_\-]{40,80}\b")
+EXPIRY_RE = re.compile(
+    r"valid\s+until\s+(?:the\s+)?(?:end\s+of\s+)?([A-Z][a-z]+\s+\d{1,2},?\s+\d{4}"
+    r"|[A-Z][a-z]+\s+\d{4}|\d{1,2}\s+[A-Z][a-z]+\s+\d{4})", re.I)
+
+
+def beta_key(force=False):
+    """The current beta key, with whatever validity the forum states.
+
+    Cached, because the answer changes monthly at most and this is somebody else's
+    forum — polling it on every page load would be rude and slow.
+    """
+    now = time.time()
+    if not force and _key_cache["value"] and now - _key_cache["at"] < KEY_TTL:
+        return dict(_key_cache["value"], cached=True)
+
+    result = {"key": None, "expires": None, "source": FORUM_KEY_TOPIC,
+              "fetched_at": int(now), "error": None, "cached": False}
+    try:
+        req = urllib.request.Request(
+            FORUM_KEY_TOPIC,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; riparr)"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            html = r.read(400000).decode("utf-8", "replace")
+    except Exception as e:
+        result["error"] = ("Couldn't reach the MakeMKV forum (%s). Open the link and "
+                           "paste the key in yourself." % e)
+        return result
+
+    # The first match is the announcement post, which is the one kept up to date.
+    m = KEY_RE.search(_strip_tags(html))
+    if not m:
+        result["error"] = ("The forum page didn't contain a key in the expected "
+                           "format. Open the link and copy it in yourself.")
+        return result
+    result["key"] = m.group(0)
+    e = EXPIRY_RE.search(_strip_tags(html))
+    if e:
+        result["expires"] = e.group(1).strip().rstrip(".,")
+    _key_cache["at"] = now
+    _key_cache["value"] = result
+    return result
+
+
+def _strip_tags(html):
+    html = re.sub(r"(?is)<(script|style).*?</\1>", " ", html)
+    return re.sub(r"<[^>]+>", " ", html)
 
 
 def _download(url, dest):

@@ -558,3 +558,29 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
 }
 .manual-row input { flex: 1; max-width: none; }
+
+/* Signal strength as bars. A percentage alone is a number to squint at; four bars is
+   read without reading. */
+.sig { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px;
+       vertical-align: -1px; margin-right: 5px; }
+.sig i { width: 3px; background: var(--line); border-radius: 1px; }
+.sig i:nth-child(1) { height: 4px; }
+.sig i:nth-child(2) { height: 7px; }
+.sig i:nth-child(3) { height: 10px; }
+.sig i:nth-child(4) { height: 12px; }
+.sig i.lit { background: var(--good, #34c759); }
+
+/* The offered beta key. Shown in full rather than truncated: the point is that it can
+   be read and checked, not just clicked. */
+.keyoffer {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel, rgba(255,255,255,.02));
+}
+.keyoffer .grow { min-width: 0; }
+.keyoffer .keyval {
+  font-size: 11.5px; line-height: 1.5; word-break: break-all;
+  color: var(--fg-strong, inherit); margin-bottom: 3px; user-select: all;
+}
+.keyoffer .muted { font-size: 12px; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }

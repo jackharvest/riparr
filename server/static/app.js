@@ -35,9 +35,60 @@ function toast(msg, kind = "") {
 const state = { status: null, settings: null };
 
 /* ── formatting: the user should never see a gigabyte ───── */
+/* ── the current beta key ───────────────────────────────── */
+/* Fetched from the forum GuinpinSoft publishes it on, so the user can paste it in one
+   click and can see when it lapses instead of finding out mid-rip. Every failure ends
+   at "here is the link", which is exactly where they were before this existed. */
+async function offerBetaKey(intoSel, inputSel, opts = {}) {
+  const into = $(intoSel);
+  if (!into) return;
+  into.innerHTML = `<span class="muted">Looking up the current beta key…</span>`;
+  let r;
+  try { r = await api.get("/api/makemkv/beta-key" + (opts.refresh ? "?refresh=true" : "")); }
+  catch (e) { r = { error: e.message }; }
+
+  if (!r.key) {
+    into.innerHTML = `<span class="muted">${esc(r.error || "Couldn't fetch the beta key.")}
+      </span> <a href="${esc(r.source || "https://forum.makemkv.com/forum/viewtopic.php?t=1053")}"
+      target="_blank" rel="noopener">Open the forum post</a>`;
+    return;
+  }
+  into.innerHTML = `
+    <div class="keyoffer">
+      <div class="grow">
+        <div class="keyval mono">${esc(r.key)}</div>
+        <div class="muted">Current beta key${
+          r.expires ? ` · valid until <b>${esc(r.expires)}</b>` : ""}
+          · <a href="${esc(r.source)}" target="_blank" rel="noopener">source</a></div>
+      </div>
+      <button class="btn primary" id="mk-usekey">Use this key</button>
+    </div>`;
+  $("#mk-usekey").onclick = () => {
+    const el = $(inputSel);
+    if (!el) return;
+    el.value = r.key;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    toast("Beta key filled in" + (r.expires ? ` — valid until ${r.expires}` : ""), "ok");
+  };
+}
+
+function signalBars(pct) {
+  const n = pct == null ? 0 : pct >= 75 ? 4 : pct >= 55 ? 3 : pct >= 35 ? 2 : 1;
+  return `<span class="sig">${[1, 2, 3, 4]
+    .map(i => `<i class="${i <= n ? "lit" : ""}"></i>`).join("")}</span>`;
+}
+
 function capacityPhrase(st) {
-  // The server decides the wording, because the meaning depends on D11's rip mode.
-  if (st.mode === "burst") return `Room for <b>${st.discs_free}</b> more disc${st.discs_free === 1 ? "" : "s"}`;
+  // The server decides the wording, because the meaning depends on D11's rip mode and
+  // on how many of each kind of disc actually fit. Re-deriving it here is how the
+  // interface ended up saying "1 more disc" without ever saying which kind — a number
+  // that silently meant Blu-ray and was wrong eightfold for a DVD.
+  if (!st) return "";
+  if (st.phrase) {
+    const m = st.phrase.match(/^Room for (\d+) (.*)$/);
+    return m ? `Room for <b>${m[1]}</b> ${esc(m[2])}` : esc(st.phrase);
+  }
   if (st.mode === "stream") return `<b>Streaming</b> — discs are never refused for space`;
   return `<b>Not enough room</b> to rip safely`;
 }
@@ -175,6 +226,7 @@ const wizard = {
       </div>
 
       <div class="section"><h2>Key</h2><div>
+        <div class="f"><span></span><div class="grow" id="wz-key-offer"></div></div>
         <label class="f"><span>MakeMKV key</span>
           <input id="w-key" placeholder="Paste a beta or purchased key">
           <span class="help">The free beta key expires about every 60 days, and Riparr
@@ -189,6 +241,8 @@ const wizard = {
         <button class="btn" id="w-skip">Do this later</button>
         <button class="btn primary" id="w-go">Continue</button>
       </div>`;
+
+    offerBetaKey("#wz-key-offer", "#w-key");
 
     const accept = $("#mk-accept");
     if (accept) {
@@ -698,16 +752,25 @@ settingsPages.network = async () => {
       <span class="badge ${w.connected ? "ok" : "bad"}">${w.connected ? "Connected" : "Offline"}</span></h2>
       <div><div class="kv">
         <div class="k">Network</div><div class="v">${esc(w.ssid || "—")}</div>
-        <div class="k">Signal</div><div class="v">${w.signal ?? "—"}%</div>
-        <div class="k">Address</div><div class="v">${esc(w.ip || "—")}</div>
+        <div class="k">Signal</div><div class="v">${
+          w.signal == null ? "—"
+            : `${signalBars(w.signal)} ${w.signal}%${
+                w.signal_dbm != null ? ` <span class="muted">(${w.signal_dbm} dBm)</span>` : ""}`}</div>
+        <div class="k">Band</div><div class="v">${
+          w.band ? `${esc(w.band)} GHz${w.freq_mhz ? ` <span class="muted">· ${w.freq_mhz} MHz</span>` : ""}` : "—"}</div>
+        <div class="k">Link rate</div><div class="v">${
+          w.bitrate_mbps ? `${w.bitrate_mbps} Mbit/s` : "—"}</div>
+        <div class="k">Address</div><div class="v">${esc(w.ip || "—")}${
+          w.iface ? ` <span class="muted">· ${esc(w.iface)}</span>` : ""}</div>
       </div></div>
     </div>
     <div class="section"><h2>Join a different network
       <span class="grow"></span>
       <button class="btn" id="wifi-scan">Scan</button></h2>
       <div id="wifi-results">
-        <p class="muted">This hardware has no 5 GHz radio, so only 2.4 GHz networks are
-          ever listed.</p>
+        <p class="muted">Wi-Fi is configured when the card is written. Changing it here
+          needs the box to be reachable, so it can only move to a network it can
+          already see.</p>
       </div>
     </div>`;
 };
@@ -735,8 +798,10 @@ settingsPages.general = async (s) => {
           Download and install</button></div>
         <div id="mk-progress"></div>`}
       <label class="f" style="margin-top:${st.installed ? 0 : 16}px"><span>Key</span>
-        <input data-set="makemkv_key" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key">
-        <span class="help">The free beta key expires about every 60 days.</span></label>
+        <input data-set="makemkv_key" id="mk-key-input" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key">
+        <span class="help">MakeMKV is free while it is in beta, behind a key that
+          GuinpinSoft rolls over roughly monthly.</span></label>
+      <div class="f"><span></span><div class="grow" id="mk-key-offer"></div></div>
       <label class="f"><span>Warn me this many days before it expires</span>
         <input type="number" data-set="warn_key_days" value="${s.warn_key_days}"></label>
     </div></div>
@@ -811,7 +876,13 @@ systemPages.status = async () => {
           ? `expires ${esc(m.key_expires)} — ${m.days_left} days` : "none"}</div>
       </div></div></div>
       <div class="section"><h2>Network</h2><div><div class="kv">
-        <div class="k">Wi-Fi</div><div class="v">${esc(st.wifi.ssid || "offline")}</div>
+        <div class="k">Wi-Fi</div><div class="v">${
+          st.wifi.ssid
+            ? `${esc(st.wifi.ssid)}${st.wifi.band ? ` <span class="muted">· ${esc(st.wifi.band)} GHz</span>` : ""}`
+            : "offline"}</div>
+        <div class="k">Signal</div><div class="v">${
+          st.wifi.signal == null ? "—"
+            : `${signalBars(st.wifi.signal)} ${st.wifi.signal}%`}</div>
         <div class="k">Address</div><div class="v">${esc(st.wifi.ip || "—")}</div>
         <div class="k">Share</div><div class="v">${st.share
           ? `//${esc(st.share.host)}/${esc(st.share.path)}` : "not configured"}</div>
@@ -971,6 +1042,10 @@ function wireContent(section, sub) {
     const r = await api.post("/api/drive/eject");
     toast(r.message, r.ok ? "ok" : "bad");
   };
+
+  // Fetching is a network round trip to somebody else's forum, so it happens after
+  // the page is on screen rather than blocking it.
+  if ($("#mk-key-offer")) offerBetaKey("#mk-key-offer", "#mk-key-input");
 
   const mkAccept = $("#mk-accept");
   if (mkAccept) {

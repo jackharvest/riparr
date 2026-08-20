@@ -150,6 +150,12 @@ DISC_BYTES = {"dvd": 8 * 2**30, "bluray": 25 * 2**30, "uhd": 66 * 2**30}
 WINDOW_BYTES = 4 * 2**30          # the streaming window (D11)
 
 
+DISC_NAMES = {"uhd": ("4K UHD disc", "4K UHD discs"),
+              "bluray": ("Blu-ray", "Blu-rays"),
+              "dvd": ("DVD", "DVDs")}
+DISC_ORDER = ("uhd", "bluray", "dvd")
+
+
 def _capacity(free_bytes):
     """Capacity, in the terms D11 actually operates in.
 
@@ -157,16 +163,33 @@ def _capacity(free_bytes):
     disc is refused — it means the rip runs in stream mode instead of burst. Reporting
     "no room" here would contradict the whole design and push people toward buying a
     larger card for a benefit that does not exist.
+
+    "Room for 1 more disc" was true and useless: a disc is anywhere from 8 to 66 GB,
+    so the number silently meant Blu-ray and was wrong by a factor of eight for a DVD.
+    Count each kind and say which is which.
     """
-    discs = max(0, int(free_bytes // DISC_BYTES["bluray"]))
+    by_kind = {k: max(0, int(free_bytes // v)) for k, v in DISC_BYTES.items()}
+    discs = by_kind["bluray"]
+
     if free_bytes < WINDOW_BYTES:
         mode, phrase = "degraded", "Not enough room to rip safely"
-    elif discs >= 1:
+    elif any(by_kind[k] for k in DISC_ORDER):
         mode = "burst"
-        phrase = "Room for %d more disc%s" % (discs, "" if discs == 1 else "s")
+        parts = []
+        for k in DISC_ORDER:
+            n = by_kind[k]
+            if not n:
+                continue
+            one, many = DISC_NAMES[k]
+            parts.append("%d %s" % (n, one if n == 1 else many))
+        phrase = "Room for " + parts[0]
+        if len(parts) > 1:
+            phrase += " — or " + ", or ".join(parts[1:])
     else:
         mode, phrase = "stream", "Streaming — discs are never refused for space"
-    return {"discs_free": discs, "mode": mode, "phrase": phrase,
+
+    return {"discs_free": discs, "by_kind": by_kind, "mode": mode, "phrase": phrase,
+            "disc_names": {k: list(v) for k, v in DISC_NAMES.items()},
             "window_bytes": WINDOW_BYTES}
 
 
@@ -420,6 +443,17 @@ def makemkv_install(body: MakeMKVInstall, user=Depends(require_user)):
 @app.get("/api/makemkv/install")
 def makemkv_install_status(user=Depends(require_user)):
     return MK.install_status()
+
+
+@app.get("/api/makemkv/beta-key")
+def makemkv_beta_key(refresh: bool = False, user=Depends(require_user)):
+    """The beta key GuinpinSoft publishes, fetched so the user does not have to.
+
+    MakeMKV is free during beta behind a key that rolls over roughly monthly. Reading
+    it off a forum and noticing when it lapses is a chore the box is better placed to
+    do than its owner.
+    """
+    return MK.beta_key(force=refresh)
 
 
 @app.post("/api/makemkv/key")
