@@ -31,26 +31,32 @@ that cost time to discover. Those two reload context fastest.
 ## Status
 
 **Early implementation.** The SD preparer and the Riparr service both exist and run.
-**No hardware has been validated yet — the board has never completed a boot.**
+**The board boots.** On 2026-08-20 the Orange Pi Zero 2W came up on Armbian, joined Wi-Fi,
+took a DHCP lease and synced its clock over the internet — about four minutes from
+power-on. That is the first-boot path, end to end.
 
-The night of 2026-08-19/20 was spent discovering why, and the answer was that
-**the board is an Orange Pi Zero 2W (Allwinner H618), not a Raspberry Pi** — a different
-company's product with a nearly identical name. Raspberry Pi OS cannot boot on it. Support
-for the real hardware is now written and tested (D17); it has not yet been run on the
-board.
+Getting there took discovering that **the board is an Orange Pi Zero 2W (Allwinner H618),
+not a Raspberry Pi** — a different company's product with a nearly identical name, on
+which Raspberry Pi OS cannot boot (D17). It then took a second session to notice it had
+been working the whole time: `riparr.local` never resolved because the image ships no
+avahi and mDNS was off on the link, and `armbian-ramlog` kept every log in a ramdisk that
+a power pull erased. Both are fixed. [`JOURNAL.md`](JOURNAL.md) has the full account.
 
 Last working session: **2026-08-20**
 
 | | |
 |---|---|
 | **Prepare a card** | `~/riparr-build/prepare` — native macOS window, no terminal |
+| **Find the box** | `tools/find-riparr.sh` — when `riparr.local` will not resolve |
+| **Diagnose a card** | `sudo bash tools/card-report.sh` — **from Terminal.app** ([why](JOURNAL.md)) |
 | **Install on the box** | copy the repo across, then `sudo bash tools/install.sh` |
 | **Reach it** | `http://riparr.local:9797` — [why 9797](DECISIONS.md) |
 | **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-board) |
 | **Needs** | `brew install e2fsprogs` — the Preparer writes config into ext4 with `debugfs` |
 
-**The next action is not code.** It is booting the board for the first time — write a
-card with the Preparer and power it on. [`JOURNAL.md`](JOURNAL.md) has the exact steps.
+**The next action is not code.** It is re-writing the card so it picks up the mDNS and
+logging fixes, then booting and logging in. [`JOURNAL.md`](JOURNAL.md) has the exact
+steps, and `tools/find-riparr.sh` will locate the box if the name still does not resolve.
 
 After that, the week-one hardware validation in
 [`docs/design/risks.md`](docs/design/risks.md):
