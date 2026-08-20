@@ -9,21 +9,23 @@ set up entirely from a browser.
 
 ## Two ways to do this
 
-**The Riparr Flasher** *(recommended)* — an interactive wizard that scans for your Wi-Fi,
-shows only the networks a Pi Zero 2W can actually join, and writes the card in one pass.
-It cannot pick a 5 GHz network, cannot write to your boot drive, and cannot produce a
-mistyped share of the settings below. See [`tools/flasher/`](../../tools/flasher/README.md).
+**The Riparr Preparer** *(recommended)* — a small app that scans for your Wi-Fi, shows
+only the networks a Pi Zero 2W can actually join, and writes the card in one pass.
 
 ```sh
-./riparr-flash.py --assets /path/to/build/dir
+~/riparr-build/prepare
 ```
 
-**Raspberry Pi Imager** — the manual path, described below. Nothing to install beyond
-Imager itself. Use this if you'd rather not run a script.
+That's the whole thing. A window opens, you pick your card and your network, and macOS
+asks for your password **once**. It cannot pick a 5 GHz network, cannot write to your
+startup disk, and checks the settings file after writing it.
 
-> **[unresolved]** The flasher currently needs a Python virtualenv, which is not yet the
-> five-minute experience the rest of this guide promises. Shipping it as a signed app, or
-> getting Riparr listed in Imager's OS list, is the eventual answer.
+**Raspberry Pi Imager** — the manual path, described below. Use this on Windows or Linux,
+or if you'd rather not install anything.
+
+> **[unresolved]** The Preparer is macOS-only and currently runs from a Python virtualenv.
+> A signed app bundle, and getting Riparr listed in Imager's OS list, are the eventual
+> answers for the other platforms.
 
 ---
 
