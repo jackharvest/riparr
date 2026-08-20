@@ -6,6 +6,17 @@ This guide takes you from a blank SD card to a working appliance in about five m
 actual effort. **Read it in order the first time.** After that, you should never need it
 again — that's the whole point of the product.
 
+> ### ⚠️ Out of date as of 2026-08-20
+>
+> This guide describes a **Raspberry Pi Zero 2W**. The hardware is actually an
+> **Orange Pi Zero 2W** (Allwinner H618) — a different company's board with a nearly
+> identical name. It runs **Armbian**, not Raspberry Pi OS, and Raspberry Pi Imager
+> cannot prepare a card for it.
+>
+> The Riparr Preparer handles it correctly. The rest of this guide — board name, OS,
+> ports, and the LED reference — has not been rewritten yet.
+> See [`DECISIONS.md` D17](../../DECISIONS.md) and [`JOURNAL.md`](../../JOURNAL.md).
+
 > ⚠️ **Pre-release.** Riparr is not built yet. This guide describes the target product and
 > is written first on purpose, so the experience is designed before the code is. Anything
 > still unresolved is marked **[unresolved]** inline.

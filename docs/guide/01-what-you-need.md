@@ -2,6 +2,17 @@
 
 [← Guide index](README.md) · [Next: Prepare the SD card →](02-prepare-sd-card.md)
 
+> ### ⚠️ Out of date as of 2026-08-20
+>
+> This guide describes a **Raspberry Pi Zero 2W**. The hardware is actually an
+> **Orange Pi Zero 2W** (Allwinner H618) — a different company's board with a nearly
+> identical name. It runs **Armbian**, not Raspberry Pi OS, and Raspberry Pi Imager
+> cannot prepare a card for it.
+>
+> The Riparr Preparer handles it correctly. The rest of this guide — board name, OS,
+> ports, and the LED reference — has not been rewritten yet.
+> See [`DECISIONS.md` D17](../../DECISIONS.md) and [`JOURNAL.md`](../../JOURNAL.md).
+
 ---
 
 ## Parts

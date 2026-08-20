@@ -6,7 +6,7 @@ Sonarr manages TV. Radarr manages movies. Lidarr manages music. **Riparr manages
 physical-to-digital step nobody automated well: getting discs off the shelf and into the
 library.**
 
-A small 3D-printed box houses an optical drive and a Raspberry Pi Zero 2W. **One USB-C
+A small 3D-printed box houses an optical drive and an Orange Pi Zero 2W. **One USB-C
 cable** powers and runs the whole thing. You prepare the SD card in a small native app
 (WiFi pre-configured, fully headless, no terminal), browse to `riparr.local`, set
 credentials, run a short first-run wizard — and then never touch the settings again.
@@ -31,23 +31,33 @@ that cost time to discover. Those two reload context fastest.
 ## Status
 
 **Early implementation.** The SD preparer and the Riparr service both exist and run.
-**The card is written and provisioned but has never been booted, and no hardware has been
-validated.** Nothing blocks the first boot — see [`JOURNAL.md`](JOURNAL.md) for the exact
-state of the card and the next seven steps.
+**No hardware has been validated yet — the board has never completed a boot.**
 
-Last working session: **2026-08-19**
+The night of 2026-08-19/20 was spent discovering why, and the answer was that
+**the board is an Orange Pi Zero 2W (Allwinner H618), not a Raspberry Pi** — a different
+company's product with a nearly identical name. Raspberry Pi OS cannot boot on it. Support
+for the real hardware is now written and tested (D17); it has not yet been run on the
+board.
+
+Last working session: **2026-08-20**
 
 | | |
 |---|---|
 | **Prepare a card** | `~/riparr-build/prepare` — native macOS window, no terminal |
-| **Install on the Pi** | `curl -fsSL .../tools/install.sh \| sudo bash` |
+| **Install on the box** | copy the repo across, then `sudo bash tools/install.sh` |
 | **Reach it** | `http://riparr.local:9797` — [why 9797](DECISIONS.md) |
-| **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-Pi) |
+| **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-board) |
+| **Needs** | `brew install e2fsprogs` — the Preparer writes config into ext4 with `debugfs` |
 
-**The next action is still not code.** It's the week-one hardware validation in
+**The next action is not code.** It is booting the board for the first time — write a
+card with the Preparer and power it on. [`JOURNAL.md`](JOURNAL.md) has the exact steps.
+
+After that, the week-one hardware validation in
 [`docs/design/risks.md`](docs/design/risks.md):
 
-1. **Does MakeMKV run on a Zero 2W?** (R1) Gates the entire form factor.
+1. **Does MakeMKV run on an Allwinner H618 with 1 GB?** (R1) Still aarch64, so the
+   official arm64 binary applies; 1 GB is double the originally budgeted 512 MB, so this
+   is downgraded from "gates the form factor" to "verify it".
 2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design below.
    Runs inside the same session at no extra cost.
 
@@ -66,7 +76,7 @@ Installing from a local checkout works today.
 | [`docs/guide/`](docs/guide/README.md) | The full setup-to-first-rip path, in order |
 | [`docs/guide/led-reference.md`](docs/guide/led-reference.md) | Printable LED card |
 | [`docs/guide/08-troubleshooting.md`](docs/guide/08-troubleshooting.md) | Organized by symptom, not by subsystem |
-| [`tools/preparer/`](tools/preparer/README.md) | **SD preparer** — native macOS window. One authorization prompt, 2.4 GHz-aware Wi-Fi scan, PSK derivation, disk guards |
+| [`tools/preparer/`](tools/preparer/README.md) | **SD preparer** — native macOS window. One authorization prompt, band-aware Wi-Fi scan, PSK derivation, disk guards, and headless provisioning for both Raspberry Pi and Allwinner card layouts |
 | [`tools/flasher/`](tools/flasher/README.md) | The same thing for scripts and CI. Needs a TTY. |
 
 ### For developers
