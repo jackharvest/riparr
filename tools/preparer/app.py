@@ -64,6 +64,10 @@ class Bridge:
             "password": pw,
             "password_generated": generated,
             "has_key": core.public_key(self.assets) is not None,
+            "makemkv": os.path.isdir(os.path.join(self.assets, "makemkv")),
+            "ssh_config": (os.path.join(self.assets, "ssh_config")
+                           if os.path.exists(os.path.join(self.assets, "ssh_config"))
+                           else None),
             "timezone": core.host_timezone(),
             "country": os.environ.get("RIPARR_COUNTRY", "US"),
         }
@@ -128,25 +132,31 @@ class Bridge:
 
         total = core.uncompressed_size(image)
         sha = core.expected_sha256(image) or ""
+        verify = bool(cfg.get("verify", True))
+        mkv = os.path.join(self.assets, "makemkv")
+        mkv = mkv if os.path.isdir(mkv) else ""
         core_publish(self.progress_path, phase="auth",
                      message="Waiting for your administrator password")
 
         self.write_error = None
         self.write_thread = threading.Thread(
             target=self._run_privileged,
-            args=(image, disk["id"], toml_path, total, sha), daemon=True)
+            args=(image, disk["id"], toml_path, total, sha, verify, mkv), daemon=True)
         self.write_thread.start()
-        return {"ok": True, "total": total}
+        return {"ok": True, "total": total, "verify": verify,
+                "kind": core.image_kind(image)}
 
-    def _run_privileged(self, image, dev, toml_path, total, sha=""):
+    def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv=""):
         """One authorization dialog covers write, provision and eject."""
         script = os.path.join(RUNDIR, "write.sh")
         with open(script, "w") as f:
             f.write("#!/bin/sh\nexec %s %s --image %s --dev %s --toml %s "
-                    "--progress %s --total %d --sha256 %s\n" % (
+                    "--progress %s --total %d --sha256 %s%s\n" % (
                         _q(sys.executable), _q(os.path.join(HERE, "writer.py")),
                         _q(image), _q(dev), _q(toml_path),
-                        _q(self.progress_path), total, _q(sha)))
+                        _q(self.progress_path), total, _q(sha),
+                        (" --verify" if verify else "")
+                        + ((" --makemkv " + _q(mkv)) if mkv else "")))
         os.chmod(script, 0o700)
 
         osa = ('do shell script "/bin/sh %s" '

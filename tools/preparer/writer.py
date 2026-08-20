@@ -32,6 +32,29 @@ def publish(path, **kw):
     os.replace(tmp, path)
 
 
+def _read_back(rdev, count, st):
+    """Read `count` bytes back off the raw device and hash them."""
+    h = hashlib.sha256()
+    done = 0
+    t0 = time.time()
+    try:
+        with open(rdev, "rb") as f:
+            while done < count:
+                chunk = f.read(min(4 << 20, count - done))
+                if not chunk:
+                    return None
+                h.update(chunk)
+                done += len(chunk)
+                el = time.time() - t0
+                publish(st, phase="verify-card", written=done, total=count,
+                        rate=(done / el) if el else 0,
+                        eta=((count - done) / (done / el)) if done and el else 0,
+                        message="Checking the card reads back correctly")
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
 def _looks_like_pi_boot(path):
     """A Raspberry Pi boot partition always carries these. An unrelated FAT volume won't."""
     return (os.path.exists(os.path.join(path, "config.txt"))
@@ -64,12 +87,14 @@ def run(args):
                           stdin=subprocess.PIPE,
                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     written, t0, last = 0, time.time(), 0.0
+    digest = hashlib.sha256()
     try:
         while True:
             chunk = xz.stdout.read(4 << 20)
             if not chunk:
                 break
             dd.stdin.write(chunk)
+            digest.update(chunk)
             written += len(chunk)
             now = time.time()
             if now - last > 0.2:
@@ -105,6 +130,24 @@ def run(args):
     publish(st, phase="flush", written=written, total=total,
             message="Flushing to the card")
     subprocess.run(["sync"])
+
+    if args.verify:
+        # Failing and counterfeit cards accept writes happily and return garbage on read.
+        # The source image was already checked; this checks what actually landed.
+        expect = digest.hexdigest()
+        got = _read_back(rdev, written, st)
+        if got is None:
+            publish(st, phase="error",
+                    message="Could not read the card back to check it.",
+                    detail="The write itself reported success. Re-seat the card and "
+                           "verify manually, or re-run without checking.")
+            return 1
+        if got != expect:
+            publish(st, phase="error",
+                    message="The card did not read back what was written to it.",
+                    detail="This card is failing or counterfeit. Do not use it.\n"
+                           "wrote %s\nread  %s" % (expect[:32], got[:32]))
+            return 1
 
     # diskutil remounts the FAT32 boot partition on its own once the write settles.
     publish(st, phase="mount", message="Waiting for the boot partition")
@@ -157,6 +200,31 @@ def run(args):
                     detail="custom.toml read back differently than it was written")
             return 1
 
+    # Carry MakeMKV across on the card itself. It is ~25 MB against a 512 MiB boot
+    # partition, and it removes an scp step from the first session. The service looks
+    # for /boot/firmware/makemkv before it tries to download anything.
+    if args.makemkv and os.path.isdir(args.makemkv):
+        publish(st, phase="extras", message="Copying MakeMKV onto the card")
+        dest = os.path.join(boot, "makemkv")
+        try:
+            os.makedirs(dest, exist_ok=True)
+            for name in sorted(os.listdir(args.makemkv)):
+                if not name.endswith(".tar.gz"):
+                    continue
+                src = os.path.join(args.makemkv, name)
+                with open(src, "rb") as a, open(os.path.join(dest, name), "wb") as b:
+                    while True:
+                        chunk = a.read(4 << 20)
+                        if not chunk:
+                            break
+                        b.write(chunk)
+            subprocess.run(["sync"])
+        except OSError as e:
+            # Not fatal: the packages can still be copied over later by hand.
+            publish(st, phase="extras",
+                    message="Could not copy MakeMKV onto the card", detail=str(e))
+            time.sleep(1.5)
+
     publish(st, phase="eject", message="Ejecting")
     subprocess.run(["diskutil", "eject", dev], capture_output=True)
 
@@ -173,6 +241,10 @@ def main():
     ap.add_argument("--progress", required=True)
     ap.add_argument("--total", type=int, default=0)
     ap.add_argument("--sha256", default="", help="expected image checksum")
+    ap.add_argument("--makemkv", default="",
+                    help="directory of MakeMKV tarballs to copy onto the boot partition")
+    ap.add_argument("--verify", action="store_true",
+                    help="read the card back after writing and compare")
     args = ap.parse_args()
 
     if not args.dev.startswith("disk") or "/" in args.dev:

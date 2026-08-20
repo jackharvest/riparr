@@ -297,6 +297,17 @@ def expected_sha256(image_path):
     return None
 
 
+def image_kind(path):
+    """Whether this image carries Riparr, or is a stock Raspberry Pi OS image.
+
+    The success screen must not promise a web interface that will not be there. Until a
+    Riparr image exists, every card written by this tool boots to stock Raspberry Pi OS
+    and is reachable only over SSH.
+    """
+    name = os.path.basename(path).lower()
+    return "riparr" if "riparr" in name else "raspios"
+
+
 def find_images(assets):
     """Every .img.xz in the assets dir, newest first."""
     try:
@@ -309,7 +320,8 @@ def find_images(assets):
         out.append({"name": n, "path": p,
                     "size": os.path.getsize(p),
                     "mtime": os.path.getmtime(p),
-                    "sha256": expected_sha256(p)})
+                    "sha256": expected_sha256(p),
+                    "kind": image_kind(p)})
     out.sort(key=lambda d: d["mtime"], reverse=True)
     return out
 

@@ -112,6 +112,12 @@
       <summary>Show the exact settings file</summary>
       <pre id="toml"></pre>
     </details>
+    <label class="check" id="verify-row">
+      <input type="checkbox" id="verify-card" checked>
+      <span>Check the card after writing
+        <small>Reads it back and compares. Adds a few minutes, and catches a failing or
+        counterfeit card now rather than as strange behaviour later.</small></span>
+    </label>
     <div class="spacer"></div>
     <footer class="bar">
       <button class="ghost" data-back="name">Back</button>
@@ -136,18 +142,11 @@
   <section class="screen" data-screen="done">
     <div class="write-wrap">
       <div class="tick">✓</div>
-      <h1>Your Riparr card is ready</h1>
-      <ol class="next">
-        <li>Slide the card into the box</li>
-        <li>Plug in the single USB-C cable</li>
-        <li>Wait about two minutes, then open <b id="done-url">riparr.local</b></li>
-      </ol>
-      <p class="micro">The first-run setup happens in your browser. There is nothing
-        else to install.</p>
-      <div class="row-actions center">
-        <button class="primary" id="open-box">Open riparr.local</button>
-        <button class="ghost" id="again">Prepare another card</button>
-      </div>
+      <h1 id="done-title">Your card is ready</h1>
+      <p class="lede" id="done-lede"></p>
+      <ol class="next" id="done-steps"></ol>
+      <p class="micro" id="done-note"></p>
+      <div class="row-actions center" id="done-actions"></div>
     </div>
   </section>
 

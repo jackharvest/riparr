@@ -6,6 +6,7 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 const state = {
   boot: null,
+  verify: true,
   disk: null,
   net: null,          // {ssid, secure, hidden, bands}
   wifiPw: "",
@@ -164,6 +165,7 @@ function cfg() {
     hidden: !!state.net.hidden,
     country: state.boot.country,
     timezone: state.boot.timezone,
+    verify: state.verify,
   };
 }
 
@@ -180,9 +182,14 @@ async function buildReview() {
       ? "•".repeat(Math.min(c.wifi_pw.length, 16)) +
         ' <span class="tag">stored as a derived key</span>'
       : "none (open network)"],
-    ["Reachable at", `http://${esc(c.hostname)}.local`],
+    ["Reachable at", img && img.kind === "riparr"
+      ? `http://${esc(c.hostname)}.local`
+      : `${esc(c.hostname)}.local <span class="tag">over SSH — this image has no Riparr on it</span>`],
     ["System account", `${esc(c.user)} · password saved in user_password.txt`],
     ["SSH", state.boot.has_key ? "enabled · key + password" : "enabled · password"],
+    ["MakeMKV", state.boot.makemkv
+      ? 'copied onto the card <span class="tag">no scp needed</span>'
+      : '<span class="tag warn">not in the build folder</span>'],
     ["Region", `${esc(c.country)} · ${esc(c.timezone)}`],
   ];
   $("#summary").innerHTML = rows
@@ -196,6 +203,8 @@ async function buildReview() {
 const PHASE_TITLE = {
   auth: "Waiting for permission",
   "verify-image": "Checking the image",
+  "verify-card": "Checking the card",
+  extras: "Adding MakeMKV",
   unmount: "Preparing the card",
   write: "Writing your card",
   flush: "Finishing the write",
@@ -220,7 +229,7 @@ function pollWrite() {
 
     if (phase === "done") {
       clearInterval(state.poll);
-      $("#done-url").textContent = `${state.hostname}.local`;
+      renderDone();
       show("done");
       $$("#steps li").forEach(li => li.classList.add("done"));
       return;
@@ -238,7 +247,7 @@ function pollWrite() {
     $("#write-title").textContent = PHASE_TITLE[phase] || "Working";
     $("#write-msg").textContent = st.message || "";
     const fill = $("#fill");
-    if (phase === "write" && st.total) {
+    if ((phase === "write" || phase === "verify-card") && st.total) {
       const pct = Math.min(100, (st.written / st.total) * 100);
       fill.classList.remove("indet");
       fill.style.width = pct.toFixed(1) + "%";
@@ -246,6 +255,9 @@ function pollWrite() {
       $("#write-detail").textContent =
         `${fmtBytes(st.written)} of ${fmtBytes(st.total)} · ` +
         `${(st.rate / 1e6).toFixed(0)} MB/s · ${fmtEta(st.eta)}`;
+      $("#write-warn").textContent = phase === "verify-card"
+        ? "Reading the card back to make sure it kept what was written."
+        : "Leave the card in place until this finishes.";
     } else {
       fill.classList.add("indet");
       $("#write-pct").textContent = "";
@@ -253,6 +265,50 @@ function pollWrite() {
     }
   }, 350);
 }
+
+/* ── the finish line ────────────────────────────────────── */
+function renderDone() {
+  const img = state.boot.images[0] || {};
+  const host = state.hostname;
+  const riparr = img.kind === "riparr";
+
+  $("#done-title").textContent = riparr
+    ? "Your Riparr card is ready"
+    : "Your card is ready";
+
+  // Do not promise a web interface that is not on this card. Until a Riparr image
+  // exists, every card written here boots stock Raspberry Pi OS.
+  $("#done-lede").textContent = riparr
+    ? ""
+    : "This card carries stock Raspberry Pi OS. Riparr isn't installed on it yet, so it "
+      + "will answer over SSH rather than in a browser.";
+
+  const steps = riparr
+    ? ["Slide the card into the box",
+       "Plug in the single USB-C cable",
+       `Wait about two minutes, then open <b>${esc(host)}.local</b>`]
+    : ["Slide the card into the box",
+       "Plug in the single USB-C cable",
+       `Wait about two minutes, then connect over SSH`];
+  $("#done-steps").innerHTML = steps.map(t => `<li>${t}</li>`).join("");
+
+  const ssh = state.boot.ssh_config
+    ? `ssh -F ${esc(state.boot.ssh_config)} ${esc(host)}`
+    : `ssh riparr@${esc(host)}.local`;
+  $("#done-note").innerHTML = riparr
+    ? "The first-run setup happens in your browser. There is nothing else to install."
+    : `<span class="ssh-line">${ssh}</span>`;
+
+  $("#done-actions").innerHTML =
+    (riparr ? `<button class="primary" id="open-box">Open ${esc(host)}.local</button>` : "")
+    + `<button class="ghost" id="again">Prepare another card</button>`;
+
+  const open = $("#open-box");
+  if (open) open.onclick = () => riparr_open(`http://${host}.local`);
+  $("#again").onclick = () => { state.disk = null; show("card"); loadDisks(); };
+}
+
+function riparr_open(url) { riparr.open_url(url); }
 
 /* ── updates ────────────────────────────────────────────── */
 async function checkUpdate() {
@@ -337,8 +393,7 @@ $("#do-write").onclick = async () => {
   pollWrite();
 };
 
-$("#open-box").onclick = () => riparr.open_url(`http://${state.hostname}.local`);
-$("#again").onclick = () => { state.disk = null; show("card"); loadDisks(); };
+$("#verify-card").onchange = (e) => { state.verify = e.target.checked; };
 $("#retry").onclick = () => { show("card"); loadDisks(); };
 $$("[data-back]").forEach(b => b.onclick = () => show(b.dataset.back));
 

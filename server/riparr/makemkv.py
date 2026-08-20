@@ -53,6 +53,32 @@ EULA_POINTS = [
     "The free beta key expires roughly every 60 days. A permanent key can be purchased.",
 ]
 
+# Checked before anything is downloaded. makemkv.com has been unreachable, and the
+# tarballs are frequently already on the box -- copied across by hand during validation,
+# or left over from a previous install.
+LOCAL_SOURCES = [
+    "/home/riparr/makemkv",
+    "/opt/riparr/makemkv",
+    "/boot/firmware/makemkv",
+    os.path.expanduser("~/makemkv"),
+]
+
+
+def find_local_source():
+    """A directory already holding every package, with checksums that match."""
+    for d in LOCAL_SOURCES:
+        if not os.path.isdir(d):
+            continue
+        have = []
+        for pkg in MANIFEST["packages"]:
+            f = os.path.join(d, pkg["name"])
+            if os.path.exists(f) and os.path.getsize(f) > 0:
+                have.append((f, pkg["sha256"]))
+        if len(have) == len(MANIFEST["packages"]):
+            return d
+    return None
+
+
 INSTALL_SCRIPT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "tools", "makemkv-install.sh")
@@ -63,8 +89,10 @@ _lock = threading.Lock()
 
 def info():
     st = P.makemkv_status()
+    local = find_local_source()
     return {
         "status": st,
+        "local_source": local,
         "manifest": {k: MANIFEST[k] for k in ("version", "verified_against_official")},
         "eula_url": EULA_URL,
         "eula_points": EULA_POINTS,
@@ -115,26 +143,39 @@ def _run():
                         "downloaded or installed.")
             return
 
+        local = find_local_source()
         tmp = tempfile.mkdtemp(prefix="riparr-makemkv-")
         try:
-            paths = []
             for i, pkg in enumerate(MANIFEST["packages"]):
-                _set(phase="downloading", progress=0.1 + 0.25 * i,
-                     message="Downloading %s" % pkg["name"], detail="")
                 dest = os.path.join(tmp, pkg["name"])
-                _download(pkg["url"], dest)
+                if local:
+                    _set(phase="downloading", progress=0.1 + 0.25 * i,
+                         message="Using the copy already on this device",
+                         detail=os.path.join(local, pkg["name"]))
+                    shutil.copyfile(os.path.join(local, pkg["name"]), dest)
+                else:
+                    _set(phase="downloading", progress=0.1 + 0.25 * i,
+                         message="Downloading %s" % pkg["name"], detail="")
+                    try:
+                        _download(pkg["url"], dest)
+                    except Exception as e:
+                        _set(phase="error", progress=0,
+                             message="Could not download MakeMKV.",
+                             detail="%s\n\nmakemkv.com has been intermittently "
+                                    "unreachable. Copy the tarballs to one of %s and "
+                                    "try again." % (e, " or ".join(LOCAL_SOURCES[:2])))
+                        return
 
                 _set(phase="verifying", progress=0.2 + 0.25 * i,
                      message="Checking %s" % pkg["name"])
                 actual = _sha256(dest)
                 if actual != pkg["sha256"]:
                     _set(phase="error", progress=0,
-                         message="The download didn't match its expected checksum. "
-                                 "Nothing was installed.",
-                         detail="%s\nexpected %s\ngot      %s"
-                                % (pkg["name"], pkg["sha256"][:24], actual[:24]))
+                         message="%s didn't match its expected checksum. Nothing was "
+                                 "installed." % pkg["name"],
+                         detail="expected %s\ngot      %s"
+                                % (pkg["sha256"][:24], actual[:24]))
                     return
-                paths.append(dest)
 
             _set(phase="building", progress=0.7,
                  message="Building MakeMKV for this device — this takes a few minutes",
