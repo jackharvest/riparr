@@ -102,8 +102,9 @@ Installing from a local checkout works today.
 
 ## The 30-second summary of what's decided
 
-- **OS:** Raspberry Pi OS Lite **64-bit** (non-negotiable — Pi Imager headless setup
-  depends on it, MakeMKV needs aarch64)
+- **OS:** **Armbian minimal (Debian trixie), 64-bit**, for `orangepizero2w` — Armbian
+  ships only rolling community builds for this board, and there is no stable release to
+  pin to (D17). aarch64 is the non-negotiable part; MakeMKV needs it
 - **Stack:** Python / FastAPI + SQLite, single process, static frontend
 - **Storage:** 3 partitions. Staging is isolated from rootfs so a stalled upload queue can
   never brick the box
@@ -116,7 +117,8 @@ Installing from a local checkout works today.
 
 ## Open questions carried into next session
 
-1. Does `makemkvcon` actually run on aarch64 in 512MB RAM? (**blocking** — R1)
+1. Does `makemkvcon` actually run on aarch64? (R1) The board has **1 GB, not 512 MB**,
+   and the arm64 binary is officially supported — so this is now a formality, not a blocker
 2. Does MakeMKV write MKV linearly, or does it seek back to finalize headers? (**gates
    D11** — R8). If it rewrites, byte-level follow-copy dies and streaming falls back to
    title-level
