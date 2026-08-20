@@ -446,6 +446,23 @@ def makemkv_install_status(user=Depends(require_user)):
     return MK.install_status()
 
 
+class PowerAction(BaseModel):
+    action: str
+
+
+@app.post("/api/system/power")
+def system_power(body: PowerAction, user=Depends(require_user)):
+    """Restart or shut down the box.
+
+    The enclosure has no power button, so without this the only way to stop the box is
+    to pull the cable — which is how a running Linux system loses a filesystem.
+    """
+    ok, message = P.power_action(body.action)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "action": body.action, "message": message}
+
+
 @app.get("/api/makemkv/beta-key")
 def makemkv_beta_key(refresh: bool = False, user=Depends(require_user)):
     """The beta key GuinpinSoft publishes, fetched so the user does not have to.

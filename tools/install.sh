@@ -216,10 +216,25 @@ install -m 0644 "$INSTALL_DIR/packaging/riparr-makemkv.service" \
 install -m 0644 "$INSTALL_DIR/packaging/riparr-makemkv.path" \
         /etc/systemd/system/riparr-makemkv.path
 
+# Restart and shut down, through the same one-way door. There is no power button on
+# the enclosure, so "unplug it" is the only alternative -- and pulling power from a
+# running Linux box is how filesystems get corrupted. Each action is a separate path
+# unit, so the request file carries nothing to parse and nothing to trust.
+for act in reboot poweroff; do
+  install -m 0644 "$INSTALL_DIR/packaging/riparr-$act.path" \
+          "/etc/systemd/system/riparr-$act.path"
+  install -m 0644 "$INSTALL_DIR/packaging/riparr-$act.service" \
+          "/etc/systemd/system/riparr-$act.service"
+done
+
 systemctl daemon-reload
 systemctl enable --quiet riparr-makemkv.path
 systemctl start riparr-makemkv.path
-ok "MakeMKV can be installed from the web interface"
+for act in reboot poweroff; do
+  systemctl enable --quiet "riparr-$act.path"
+  systemctl start "riparr-$act.path"
+done
+ok "MakeMKV, restart and shut down all work from the web interface"
 systemctl enable --quiet "$SERVICE"
 systemctl restart "$SERVICE"
 ok "riparr.service enabled and started"

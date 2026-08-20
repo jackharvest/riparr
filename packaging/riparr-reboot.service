@@ -1,0 +1,11 @@
+[Unit]
+Description=Restart the Riparr box
+Documentation=https://github.com/jackharvest/riparr
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/rm -f /run/riparr/reboot.request
+# Long enough for the HTTP response to reach the browser, so the page can say
+# "Restarting" rather than the request appearing to fail as the box goes away.
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/systemctl reboot

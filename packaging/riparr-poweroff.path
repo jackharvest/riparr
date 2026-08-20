@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch for a Riparr request to Shut down the box
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# The web service is unprivileged and cannot call systemctl poweroff. It can create one
+# file in its own runtime directory, and that is the whole interface. There is nothing
+# in the file to parse and nothing for the root side to trust: the action is fixed by
+# which path unit fired, so a compromised service can ask for exactly poweroff and
+# nothing else.
+PathExists=/run/riparr/poweroff.request
+
+[Install]
+WantedBy=multi-user.target

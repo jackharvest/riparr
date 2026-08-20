@@ -11,6 +11,7 @@ import re
 import shutil
 import socket
 import subprocess
+import time
 
 def _is_appliance():
     """Are we running on the box, or on a development machine?
@@ -181,6 +182,37 @@ def optical_diagnosis():
                      "and cannot see anything plugged into it. Try the other one. "
                      "A charge-only USB-C cable looks exactly like this too.")
     return {"drives": drives, "usb": usb, "hint": hint}
+
+
+# Restart and shut down go through the same request-file bridge the MakeMKV install
+# uses: this process is unprivileged with NoNewPrivileges=yes and cannot call
+# systemctl, but it can create a file that a root path unit is watching. The action is
+# decided by which file is created, so there is nothing here the root side has to trust.
+POWER_ACTIONS = {"reboot", "poweroff"}
+POWER_REQUEST = "/run/riparr/%s.request"
+
+
+def power_available():
+    return all(os.path.exists("/etc/systemd/system/riparr-%s.path" % a)
+               for a in POWER_ACTIONS) and os.access("/run/riparr", os.W_OK)
+
+
+def power_action(action):
+    """Ask the system to restart or shut down. Returns (ok, message)."""
+    if action not in POWER_ACTIONS:
+        return False, "Unknown action."
+    if MOCK:
+        return True, "%s (simulated)" % action
+    if not power_available():
+        return False, ("This copy of Riparr was installed before restart and shutdown "
+                       "existed. Re-run sudo bash /opt/riparr/tools/install.sh to add "
+                       "them.")
+    try:
+        with open(POWER_REQUEST % action, "w") as f:
+            f.write("%d\n" % int(time.time()))
+    except OSError as e:
+        return False, "Could not ask the system to %s: %s" % (action, e)
+    return True, ("Restarting" if action == "reboot" else "Shutting down")
 
 
 def eject(device="/dev/sr0"):

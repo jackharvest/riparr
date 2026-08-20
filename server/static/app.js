@@ -73,6 +73,27 @@ async function offerBetaKey(intoSel, inputSel, opts = {}) {
   };
 }
 
+/* Poll until the box answers again after a restart, then reload. The service is gone
+   for most of this, so every failure here is expected and silent. */
+async function waitForBoxBack(msg) {
+  const started = Date.now();
+  const tick = async () => {
+    if (Date.now() - started > 5 * 60 * 1000) {
+      msg.innerHTML = `<div class="result bad"><b>Still not back.</b>
+        Check the box has power, then reload this page.</div>`;
+      return;
+    }
+    try {
+      const r = await fetch("/api/setup/state", { cache: "no-store" });
+      if (r.ok) { location.reload(); return; }
+    } catch (e) { /* expected while it is down */ }
+    setTimeout(tick, 3000);
+  };
+  // Do not start polling instantly: the box is still up for the first few seconds and
+  // would answer immediately, reloading into a page about to be torn down.
+  setTimeout(tick, 12000);
+}
+
 function signalBars(pct) {
   const n = pct == null ? 0 : pct >= 75 ? 4 : pct >= 55 ? 3 : pct >= 35 ? 2 : 1;
   return `<span class="sig">${[1, 2, 3, 4]
@@ -557,7 +578,16 @@ views.queue = async () => {
              ? `A disc is loaded: <b>${esc(drives[0].label || "unknown")}</b>`
              : "Insert a disc and close the tray. Riparr takes it from there."}</p>
       </div></div>`}
-    ${driveCard(drives, state.status.optical)}`;
+    ${driveCard(drives, state.status.optical)}
+    <div class="section"><h2>Power</h2><div>
+      <p class="muted">There is no button on the box. Pulling the cable on a running
+        system is how a card gets corrupted — stop it here first.</p>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn" id="sys-reboot">Restart</button>
+        <button class="btn danger" id="sys-poweroff">Shut down</button>
+      </div>
+      <div id="power-msg"></div>
+    </div></div>`;
 };
 
 const pct = (a, b) => (b ? Math.min(100, (a / b) * 100).toFixed(1) : 0);
@@ -1054,6 +1084,34 @@ function wireContent(section, sub) {
   // Fetching is a network round trip to somebody else's forum, so it happens after
   // the page is on screen rather than blocking it.
   if ($("#mk-key-offer")) offerBetaKey("#mk-key-offer", "#mk-key-input");
+
+  const power = async (action, label, after) => {
+    const msg = $("#power-msg");
+    msg.innerHTML = `<div class="result busy"><span class="spin"></span>${esc(label)}…</div>`;
+    try { await api.post("/api/system/power", { action }); }
+    catch (e) {
+      msg.innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
+      return;
+    }
+    msg.innerHTML = `<div class="result">${after}</div>`;
+    $("#sys-reboot").disabled = $("#sys-poweroff").disabled = true;
+    if (action === "reboot") waitForBoxBack(msg);
+  };
+
+  const rb = $("#sys-reboot");
+  if (rb) rb.onclick = () => {
+    if (!confirm("Restart Riparr?\n\nAny rip in progress will be lost.")) return;
+    power("reboot", "Restarting",
+          "<b>Restarting.</b> This page will come back on its own in a minute or two.");
+  };
+  const po = $("#sys-poweroff");
+  if (po) po.onclick = () => {
+    if (!confirm("Shut down Riparr?\n\nThere is no power button — you will have to "
+                 + "unplug the cable and plug it back in to start it again.")) return;
+    power("poweroff", "Shutting down",
+          "<b>Shutting down.</b> Wait for the light to settle, then it is safe to "
+          + "unplug. To start it again, plug the cable back in.");
+  };
 
   const mkAccept = $("#mk-accept");
   if (mkAccept) {
