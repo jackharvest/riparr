@@ -23,9 +23,14 @@ die()  { printf '\n\033[31m✗ %s\033[0m\n\n' "$*" >&2; exit 1; }
 [ "$(uname -s)" = Linux ] || die "Riparr installs on the appliance. This is $(uname -s)."
 
 # ── where the boot partition is mounted differs by OS version ──
+# config.txt only exists on Raspberry Pi. Armbian on Allwinner keeps /boot inside the
+# root filesystem with armbianEnv.txt instead, and riparr.conf is written straight there.
 BOOT=""
 for d in /boot/firmware /boot; do
-  [ -d "$d" ] && [ -f "$d/config.txt" ] && { BOOT="$d"; break; }
+  [ -d "$d" ] || continue
+  if [ -f "$d/riparr.conf" ] || [ -f "$d/config.txt" ] || [ -f "$d/armbianEnv.txt" ]; then
+    BOOT="$d"; break
+  fi
 done
 
 PORT=9797

@@ -91,7 +91,8 @@ function renderNets(nets, method) {
   el.innerHTML = nets.map((n, i) => {
     const tags = [];
     if (n.pi_ok) {
-      if (n.bands.includes("2.4") && n.bands.length > 1) tags.push(`<span class="tag good">2.4 + 5 GHz</span>`);
+      if (n.bands.includes("2.4") && n.bands.includes("5")) tags.push(`<span class="tag good">2.4 + 5 GHz</span>`);
+      else if (n.bands.includes("5")) tags.push(`<span class="tag good">5 GHz — faster</span>`);
       else if (n.bands.includes("2.4")) tags.push(`<span class="tag good">2.4 GHz</span>`);
       else tags.push(`<span class="tag warn">band unknown</span>`);
       if (n.saved && !n.seen) tags.push(`<span class="tag">saved, out of range</span>`);
@@ -99,7 +100,7 @@ function renderNets(nets, method) {
       if (!n.secure) tags.push(`<span class="tag warn">open</span>`);
     }
     const sub = n.pi_ok ? tags.join("")
-      : `<span class="sub">5 GHz only — the Pi Zero 2W has no radio for this</span>`;
+      : `<span class="sub">the box has no radio for this band</span>`;
     return `<div class="item ${n.pi_ok ? "" : "off"}" data-i="${i}">
       ${n.pi_ok ? bars(n.rssi) : `<span class="bars"></span>`}
       <div class="grow">
@@ -128,7 +129,7 @@ function pickNet(n) {
   if (needsPw) $("#wifi-pw").focus();
   updateWifiNext();
   $("#wifi-hint").textContent = (!n.bands || !n.bands.length)
-    ? "Band unknown — if this is 5 GHz the box will not connect." : "";
+    ? "Band unknown — the box will try, but cannot confirm it can reach this one." : "";
 }
 
 function updateWifiNext() {
@@ -280,10 +281,10 @@ function renderDone() {
     : "Your card is ready";
 
   // Do not promise a web interface that is not on this card. Until a Riparr image
-  // exists, every card written here boots stock Raspberry Pi OS.
+  // exists, every card written here boots a stock OS image.
   $("#done-lede").textContent = riparr
     ? ""
-    : "This card carries stock Raspberry Pi OS. Riparr isn't installed on it yet, so it "
+    : "This card carries a stock Linux image. Riparr isn't installed on it yet, so it "
       + "will answer over SSH rather than in a browser.";
 
   const steps = riparr

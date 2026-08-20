@@ -156,6 +156,37 @@ def _explain(err, xerr, rc, rdev):
     return (err or xerr or "dd exited %s having written nothing." % rc)
 
 
+def _partition_layout(rdev):
+    """Read the MBR and classify the image we just wrote.
+
+    Raspberry Pi images are FAT boot + Linux root, and are provisioned by dropping a
+    file onto the FAT partition. Allwinner images -- Armbian on the Orange Pi Zero 2W --
+    are a single ext4 partition with U-Boot in the raw sectors ahead of it. There is no
+    FAT partition to write to and macOS cannot mount ext4, so those are provisioned
+    through debugfs instead. Getting this wrong means a card that boots and does
+    nothing, which is exactly how the first night was lost.
+    """
+    try:
+        with open(rdev, "rb") as f:
+            mbr = f.read(512)
+    except OSError:
+        return "unknown", None
+    if len(mbr) < 512:
+        return "unknown", None
+    parts = []
+    for i in range(4):
+        e = mbr[0x1BE + 16 * i:0x1BE + 16 * i + 16]
+        if e[4]:
+            parts.append(e[4])
+    if not parts:
+        return "unknown", None
+    if parts[0] in (0x0b, 0x0c):
+        return "fat-boot", 1          # Raspberry Pi style
+    if parts[0] == 0x83 and len(parts) == 1:
+        return "single-ext4", 1       # Armbian / Allwinner style
+    return "unknown", None
+
+
 def _looks_like_pi_boot(path):
     """A Raspberry Pi boot partition always carries these. An unrelated FAT volume won't."""
     return (os.path.exists(os.path.join(path, "config.txt"))
@@ -316,6 +347,54 @@ def run(args):
                     detail="This card is failing or counterfeit. Do not use it.\n"
                            "wrote %s\nread  %s" % (expect[:32], got[:32]))
             return 1
+
+    layout, partno = _partition_layout(rdev)
+
+    if layout == "single-ext4":
+        # Armbian on Allwinner. No FAT partition exists; configuration is written into
+        # the ext4 root filesystem directly. See tools/preparer/armbian.py for why
+        # Armbian's own PRESET_* mechanism cannot be used on a headless box.
+        publish(st, phase="provision", message="Applying your settings")
+        rootpart = "%ss%d" % (rdev, partno)
+        try:
+            import armbian
+            port = 9797
+            if args.conf and os.path.exists(args.conf):
+                for line in open(args.conf):
+                    if line.startswith("RIPARR_PORT="):
+                        port = int(line.split("=", 1)[1].strip())
+            cfg = armbian.cfg_from_custom_toml(args.toml, port)
+            armbian.provision(rootpart, cfg)
+
+            failed = [lbl for lbl, ok, _ in armbian.verify(rootpart, cfg) if not ok]
+            if failed:
+                publish(st, phase="error",
+                        message="Settings did not verify after writing.",
+                        detail="These did not read back correctly:\n  "
+                               + "\n  ".join(failed))
+                return 1
+
+            if args.makemkv and os.path.isdir(args.makemkv):
+                publish(st, phase="extras", message="Copying MakeMKV onto the card")
+                try:
+                    armbian.copy_makemkv(rootpart, args.makemkv)
+                except Exception as e:
+                    # Not fatal: the packages can still be copied over later by hand.
+                    publish(st, phase="extras",
+                            message="Could not copy MakeMKV onto the card", detail=str(e))
+                    time.sleep(1.5)
+        except Exception as e:
+            publish(st, phase="error",
+                    message="The card was written, but could not be configured.",
+                    detail=str(e))
+            return 1
+
+        subprocess.run(["sync"])
+        publish(st, phase="eject", message="Ejecting")
+        subprocess.run(["diskutil", "eject", dev], capture_output=True)
+        publish(st, phase="done", written=written, total=total,
+                message="Your Riparr card is ready")
+        return 0
 
     # diskutil remounts the FAT32 boot partition on its own once the write settles.
     publish(st, phase="mount", message="Waiting for the boot partition")

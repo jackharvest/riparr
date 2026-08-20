@@ -57,6 +57,8 @@ EULA_POINTS = [
 # tarballs are frequently already on the box -- copied across by hand during validation,
 # or left over from a previous install.
 LOCAL_SOURCES = [
+    "/root/makemkv",            # where the Preparer puts them on an Armbian card
+    "/boot/makemkv",
     "/home/riparr/makemkv",
     "/opt/riparr/makemkv",
     "/boot/firmware/makemkv",

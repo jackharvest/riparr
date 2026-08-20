@@ -71,8 +71,13 @@ def build_conf(cfg):
                                    cfg.get("hostname", "riparr")))
 
 
-# A Pi Zero 2W's radio is 2.4 GHz only. This is not a preference, it is silicon.
-PI_BANDS = {"2.4"}
+# The Orange Pi Zero 2W has dual-band WiFi 5 (2.4 + 5 GHz), so both are offered.
+#
+# This was {"2.4"} while the board was believed to be a Raspberry Pi Zero 2 W, whose
+# radio genuinely is single-band -- correct then, wrong now. 5 GHz matters here beyond
+# convenience: upload rate is the binding constraint in the D11 streaming design, so
+# the faster band directly raises how many discs an hour the box can clear.
+PI_BANDS = {"2.4", "5"}
 
 # Removable-media guard rails. A card outside this range is not an SD card we wrote.
 MIN_DISK_BYTES = 4_000_000_000
@@ -168,8 +173,13 @@ def saved_networks():
 
 
 def pi_can_join(net):
-    """Unknown band is allowed through and warned about; 5/6 GHz only is not."""
-    return (not net["bands"]) or ("2.4" in net["bands"])
+    """Can the board's radio reach this network?
+
+    The Orange Pi Zero 2W is dual-band, so 5 GHz networks are now perfectly reachable
+    and are offered. 6 GHz is not -- this is WiFi 5, not 6E. Unknown band is allowed
+    through and warned about rather than hidden.
+    """
+    return (not net["bands"]) or bool(PI_BANDS & set(net["bands"]))
 
 
 def scan_networks():

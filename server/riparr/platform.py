@@ -12,11 +12,27 @@ import shutil
 import socket
 import subprocess
 
-IS_APPLIANCE = (
-    _p.system() == "Linux"
-    and os.path.exists("/proc/device-tree/model")
-    and "Raspberry Pi" in open("/proc/device-tree/model", errors="ignore").read()
-)
+def _is_appliance():
+    """Are we running on the box, or on a development machine?
+
+    This used to require the string "Raspberry Pi" in the device-tree model, which was
+    wrong the moment the hardware turned out to be an Orange Pi Zero 2W (Allwinner
+    H618). The failure was silent and nasty: the service would have come up in MOCK
+    mode on real hardware and served fabricated discs and fake Wi-Fi to a UI that
+    looked entirely correct.
+
+    A device-tree model node is the actual thing being tested for -- every ARM SBC has
+    one and no ordinary desktop or VM does. RIPARR_APPLIANCE overrides either way.
+    """
+    env = os.environ.get("RIPARR_APPLIANCE")
+    if env is not None:
+        return env not in ("", "0", "no", "false")
+    return (_p.system() == "Linux"
+            and os.path.exists("/proc/device-tree/model")
+            and bool(open("/proc/device-tree/model", errors="ignore").read().strip("\x00").strip()))
+
+
+IS_APPLIANCE = _is_appliance()
 MOCK = not IS_APPLIANCE
 
 
@@ -46,9 +62,14 @@ def system_status():
         mem[k] = int(v.strip().split()[0]) if v.strip().split() else 0
     total = mem.get("MemTotal", 0) // 1024
     avail = mem.get("MemAvailable", 0) // 1024
-    temp = _run(["vcgencmd", "measure_temp"])
+    # vcgencmd is Broadcom firmware; Allwinner boards expose the same things through
+    # the kernel thermal zones instead. Try the generic path when vcgencmd is absent.
+    temp = _run(["vcgencmd", "measure_temp"]) if shutil.which("vcgencmd") else None
+    if not temp:
+        raw = _read("/sys/class/thermal/thermal_zone0/temp").strip()
+        temp = str(int(raw) / 1000.0) if raw.isdigit() else ""
     m = re.search(r"([\d.]+)", temp or "")
-    thr = _run(["vcgencmd", "get_throttled"]) or ""
+    thr = (_run(["vcgencmd", "get_throttled"]) or "") if shutil.which("vcgencmd") else ""
     return {
         "model": model,
         "os": _osname(),
@@ -57,6 +78,7 @@ def system_status():
         "memory_total_mb": total,
         "memory_used_mb": total - avail,
         "cpu_temp_c": float(m.group(1)) if m else None,
+        # No vcgencmd means no throttle telemetry, which is not the same as throttled.
         "throttled": ("0x0" not in thr) if thr else False,
         "mock": False,
     }
