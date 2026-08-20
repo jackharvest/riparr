@@ -7,9 +7,9 @@ physical-to-digital step nobody automated well: getting discs off the shelf and 
 library.**
 
 A small 3D-printed box houses an optical drive and a Raspberry Pi Zero 2W. **One USB-C
-cable** powers and runs the whole thing. You flash an SD card with Raspberry Pi Imager
-(WiFi pre-configured, fully headless), browse to `riparr.local`, set credentials, run a
-short first-run wizard — and then never touch the settings again.
+cable** powers and runs the whole thing. You prepare the SD card in a small native app
+(WiFi pre-configured, fully headless, no terminal), browse to `riparr.local`, set
+credentials, run a short first-run wizard — and then never touch the settings again.
 
 After that the loop is: **insert disc → close tray → walk away → disc ejects when done.**
 No keyboard, no screen, no clicking. The finished MKV lands on your network share,
@@ -30,17 +30,27 @@ that cost time to discover. Those two reload context fastest.
 
 ## Status
 
-**Pre-implementation.** Design decided, nothing built yet. No code, no hardware validation
-performed. Hardware is on hand, including a **32GB test card**.
+**Early implementation.** The SD preparer and the Riparr service both exist and run. **No
+hardware has been validated and the test card has never been written.**
 
 Last working session: **2026-08-19**
 
-**The next action is not code.** It's the week-one hardware validation in
-[`docs/design/risks.md`](docs/design/risks.md) — specifically:
+| | |
+|---|---|
+| **Prepare a card** | `~/riparr-build/prepare` — native macOS window, no terminal |
+| **Run the service** | `server/run.sh` → <http://localhost:8000> (mock mode off-Pi) |
+
+**The next action is still not code.** It's the week-one hardware validation in
+[`docs/design/risks.md`](docs/design/risks.md):
 
 1. **Does MakeMKV run on a Zero 2W?** (R1) Gates the entire form factor.
 2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design below.
    Runs inside the same session at no extra cost.
+
+**What is not built:** the rip engine. Queue, history and disc history read real tables
+that nothing populates yet. And **[D12](DECISIONS.md) is unresolved** — the interface
+derives from Sonarr's GPL-3.0 design tokens, which needs a licensing decision before
+anything is published.
 
 ## Documents
 
@@ -50,7 +60,8 @@ Last working session: **2026-08-19**
 | [`docs/guide/`](docs/guide/README.md) | The full setup-to-first-rip path, in order |
 | [`docs/guide/led-reference.md`](docs/guide/led-reference.md) | Printable LED card |
 | [`docs/guide/08-troubleshooting.md`](docs/guide/08-troubleshooting.md) | Organized by symptom, not by subsystem |
-| [`tools/flasher/`](tools/flasher/README.md) | Interactive SD-card wizard — 2.4 GHz-aware Wi-Fi scan, PSK derivation, disk guards |
+| [`tools/preparer/`](tools/preparer/README.md) | **SD preparer** — native macOS window. One authorization prompt, 2.4 GHz-aware Wi-Fi scan, PSK derivation, disk guards |
+| [`tools/flasher/`](tools/flasher/README.md) | The same thing for scripts and CI. Needs a TTY. |
 
 ### For developers
 | Doc | What's in it |
@@ -63,6 +74,7 @@ Last working session: **2026-08-19**
 | [`docs/design/storage-sizing.md`](docs/design/storage-sizing.md) | What card size actually buys, all math shown |
 | [`docs/design/risks.md`](docs/design/risks.md) | Known risks + the validation plan that retires them |
 | [`docs/design/backlog.md`](docs/design/backlog.md) | Feature ideas, roughly prioritized |
+| [`server/`](server/) | The appliance service — FastAPI + SQLite, *arr-style web UI |
 
 ---
 
@@ -90,3 +102,6 @@ Last working session: **2026-08-19**
    "Riparr Slim" and "Riparr Full" rather than "DVD" and "Blu-ray"
 4. Verification read-back over WiFi costs as long as the upload — default-on or opt-in?
 5. ~~Repo not yet `git init`'d~~ — done 2026-08-19
+6. **D12 licensing** — the UI derives from Sonarr's GPL-3.0 theme tokens. Accept GPL-3.0,
+   re-derive the palette, or drop to theme.park only? Exposure is deliberately confined to
+   one file plus a handful of constants
