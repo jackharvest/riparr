@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from itsdangerous import URLSafeSerializer, BadSignature
 
-from . import __version__, db, platform as P, shares as SH, updater
+from . import __version__, db, makemkv as MK, platform as P, shares as SH, updater
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
@@ -324,9 +324,28 @@ class MakeMKVKey(BaseModel):
     key: str
 
 
+class MakeMKVInstall(BaseModel):
+    accept_eula: bool = False
+
+
 @app.get("/api/makemkv")
 def makemkv(user=Depends(require_user)):
-    return P.makemkv_status()
+    return MK.info()
+
+
+@app.post("/api/makemkv/install")
+def makemkv_install(body: MakeMKVInstall, user=Depends(require_user)):
+    """Refuses without consent. MakeMKV's EULA is between the user and GuinpinSoft (D14)."""
+    r = MK.start_install(body.accept_eula)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r["error"])
+    db.set("makemkv_eula_accepted_at", int(time.time()))
+    return r
+
+
+@app.get("/api/makemkv/install")
+def makemkv_install_status(user=Depends(require_user)):
+    return MK.install_status()
 
 
 @app.post("/api/makemkv/key")

@@ -130,39 +130,79 @@ const wizard = {
   },
 
   async makemkv() {
-    const st = await api.get("/api/setup/state");
-    const m = st.makemkv;
-    const okAll = m.installed && m.eula_accepted;
+    const i = await api.get("/api/makemkv");
+    const st = i.status;
+    const ready = st.installed && st.eula_accepted;
     $("#wz-body").innerHTML = `
       <div class="wz-step">Step 2 of 5</div>
       <h1>Disc reading</h1>
-      <p class="muted">Riparr uses MakeMKV to read discs. It can't be redistributed,
-        so it's installed onto the box rather than shipped inside the image.</p>
-      <div class="section"><h2>MakeMKV<span class="grow"></span><span class="badge ${okAll ? "ok" : "warn"}">${okAll ? "Ready" : "Needs attention"}</span></h2><div>
-          <div class="kv">
-            <div class="k">Installed</div>
-            <div class="v">${m.installed ? `Yes — version ${esc(m.version || "?")}` : "No"}</div>
-            <div class="k">Licence agreement</div>
-            <div class="v">${m.eula_accepted ? "Accepted" : "Not accepted"}</div>
-            <div class="k">Key</div>
-            <div class="v">${m.key_expires
-              ? `${esc(m.key_type || "beta")} — expires ${esc(m.key_expires)} (${m.days_left} days)`
-              : "None yet"}</div>
-          </div>
-          <div class="f" style="margin-top:18px">
-            <span>MakeMKV key</span>
-            <input id="w-key" placeholder="Paste a beta or purchased key">
-            <span class="help">The free beta key expires about every 60 days. Riparr
-              warns you before it breaks, never after. A purchased key removes the only
-              recurring chore in the product.</span>
-          </div>
+      <p class="muted">Riparr doesn't read discs itself — <b>MakeMKV</b> does, and it's
+        made by GuinpinSoft, not by us. Its licence is an agreement between you and them,
+        so Riparr won't download it until you've accepted it.</p>
+
+      <div class="section"><h2>MakeMKV
+        <span class="grow"></span>
+        <span class="badge ${ready ? "ok" : "warn"}">${ready ? "Installed" : "Not installed"}</span></h2>
+        <div>
+          ${ready ? `<div class="kv">
+              <div class="k">Version</div><div class="v">${esc(st.version || "—")}</div>
+              <div class="k">Key</div><div class="v">${st.key_expires
+                ? `${esc(st.key_type || "beta")} — expires ${esc(st.key_expires)} (${st.days_left} days)`
+                : "none yet"}</div>
+            </div>`
+          : `<p class="muted" style="margin-bottom:12px">Version ${esc(i.manifest.version)}
+               will be downloaded from
+               <a href="${esc(i.homepage)}" target="_blank" rel="noopener">makemkv.com</a>
+               and checked against a known checksum.</p>
+             <ul class="terms">${i.eula_points.map(t => `<li>${esc(t)}</li>`).join("")}</ul>
+             <p class="muted" style="font-size:12px">This is a summary.
+               <a href="${esc(i.eula_url)}" target="_blank" rel="noopener">Read the full
+               licence agreement</a> before accepting.</p>
+             <label class="switch" style="margin-top:16px">
+               <input type="checkbox" id="mk-accept"><span class="track"></span>
+               <span class="lbl">I have read and accept MakeMKV's licence agreement</span>
+             </label>
+             <div class="btn-row">
+               <button class="btn primary" id="mk-install" disabled>Download and install</button>
+             </div>
+             ${i.installable ? "" : `<p class="help muted" style="margin-top:8px">
+               This process isn't running on the appliance, so the install will stop
+               after the checks.</p>`}
+             <div id="mk-progress"></div>`}
         </div>
       </div>
+
+      <div class="section"><h2>Key</h2><div>
+        <label class="f"><span>MakeMKV key</span>
+          <input id="w-key" placeholder="Paste a beta or purchased key">
+          <span class="help">The free beta key expires about every 60 days, and Riparr
+            warns you before it breaks rather than after. A
+            <a href="${esc(i.homepage)}" target="_blank" rel="noopener">purchased key</a>
+            removes the only recurring chore in the product. You can add this later.</span>
+        </label>
+      </div></div>
+
       <div class="wz-actions">
         <div class="grow"></div>
         <button class="btn" id="w-skip">Do this later</button>
         <button class="btn primary" id="w-go">Continue</button>
       </div>`;
+
+    const accept = $("#mk-accept");
+    if (accept) {
+      accept.onchange = () => { $("#mk-install").disabled = !accept.checked; };
+      $("#mk-install").onclick = async () => {
+        $("#mk-install").disabled = true;
+        try {
+          await api.post("/api/makemkv/install", { accept_eula: accept.checked });
+        } catch (e) {
+          $("#mk-progress").innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
+          return;
+        }
+        pollMakeMKV();
+      };
+    }
+
     const save = async () => {
       const k = $("#w-key").value.trim();
       if (k) { try { await api.post("/api/makemkv/key", { key: k }); } catch (e) {} }
@@ -352,6 +392,31 @@ const wizard = {
   },
 };
 
+function pollMakeMKV(into = "#mk-progress") {
+  const box = $(into);
+  if (!box) return;
+  const timer = setInterval(async () => {
+    let st;
+    try { st = await api.get("/api/makemkv/install"); } catch (e) { return; }
+    if (st.phase === "done") {
+      clearInterval(timer);
+      box.innerHTML = `<div class="result ok"><b>Installed</b>${esc(st.message)}</div>`;
+      toast("MakeMKV installed", "ok");
+      return;
+    }
+    if (st.phase === "error") {
+      clearInterval(timer);
+      box.innerHTML = `<div class="result bad"><b>${esc(st.message)}</b>
+        ${st.detail ? `<div class="why">${esc(st.detail)}</div>` : ""}</div>`;
+      const btn = $("#mk-install");
+      if (btn) btn.disabled = false;
+      return;
+    }
+    box.innerHTML = `<div class="result busy"><span class="spin"></span>${esc(st.message || "Working…")}
+      <div class="bar" style="margin-top:10px"><i style="width:${(st.progress * 100).toFixed(0)}%"></i></div></div>`;
+  }, 700);
+}
+
 /* ════════════════════ views ════════════════════ */
 const views = {};
 
@@ -363,7 +428,7 @@ views.queue = async () => {
     <div class="toolbar">
       <button class="tool" id="t-refresh"><span class="ti">⟳</span>Refresh</button>
       <button class="tool" id="t-eject"><span class="ti">⏏</span>Eject</button>
-      <a class="tool sep" href="#/settings/media"><span class="ti">⚙</span>Options</a>
+      <a class="tool sep" href="#/settings/library"><span class="ti">⚙</span>Options</a>
       <a class="tool" href="#/system/status"><span class="ti">▣</span>Status</a>
     </div>
     ${jobs.length ? `<div class="card"><table>
@@ -429,22 +494,97 @@ views.discs = async () => {
 };
 
 /* ── settings ── */
+/* Five pages, not Sonarr's twenty. Riparr has no indexers, no download clients, no
+   quality profiles and no custom formats -- and "configure once" (concept.md) means the
+   settings surface should stay something a person can read in one sitting. */
 const SETTINGS_TABS = [
-  ["media", "Media Management"], ["naming", "Naming"], ["tracks", "Track Selection"],
-  ["shares", "Shares"], ["wifi", "Wi-Fi"], ["accounts", "Accounts"],
-  ["connect", "Connect"], ["ui", "Appearance"], ["general", "General"],
+  ["library", "Library"], ["ripping", "Ripping"], ["connect", "Connect"],
+  ["network", "Network"], ["general", "General"],
 ];
 
-views.settings = async (sub = "media") => {
+views.settings = async (sub = "library") => {
   const s = state.settings = await api.get("/api/settings");
-  const body = await (settingsPages[sub] || settingsPages.media)(s);
+  const body = await (settingsPages[sub] || settingsPages.library)(s);
   const label = (SETTINGS_TABS.find(([k]) => k === sub) || SETTINGS_TABS[0])[1];
   return `${head(label, "Configure once. Anything that needs revisiting is a bug.")}${body}`;
 };
 
 const settingsPages = {};
 
-settingsPages.media = (s) => `
+/* Library — where finished rips go and what they are called. */
+settingsPages.library = async (s) => {
+  const { shares } = await api.get("/api/shares");
+  return `
+    <div class="section"><h2>Share
+      <span class="grow"></span>
+      <button class="btn" id="add-share">Add a share</button></h2>
+      <div>
+      ${shares.length ? shares.map(sh => `
+        <div class="rowitem">
+          <div class="grow">
+            <div class="t">${esc(sh.name)} ${sh.is_default ? '<span class="badge ok">default</span>' : ""}</div>
+            <div class="s">//${esc(sh.host)}/${esc(sh.path)} · last verified ${ago(sh.verified_at)}</div>
+          </div>
+          <button class="btn danger" data-del-share="${sh.id}">Remove</button>
+        </div>`).join("")
+      : `<div class="empty-state"><div class="big">▤</div><h2>No share configured</h2>
+          <p>Finished rips have nowhere to go until you add one.</p></div>`}
+      <div id="share-add"></div>
+    </div></div>
+
+    <div class="section"><h2>Folders</h2><div>
+      <div class="grid2">
+        <label class="f"><span>Movies</span>
+          <input data-set="movie_folder" value="${esc(s.movie_folder)}"></label>
+        <label class="f"><span>TV</span>
+          <input data-set="tv_folder" value="${esc(s.tv_folder)}"></label>
+      </div>
+    </div></div>
+
+    <div class="section"><h2>Naming</h2><div>
+      <label class="f"><span>Movie file name</span>
+        <input data-set="movie_template" value="${esc(s.movie_template)}"></label>
+      <label class="f"><span>Episode file name</span>
+        <input data-set="tv_template" value="${esc(s.tv_template)}"></label>
+      <label class="f"><span>When a disc can't be identified</span>
+        <select data-set="on_unknown_disc">
+          ${opt("ask", "Ask me (recommended)", s.on_unknown_disc)}
+          ${opt("label", "Use the disc label", s.on_unknown_disc)}
+          ${opt("skip", "Skip it", s.on_unknown_disc)}
+        </select>
+        <span class="help">A wrongly named file quietly pollutes your library, which is
+          worse than one waiting ten seconds for your attention.</span></label>
+    </div></div>${saveBar()}`;
+};
+
+/* Ripping — what comes off the disc, and how it gets out. */
+settingsPages.ripping = (s) => `
+  <div class="section"><h2>What to rip</h2><div>
+    <label class="f"><span>Titles</span>
+      <select data-set="rip_mode">
+        ${opt("main", "Main title (default)", s.rip_mode)}
+        ${opt("all", "All titles", s.rip_mode)}
+        ${opt("backup", "Full disc backup", s.rip_mode)}
+      </select></label>
+    <label class="f"><span>Minimum title length (seconds)</span>
+      <input type="number" data-set="min_title_seconds" value="${s.min_title_seconds}">
+      <span class="help">Filters menus and logo stings.</span></label>
+  </div></div>
+
+  <div class="section"><h2>Tracks
+    <span class="grow"></span>
+    <span class="badge">Biggest effect on file size</span></h2><div>
+    <label class="f"><span>Audio languages</span>
+      <input data-set="audio_languages" data-list value="${esc((s.audio_languages || []).join(", "))}">
+      <span class="help">Comma separated ISO codes, e.g. eng, fra.</span></label>
+    <label class="f"><span>Subtitle languages</span>
+      <input data-set="subtitle_languages" data-list value="${esc((s.subtitle_languages || []).join(", "))}"></label>
+    ${sw("keep_forced_subtitles", "Keep forced subtitles", s.keep_forced_subtitles,
+        "The subtitles for alien or foreign dialogue. Almost always wanted.")}
+    ${sw("keep_commentary", "Keep commentary tracks", s.keep_commentary,
+        "Keeping every language and commentary can roughly double file size.")}
+  </div></div>
+
   <div class="section"><h2>Transfer</h2><div>
     <label class="f"><span>Mode</span>
       <select data-set="transfer_mode">
@@ -459,100 +599,7 @@ settingsPages.media = (s) => `
         "Reads the file back from the share and checks it matches. Catches silent corruption.")}
     ${sw("keep_local_copy", "Keep the local copy", s.keep_local_copy,
         "Retains the rip until the space is needed, so a downstream problem is a re-copy rather than a re-rip.")}
-  </div></div>
-  <div class="section"><h2>Ripping</h2><div>
-    <label class="f"><span>What to rip</span>
-      <select data-set="rip_mode">
-        ${opt("main", "Main title (default)", s.rip_mode)}
-        ${opt("all", "All titles", s.rip_mode)}
-        ${opt("backup", "Full disc backup", s.rip_mode)}
-      </select></label>
-    <label class="f"><span>Minimum title length (seconds)</span>
-      <input type="number" data-set="min_title_seconds" value="${s.min_title_seconds}">
-      <span class="help">Filters menus and logo stings.</span></label>
   </div></div>${saveBar()}`;
-
-settingsPages.naming = (s) => `
-  <div class="section"><h2>Folders</h2><div>
-    <div class="grid2">
-      <label class="f"><span>Movie folder</span>
-        <input data-set="movie_folder" value="${esc(s.movie_folder)}"></label>
-      <label class="f"><span>TV folder</span>
-        <input data-set="tv_folder" value="${esc(s.tv_folder)}"></label>
-    </div></div></div>
-  <div class="section"><h2>Templates</h2><div>
-    <label class="f"><span>Movie</span>
-      <input data-set="movie_template" value="${esc(s.movie_template)}"></label>
-    <label class="f"><span>Episode</span>
-      <input data-set="tv_template" value="${esc(s.tv_template)}"></label>
-    <label class="f"><span>When a disc can't be identified</span>
-      <select data-set="on_unknown_disc">
-        ${opt("ask", "Ask me (recommended)", s.on_unknown_disc)}
-        ${opt("label", "Use the disc label", s.on_unknown_disc)}
-        ${opt("skip", "Skip it", s.on_unknown_disc)}
-      </select></label>
-  </div></div>${saveBar()}`;
-
-settingsPages.tracks = (s) => `
-  <div class="section"><h2>Track selection<span class="grow"></span><span class="badge">Biggest effect on file size</span></h2><div>
-    <label class="f"><span>Audio languages</span>
-      <input data-set="audio_languages" data-list value="${esc((s.audio_languages || []).join(", "))}">
-      <span class="help">Comma separated ISO codes, e.g. eng, fra.</span></label>
-    <label class="f"><span>Subtitle languages</span>
-      <input data-set="subtitle_languages" data-list value="${esc((s.subtitle_languages || []).join(", "))}"></label>
-    ${sw("keep_forced_subtitles", "Keep forced subtitles", s.keep_forced_subtitles,
-        "These are the subtitles for alien or foreign dialogue. Almost always wanted.")}
-    ${sw("keep_commentary", "Keep commentary tracks", s.keep_commentary,
-        "Keeping every language and commentary can roughly double file size.")}
-  </div></div>${saveBar()}`;
-
-settingsPages.shares = async () => {
-  const { shares } = await api.get("/api/shares");
-  return `<div class="section"><h2>Library shares<span class="grow"></span><button class="btn" id="add-share">Add a share</button></header>
-    ${shares.length ? shares.map(sh => `
-      <div class="rowitem">
-        <div class="grow">
-          <div class="t">${esc(sh.name)} ${sh.is_default ? '<span class="badge ok">default</span>' : ""}</div>
-          <div class="s">//${esc(sh.host)}/${esc(sh.path)} · last verified ${ago(sh.verified_at)}</div>
-        </div>
-        <button class="btn" data-test-share="${sh.id}">Test write</button>
-        <button class="btn danger" data-del-share="${sh.id}">Remove</button>
-      </div>`).join("")
-    : `<div class="empty-state"><div class="big">▤</div><h2>No share configured</h2>
-        <p>Finished rips have nowhere to go until you add one.</p></div>`}
-  </div>
-  <div id="share-add"></div>`;
-};
-
-settingsPages.wifi = async () => {
-  const w = await api.get("/api/wifi");
-  return `<div class="card"><header><h3>Connection</h3>
-      <span class="badge ${w.connected ? "ok" : "bad"}">${w.connected ? "Connected" : "Offline"}</span></h2><div>
-      <div class="kv">
-        <div class="k">Network</div><div class="v">${esc(w.ssid || "—")}</div>
-        <div class="k">Signal</div><div class="v">${w.signal ?? "—"}%</div>
-        <div class="k">Address</div><div class="v">${esc(w.ip || "—")}</div>
-      </div>
-    </div></div>
-    <div class="section"><h2>Join a different network<span class="grow"></span><button class="btn" id="wifi-scan">Scan</button></header>
-      <div class="body" id="wifi-results">
-        <p class="muted">This hardware has no 5 GHz radio, so only 2.4 GHz networks
-          are ever listed.</p>
-      </div></div>`;
-};
-
-settingsPages.accounts = async () => `
-  <div class="card"><header><h3>Web interface password</h3></h2><div>
-    <label class="f"><span>Current password</span><input type="password" id="pw-cur"></label>
-    <label class="f"><span>New password</span><input type="password" id="pw-new"></label>
-    <label class="f"><span>Confirm new password</span><input type="password" id="pw-new2"></label>
-    <div id="pw-res"></div>
-    <div class="btn-row"><button class="btn primary" id="pw-go">Change password</button></div>
-  </div></div>
-  <div class="section"><h2>Share credentials</h2><div>
-    <p class="muted">Credentials for the network share live with the share itself, under
-      <a href="#/settings/shares">Shares</a>.</p>
-  </div></div>`;
 
 settingsPages.connect = (s) => `
   <div class="section"><h2>Handoff</h2><div>
@@ -566,33 +613,80 @@ settingsPages.connect = (s) => `
       <span class="help">Write here instead, for Tdarr or Unmanic to pick up.</span></label>
   </div></div>${saveBar()}`;
 
-settingsPages.ui = (s) => {
-  const themes = ["servarr", "organizr", "dark", "nord", "dracula", "plex",
-                  "space-gray", "aquamarine", "hotline", "hotpink", "maroon", "overseerr"];
-  return `<div class="section"><h2>Theme</h2><div>
-    <p class="muted">Riparr uses the theme.park variable set, so if you already theme your
-      *arr apps the same theme applies here.</p>
-    <label class="f" style="margin-top:14px"><span>Theme</span>
-      <select id="theme-pick">${themes.map(t =>
-        `<option value="${t}" ${s.theme === t ? "selected" : ""}>${t}</option>`).join("")}</select>
-    </label>
-  </div></div>`;
+settingsPages.network = async () => {
+  const w = await api.get("/api/wifi");
+  return `
+    <div class="section"><h2>Connection
+      <span class="grow"></span>
+      <span class="badge ${w.connected ? "ok" : "bad"}">${w.connected ? "Connected" : "Offline"}</span></h2>
+      <div><div class="kv">
+        <div class="k">Network</div><div class="v">${esc(w.ssid || "—")}</div>
+        <div class="k">Signal</div><div class="v">${w.signal ?? "—"}%</div>
+        <div class="k">Address</div><div class="v">${esc(w.ip || "—")}</div>
+      </div></div>
+    </div>
+    <div class="section"><h2>Join a different network
+      <span class="grow"></span>
+      <button class="btn" id="wifi-scan">Scan</button></h2>
+      <div id="wifi-results">
+        <p class="muted">This hardware has no 5 GHz radio, so only 2.4 GHz networks are
+          ever listed.</p>
+      </div>
+    </div>`;
 };
 
-settingsPages.general = (s) => `
-  <div class="section"><h2>MakeMKV key<span class="grow"></span>${state.status.makemkv.days_left != null
-      ? `<span class="badge ${state.status.makemkv.days_left < 8 ? "warn" : "ok"}">
-          ${state.status.makemkv.days_left} days left</span>` : ""}</h2><div>
-    <label class="f"><span>Key</span>
-      <input data-set="makemkv_key" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key"></label>
-    <label class="f"><span>Warn me this many days before it expires</span>
-      <input type="number" data-set="warn_key_days" value="${s.warn_key_days}"></label>
-  </div></div>
-  <div class="section"><h2>Updates</h2><div>
-    ${sw("auto_check_updates", "Check for updates automatically", s.auto_check_updates,
-        "Checks the official repository once a day. Nothing installs without you asking.")}
-    <div class="btn-row"><a class="btn" href="#/system/updates">Open updates</a></div>
-  </div></div>${saveBar()}`;
+settingsPages.general = async (s) => {
+  const mk = await api.get("/api/makemkv");
+  const st = mk.status;
+  const expiringSoon = st.days_left != null && st.days_left < 8;
+  const themes = ["servarr", "organizr", "dark", "nord", "dracula", "plex",
+                  "space-gray", "aquamarine", "hotline", "hotpink", "maroon", "overseerr"];
+  return `
+    <div class="section"><h2>MakeMKV
+      <span class="grow"></span>
+      <span class="badge ${!st.installed ? "bad" : expiringSoon ? "warn" : "ok"}">${
+        !st.installed ? "Not installed"
+        : st.days_left != null ? `${st.days_left} days left` : "Installed"}</span></h2>
+      <div>
+      ${st.installed ? "" : `
+        <p class="muted" style="margin-bottom:10px">MakeMKV is made by GuinpinSoft. Its
+          licence is between you and them.
+          <a href="${esc(mk.eula_url)}" target="_blank" rel="noopener">Read it</a>.</p>
+        <label class="switch"><input type="checkbox" id="mk-accept"><span class="track"></span>
+          <span class="lbl">I have read and accept MakeMKV's licence agreement</span></label>
+        <div class="btn-row"><button class="btn primary" id="mk-install" disabled>
+          Download and install</button></div>
+        <div id="mk-progress"></div>`}
+      <label class="f" style="margin-top:${st.installed ? 0 : 16}px"><span>Key</span>
+        <input data-set="makemkv_key" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key">
+        <span class="help">The free beta key expires about every 60 days.</span></label>
+      <label class="f"><span>Warn me this many days before it expires</span>
+        <input type="number" data-set="warn_key_days" value="${s.warn_key_days}"></label>
+    </div></div>
+
+    <div class="section"><h2>Appearance</h2><div>
+      <p class="muted">Riparr uses the theme.park variable set, so a theme you already run
+        on your *arr stack applies here too.</p>
+      <label class="f" style="margin-top:14px"><span>Theme</span>
+        <select id="theme-pick">${themes.map(t =>
+          `<option value="${t}" ${s.theme === t ? "selected" : ""}>${t}</option>`).join("")}</select>
+      </label>
+    </div></div>
+
+    <div class="section"><h2>Password</h2><div>
+      <label class="f"><span>Current password</span><input type="password" id="pw-cur"></label>
+      <label class="f"><span>New password</span><input type="password" id="pw-new"></label>
+      <label class="f"><span>Confirm new password</span><input type="password" id="pw-new2"></label>
+      <div id="pw-res"></div>
+      <div class="btn-row"><button class="btn" id="pw-go">Change password</button></div>
+    </div></div>
+
+    <div class="section"><h2>Updates</h2><div>
+      ${sw("auto_check_updates", "Check for updates automatically", s.auto_check_updates,
+          "Checks the official repository once a day. Nothing installs without you asking.")}
+      <div class="btn-row"><a class="btn" href="#/system/updates">Open updates</a></div>
+    </div></div>${saveBar()}`;
+};
 
 /* ── system ── */
 const SYSTEM_TABS = [["status", "Status"], ["updates", "Updates"], ["backup", "Backup"]];
@@ -705,7 +799,7 @@ const NAV = [
   { id: "queue",   label: "Queue",   icon: "▤", href: "#/queue" },
   { id: "history", label: "History", icon: "◷", href: "#/history" },
   { id: "discs",   label: "Discs",   icon: "◎", href: "#/discs" },
-  { id: "settings", label: "Settings", icon: "⚙", href: "#/settings/media",
+  { id: "settings", label: "Settings", icon: "⚙", href: "#/settings/library",
     children: SETTINGS_TABS.map(([k, l]) => ({ key: k, label: l, href: `#/settings/${k}` })) },
   { id: "system",  label: "System",  icon: "▣", href: "#/system/status",
     children: SYSTEM_TABS.map(([k, l]) => ({ key: k, label: l, href: `#/system/${k}` })) },
@@ -783,6 +877,20 @@ function wireContent(section, sub) {
     const r = await api.post("/api/drive/eject");
     toast(r.message, r.ok ? "ok" : "bad");
   };
+
+  const mkAccept = $("#mk-accept");
+  if (mkAccept) {
+    mkAccept.onchange = () => { $("#mk-install").disabled = !mkAccept.checked; };
+    $("#mk-install").onclick = async () => {
+      $("#mk-install").disabled = true;
+      try { await api.post("/api/makemkv/install", { accept_eula: mkAccept.checked }); }
+      catch (e) {
+        $("#mk-progress").innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
+        return;
+      }
+      pollMakeMKV();
+    };
+  }
 
   const save = $("#save-settings");
   if (save) save.onclick = async () => {

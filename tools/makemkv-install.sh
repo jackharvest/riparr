@@ -20,29 +20,52 @@ while [ $# -gt 0 ]; do
   esac; shift
 done
 
-OSS=$(ls -d "$SRC"/makemkv-oss-*/ 2>/dev/null | head -1)
-BIN=$(ls -d "$SRC"/makemkv-bin-*/ 2>/dev/null | head -1)
-if [ -z "$OSS" ] || [ -z "$BIN" ]; then
-  echo "Extracting tarballs in $SRC"
-  cd "$SRC"; for f in makemkv-*.tar.gz; do tar xzf "$f"; done
-  OSS=$(ls -d "$SRC"/makemkv-oss-*/ | head -1)
-  BIN=$(ls -d "$SRC"/makemkv-bin-*/ | head -1)
-fi
-VER=$(basename "$BIN" | sed 's/makemkv-bin-//;s#/##')
-
+# Consent is checked BEFORE anything is unpacked or built. MakeMKV's EULA is an
+# agreement between the user and GuinpinSoft, and this script does not enter into it
+# on anyone's behalf (D14).
 if [ "$ACCEPT" != "1" ]; then
   cat <<EOF
 
-MakeMKV is proprietary software with its own licence.
+MakeMKV is proprietary software made by GuinpinSoft inc, with its own licence.
 
-  Licence text: ${BIN}src/eula_en_linux.txt
-  Read it, then re-run with --accept-eula to confirm you accept it.
+  Read it:  https://www.makemkv.com/eula/
+            (also at makemkv-bin-*/src/eula_en_linux.txt once unpacked)
 
-This script does not accept the licence on your behalf.
+  Then re-run with --accept-eula to confirm you accept it.
+
+This script does not accept the licence on your behalf, and unpacks nothing until
+you have.
 
 EOF
   exit 1
 fi
+
+[ -d "$SRC" ] || { echo "No such source directory: $SRC"; exit 2; }
+
+# find, not globbing: an unmatched glob here previously left `ls -d` with no argument,
+# which lists "." and set OSS/BIN to a directory that is not MakeMKV at all.
+find_pkg() { find "$SRC" -maxdepth 1 -mindepth 1 -type d -name "makemkv-$1-*" | head -1; }
+
+OSS=$(find_pkg oss)
+BIN=$(find_pkg bin)
+if [ -z "$OSS" ] || [ -z "$BIN" ]; then
+  echo "Extracting tarballs in $SRC"
+  archives=$(find "$SRC" -maxdepth 1 -type f -name 'makemkv-*.tar.gz' | sort)
+  [ -n "$archives" ] || { echo "No makemkv-*.tar.gz found in $SRC"; exit 2; }
+  while IFS= read -r f; do
+    [ -s "$f" ] || { echo "$(basename "$f") is empty -- download it again"; exit 2; }
+    tar xzf "$f" -C "$SRC" || { echo "Could not unpack $(basename "$f")"; exit 2; }
+  done <<< "$archives"
+  OSS=$(find_pkg oss)
+  BIN=$(find_pkg bin)
+  [ -n "$OSS" ] && [ -n "$BIN" ] || {
+    echo "Both makemkv-oss and makemkv-bin are required; found:"
+    echo "  oss: ${OSS:-none}"
+    echo "  bin: ${BIN:-none}"
+    exit 2; }
+fi
+
+VER=$(basename "$BIN" | sed 's/makemkv-bin-//')
 
 LOG="$HOME/validation"; mkdir -p "$LOG"
 echo "=== MakeMKV $VER · $(uname -m) · $(nproc) cores · $(free -m | awk '/Mem:/{print $2}') MB RAM ==="

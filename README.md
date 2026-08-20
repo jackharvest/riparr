@@ -48,9 +48,7 @@ Last working session: **2026-08-19**
    Runs inside the same session at no extra cost.
 
 **What is not built:** the rip engine. Queue, history and disc history read real tables
-that nothing populates yet. And **[D12](DECISIONS.md) is unresolved** — the interface
-derives from Sonarr's GPL-3.0 design tokens, which needs a licensing decision before
-anything is published.
+that nothing populates yet.
 
 ## Documents
 
@@ -105,3 +103,25 @@ anything is published.
 6. **D12 licensing** — the UI derives from Sonarr's GPL-3.0 theme tokens. Accept GPL-3.0,
    re-derive the palette, or drop to theme.park only? Exposure is deliberately confined to
    one file plus a handful of constants
+
+---
+
+## Licence
+
+**Riparr is [GPL-3.0](LICENSE)** — the same licence as Sonarr, Radarr, Lidarr, Prowlarr,
+Readarr and Bazarr, and for the same reason: the interface derives from Sonarr's design
+tokens, and copyleft propagates. See [D12](DECISIONS.md).
+
+You may use, modify and redistribute Riparr. If you redistribute it, modified or not, you
+must ship source under GPL-3.0 too.
+
+**Third-party components:**
+
+| | |
+|---|---|
+| Design tokens | [Sonarr](https://github.com/Sonarr/Sonarr) — GPL-3.0 |
+| Themes | [theme.park](https://github.com/themepark-dev/theme.park) — MIT |
+| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not distributed with Riparr**; fetched and accepted during setup ([D14](DECISIONS.md)) |
+
+Riparr is not affiliated with, endorsed by, or connected to Sonarr, Radarr, or GuinpinSoft.
+Those names and logos belong to their respective owners.

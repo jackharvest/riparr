@@ -57,6 +57,12 @@ body {
 
 a { color: var(--link); text-decoration: none; }
 a:hover { color: var(--link-hover); }
+.terms {
+  margin: 0 0 4px 18px; padding: 0; font-size: 13px; color: var(--fg);
+  display: grid; gap: 6px;
+}
+.terms li { padding-left: 3px; }
+
 .hidden { display: none !important; }
 .grow { flex: 1; }
 .muted { color: var(--fg-muted); }

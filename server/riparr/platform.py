@@ -160,6 +160,16 @@ def wifi_connect(ssid, password):
 def makemkv_status():
     """The one setting that needs periodic attention, so it is reported first-class."""
     if MOCK:
+        # RIPARR_MOCK_MAKEMKV lets the first-run and expiry paths be exercised off-Pi:
+        #   missing  — not installed, so the licence + install flow shows
+        #   expiring — installed, key nearly dead, so the warning paths show
+        mode = os.environ.get("RIPARR_MOCK_MAKEMKV", "ready")
+        if mode == "missing":
+            return {"installed": False, "version": None, "eula_accepted": False,
+                    "key_type": None, "key_expires": None, "days_left": None}
+        if mode == "expiring":
+            return {"installed": True, "version": "1.18.4", "eula_accepted": True,
+                    "key_type": "beta", "key_expires": "2026-08-23", "days_left": 4}
         return {"installed": True, "version": "1.18.4", "eula_accepted": True,
                 "key_type": "beta", "key_expires": "2026-10-14", "days_left": 56}
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"

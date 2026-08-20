@@ -80,6 +80,7 @@ DEFAULTS = {
     "webhook_url": "",
     "watch_folder": "",
     "makemkv_key": "",
+    "makemkv_eula_accepted_at": 0,
     "warn_key_days": 7,
     "update_channel": "stable",
     "auto_check_updates": True,

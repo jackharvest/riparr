@@ -27,8 +27,9 @@ mid-rip on a box with no screen.
 **Buy the permanent key** if you rip regularly. It's a one-time purchase and it removes
 the only recurring chore in the entire product.
 
-> **[unresolved]** MakeMKV can't be redistributed, so Riparr fetches it during setup
-> rather than shipping it in the image. The exact flow isn't finalized.
+> MakeMKV is made by GuinpinSoft, not by Riparr, and its licence agreement is between
+> you and them. Riparr asks you to read and accept it during setup, then downloads and
+> installs it for you. See [D14](../../DECISIONS.md).
 
 ## Library
 
