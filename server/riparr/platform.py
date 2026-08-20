@@ -178,9 +178,14 @@ def optical_diagnosis():
                 "anything else. The drive having power and a working tray does not mean "
                 "the data connection is up.")
         if gadget:
-            hint += (" On this board one USB-C port is a device port, not a host port, "
-                     "and cannot see anything plugged into it. Try the other one. "
-                     "A charge-only USB-C cable looks exactly like this too.")
+            hint += (
+                " Two things cause this on this board. Only one of the two USB-C ports "
+                "is a host port (the one further from the edge); the other is a device "
+                "port and can never see what is plugged into it. And the host port has "
+                "both CC pins tied to ground, so it reads as a device to anything on "
+                "the far end of a USB-C-to-USB-C cable — a plain USB-A adapter in the "
+                "middle is what makes it work. A charge-only cable looks identical to "
+                "this too.")
     return {"drives": drives, "usb": usb, "hint": hint}
 
 
