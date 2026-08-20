@@ -111,33 +111,84 @@ def _set(**kw):
 
 
 def install_status():
+    """Progress, preferring what the root installer reports over our own guess.
+
+    Once the bridge takes over, this process is not doing the work and has nothing to
+    say about it. The root side publishes to a file; read that. It also survives a
+    restart of this service, which a thread-local dict would not.
+    """
+    bridged = _read_bridge_state()
+    if bridged:
+        return bridged
     with _lock:
         return dict(_state)
 
 
-def can_install():
-    """Whether this process could actually complete an install.
+def _read_bridge_state():
+    try:
+        with open(BRIDGE_STATE) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(st, dict) or "phase" not in st:
+        return None
+    st.setdefault("progress", 0.0)
+    st.setdefault("message", "")
+    st.setdefault("detail", "")
+    # A build takes half an hour; showing the last few lines is the difference between
+    # "it is working" and "it is hung".
+    try:
+        with open(BRIDGE_LOG) as f:
+            tail = f.read()[-4000:]
+        st["log"] = tail.strip().splitlines()[-12:]
+    except OSError:
+        st["log"] = []
+    return st
 
-    The build installs apt packages and writes to /usr/local, so it needs root. The
-    service runs unprivileged with NoNewPrivileges=yes, which means sudo cannot help it
-    either. Saying so plainly beats letting the build fail three minutes in with a
-    permission error nobody can act on.
-    """
+
+# ── the privilege bridge ──
+# Building MakeMKV installs apt packages and writes to /usr/local, so it needs root.
+# This service runs as `riparr` with NoNewPrivileges=yes and cannot get there — sudo
+# included. Sending the user to a terminal is the wrong answer for an appliance, so
+# install.sh sets up a one-way door: creating REQUEST is watched by riparr-makemkv.path,
+# which starts a root oneshot whose command line is fixed in the unit file. This side
+# can ask. It cannot say what runs.
+RUNDIR = "/run/riparr"
+REQUEST = os.path.join(RUNDIR, "makemkv.request")
+BRIDGE_STATE = os.path.join(RUNDIR, "makemkv.state")
+BRIDGE_LOG = os.path.join(RUNDIR, "makemkv.log")
+BRIDGE_UNIT = "/etc/systemd/system/riparr-makemkv.path"
+
+
+def bridge_available():
+    """The bridge is present and this process can actually ring the bell."""
+    return os.path.exists(BRIDGE_UNIT) and os.path.isdir(RUNDIR) and os.access(
+        RUNDIR, os.W_OK)
+
+
+def can_install():
+    """Whether this process could actually complete an install."""
     if not P.IS_APPLIANCE:
         return False, "MakeMKV installs on the appliance only."
     if os.geteuid() == 0:
         return True, ""
+    if bridge_available():
+        return True, ""
     return False, (
-        "Riparr runs unprivileged, so it cannot install MakeMKV for you. Sign in over "
-        "SSH and run:\n\n"
-        "    sudo bash /opt/riparr/tools/makemkv-install.sh --accept-eula "
-        "--srcdir /boot/firmware/makemkv --jobs 1\n\n"
-        "It takes a while to build on this board. This page picks it up as soon as it "
-        "finishes.")
+        "This copy of Riparr was installed before in-place MakeMKV setup existed, so "
+        "it cannot install MakeMKV for you. Re-run the installer to add it:\n\n"
+        "    sudo bash /opt/riparr/tools/install.sh\n\n"
+        "Then come back to this page.")
 
 
 def start_install(accepted_eula):
-    """Begin an install. Refuses without explicit consent — this is the whole point."""
+    """Begin an install. Refuses without explicit consent — this is the whole point.
+
+    Consent is enforced here and recorded in the database. The root side takes
+    `--accept-eula` as given, because the only way to reach it is through this
+    function, and the only process that can reach this function is the web service
+    behind authentication.
+    """
     if not accepted_eula:
         return {"ok": False,
                 "error": "MakeMKV's licence agreement has to be accepted first."}
@@ -147,6 +198,19 @@ def start_install(accepted_eula):
     with _lock:
         if _state["phase"] in ("downloading", "verifying", "building"):
             return {"ok": False, "error": "An install is already running."}
+
+    if os.geteuid() != 0 and bridge_available():
+        try:
+            # Touching the file is the whole request. systemd does the rest.
+            with open(REQUEST, "w") as f:
+                f.write("%d\n" % int(time.time()))
+        except OSError as e:
+            return {"ok": False,
+                    "error": "Could not ask the system to install MakeMKV: %s" % e}
+        _set(phase="downloading", progress=0.05,
+             message="Starting the installer", detail="")
+        return {"ok": True}
+
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True}
 

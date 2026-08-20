@@ -60,6 +60,8 @@ function showGate(sub) {
   $("#shell").classList.add("hidden");
   $("#wizard").classList.add("hidden");
   $("#gate").classList.remove("hidden");
+  $("#gate-waiting")?.classList.add("hidden");
+  $("#login-form")?.classList.remove("hidden");
   if (sub) $("#gate-sub").textContent = sub;
 }
 
@@ -1082,12 +1084,52 @@ $("#logout").onclick = async (e) => {
   location.reload();
 };
 window.addEventListener("hashchange", route);
+$("#gate-retry").onclick = () => location.reload();
 
 /* ════════════════════ boot ════════════════════ */
+/* The service takes a moment to answer after the box powers on, and the page is very
+   often loaded during exactly that window. Treating a failed fetch as "sign in" is
+   the most misleading answer available: a login form asserts that an account exists,
+   which sends people off to reset a password they never set — or to reflash a card
+   that was working perfectly. Wait, say so, and only then give up. */
+function showWaiting(msg, { retry = false, spin = true } = {}) {
+  $("#shell").classList.add("hidden");
+  $("#wizard").classList.add("hidden");
+  $("#gate").classList.remove("hidden");
+  $("#login-form").classList.add("hidden");
+  $("#gate-waiting").classList.remove("hidden");
+  $("#gate-wait-msg").textContent = msg;
+  $("#gate-spin").classList.toggle("hidden", !spin);
+  $("#gate-retry").classList.toggle("hidden", !retry);
+}
+
+function hideWaiting() {
+  $("#gate-waiting").classList.add("hidden");
+  $("#login-form").classList.remove("hidden");
+}
+
+const showStarting = (attempt) => showWaiting(
+  attempt < 3 ? "Starting up…"
+              : "Still starting — this can take a minute after power-on.");
+
+const showUnreachable = () => showWaiting(
+  "Can't reach the Riparr service on this box. It may still be starting; if this "
+  + "keeps happening, check `systemctl status riparr` over SSH.",
+  { retry: true, spin: false });
+
 async function boot() {
   let setup;
-  try { setup = await api.get("/api/setup/state"); }
-  catch (e) { showGate(); return; }
+  for (let attempt = 0; ; attempt++) {
+    try { setup = await api.get("/api/setup/state"); break; }
+    catch (e) {
+      // A real 401 already showed the gate and means something quite different.
+      if (e.message === "Not signed in") return;
+      if (attempt >= 8) { showUnreachable(); return; }
+      showStarting(attempt);
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+  hideWaiting();
 
   if (!setup.has_users) { wizard.step = 0; wizard.render(); return; }
 

@@ -42,6 +42,13 @@ ProtectHome=yes
 # missing directory. Without it, first boot ends with a service that never starts.
 ReadWritePaths=/var/lib/riparr -/srv/staging
 StateDirectory=riparr
+# /run/riparr, owned by the service account. This is how the unprivileged service asks
+# the root-side MakeMKV installer to run (riparr-makemkv.path watches it), and where
+# that installer publishes progress back. Preserve=yes so a restart mid-build does not
+# delete the state the page is reading.
+RuntimeDirectory=riparr
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -192,7 +192,30 @@ ok "environment ready"
 # ── 5. service ──
 say "5/6  Service"
 install -m 0644 "$INSTALL_DIR/packaging/riparr.service" "/etc/systemd/system/$SERVICE"
+
+# ── the MakeMKV privilege bridge ──
+# Building MakeMKV needs root; the web service is unprivileged with NoNewPrivileges=yes
+# and cannot get there. Rather than sending the user to a terminal, give the service
+# exactly one capability: it can create /run/riparr/makemkv.request, and a path unit
+# turns that into a root oneshot whose command line is fixed here.
+#
+# The scripts deliberately go to /usr/local/lib/riparr, NOT /opt/riparr: that tree is
+# owned by the riparr account, and a root unit executing from it would hand the service
+# a way to run anything as root.
+install -d -o root -g root -m 0755 /usr/local/lib/riparr
+install -o root -g root -m 0755 "$INSTALL_DIR/packaging/makemkv-run.sh" \
+        /usr/local/lib/riparr/makemkv-run.sh
+install -o root -g root -m 0755 "$INSTALL_DIR/tools/makemkv-install.sh" \
+        /usr/local/lib/riparr/makemkv-install.sh
+install -m 0644 "$INSTALL_DIR/packaging/riparr-makemkv.service" \
+        /etc/systemd/system/riparr-makemkv.service
+install -m 0644 "$INSTALL_DIR/packaging/riparr-makemkv.path" \
+        /etc/systemd/system/riparr-makemkv.path
+
 systemctl daemon-reload
+systemctl enable --quiet riparr-makemkv.path
+systemctl start riparr-makemkv.path
+ok "MakeMKV can be installed from the web interface"
 systemctl enable --quiet "$SERVICE"
 systemctl restart "$SERVICE"
 ok "riparr.service enabled and started"

@@ -453,8 +453,22 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
 }
 .gate-mark { font-size: 36px; color: var(--accent); line-height: 1; }
 .gate-card h1 { font-weight: 300; margin: 8px 0 2px; }
-.gate-card .f { text-align: left; margin-top: 16px; }
-.gate-card input { max-width: none; }
+/* The gate is a narrow card, not a settings page. The *arr form geometry — a fixed
+   150px right-aligned label column — has nowhere to go in 288px of content, so it
+   wraps the input onto its own line while the label keeps its 150px box and stays
+   flush to the right of it. The result reads as neither left-aligned nor centred.
+   Stack it instead: label above input, both flush left with the field. */
+.gate-card .f {
+  display: block; max-width: none; text-align: left; margin-top: 16px;
+  margin-bottom: 0;
+}
+.gate-card .f > span:first-child {
+  display: block; flex: none;
+  text-align: left; justify-content: flex-start;
+  margin-right: 0; margin-bottom: 6px;
+  padding-top: 0; min-height: 0;
+}
+.gate-card input { max-width: none; width: 100%; }
 .gate-err { color: var(--bad); font-size: 12.5px; min-height: 18px; margin: 8px 0; }
 
 /* ── first-run wizard ──────────────────────────────────── */
@@ -522,3 +536,16 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
   .kv { grid-template-columns: 1fr; gap: 2px 0; }
   .kv .k { margin-top: 9px; }
 }
+
+/* Shown while the service is still coming up. A login form is the wrong answer to
+   "cannot reach the server" — it implies an account exists and invites the user to
+   guess at credentials that were never created. */
+.gate-wait { display: grid; gap: 14px; place-items: center; padding: 8px 0 2px; }
+.gate-wait .spin {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: gate-spin .9s linear infinite;
+}
+@keyframes gate-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .gate-wait .spin { animation: none; } }
+.gate-wait p { color: var(--fg-muted); font-size: 13px; margin: 0; }

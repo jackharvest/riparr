@@ -1,0 +1,19 @@
+[Unit]
+Description=Install MakeMKV for Riparr
+Documentation=https://github.com/jackharvest/riparr
+# apt and the download both need the network up.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Clear the request first, so riparr-makemkv.path re-arms and a single request cannot
+# retrigger this in a loop.
+ExecStartPre=/bin/rm -f /run/riparr/makemkv.request
+ExecStart=/usr/local/lib/riparr/makemkv-run.sh
+# The build is long and single-threaded by design; do not let systemd time it out.
+TimeoutStartSec=infinity
+# Be the last thing on the box to get memory. A 1 GB board building C++ should sooner
+# lose this than lose the service the user is watching it from.
+Nice=10
+OOMScoreAdjust=500

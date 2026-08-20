@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch for a Riparr request to install MakeMKV
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# The web service runs unprivileged and cannot start a root unit. It can create one
+# file in its own runtime directory, and that is the entire interface: a request, with
+# no arguments the root side is obliged to trust. What actually runs is fixed in
+# riparr-makemkv.service.
+PathExists=/run/riparr/makemkv.request
+
+[Install]
+WantedBy=multi-user.target

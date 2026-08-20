@@ -20,6 +20,19 @@
     <div class="gate-err" id="gate-err"></div>
     <button class="btn primary wide" type="submit">Sign in</button>
   </form>
+
+  <!-- Shown instead of the form while the service is still answering. Kept as a
+       sibling rather than replacing the form's markup, so the submit handler bound
+       at load time survives. -->
+  <div class="gate-card hidden" id="gate-waiting">
+    <div class="gate-mark">◉</div>
+    <h1>Riparr</h1>
+    <div class="gate-wait">
+      <div class="spin" id="gate-spin"></div>
+      <p id="gate-wait-msg">Starting up…</p>
+    </div>
+    <button class="btn primary wide hidden" id="gate-retry" type="button">Try again</button>
+  </div>
 </div>
 
 <!-- ── first run ─────────────────────────────────────────── -->
