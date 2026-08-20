@@ -60,10 +60,10 @@ let the Preparer find the box and install itself, then finish in a browser — w
 to end with no terminal at any point. MakeMKV installs from a button. Account, share
 and first-run wizard are all done on real hardware.
 
-**The one thing unfinished is the optical drive**, which has never appeared on the USB
-bus. The Pi side is healthy; the leading suspect is the USB-C-to-USB-C connection —
-these boards tie both CC pins to ground, so the port reads as a device to the far end.
-[`JOURNAL.md`](JOURNAL.md) has the full diagnosis and what to try.
+**The one thing missing is a working USB-to-SATA adapter** — the one on hand had been
+dead for a year. Nothing in the software or the board is outstanding. The bridge is a
+BOM decision, not a cable: it must **name** optical/ATAPI support
+([why](docs/design/hardware.md)).
 
 **After that, the last open design risk** in
 [`docs/design/risks.md`](docs/design/risks.md):
