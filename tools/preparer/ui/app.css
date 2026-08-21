@@ -62,8 +62,33 @@ html, body {
   cursor: default;
 }
 
-/* The transparent titlebar is still the drag handle; keep content clear of it. */
-.drag { position: fixed; inset: 0 0 auto 0; height: 28px; z-index: 50; }
+/* A titlebar you can see.
+   The window runs its content up under the titlebar, which is what stops it looking
+   like a browser -- but with the title hidden and no bar drawn, the top of the window
+   was bare page with three traffic lights floating on it. Nothing said "grab here",
+   which is the first thing anybody tries.
+   Finder, Mail and Notes all keep a visibly distinct top strip in this style: sidebar
+   material continues to the top on the left, and the content side gets a translucent
+   bar with a hairline under it that content scrolls beneath. This is that bar. It
+   starts at the rail's right edge for the same reason theirs does.
+   The height matches TITLEBAR_H in app.py -- this is the visible half of the native
+   DragStrip, and the two have to line up. */
+.titlebar {
+  position: fixed; top: 0; left: 0; right: 0; height: 38px; z-index: 50;
+  border-bottom: 1px solid var(--line-soft);
+  pointer-events: none;   /* the native strip above it does the dragging */
+}
+/* The bar runs edge to edge -- one titlebar, not a titlebar that starts partway
+   across -- but the two halves keep their own material, because the rail is a
+   translucent column that should read as continuous from the top of the window to the
+   bottom. So: the hairline spans the whole width on `.titlebar` itself, and only the
+   content side gets painted here. Over the rail the background stays transparent and
+   the rail's own material shows through, which is why there is no seam at x=208. */
+.titlebar::before {
+  content: ""; position: absolute; inset: 0 0 0 208px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
 
 body { display: grid; grid-template-columns: 208px 1fr; }
 
@@ -72,7 +97,7 @@ body { display: grid; grid-template-columns: 208px 1fr; }
   background: var(--rail);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-right: 1px solid var(--line-soft);
-  padding: 38px 0 16px;
+  padding: 50px 0 16px;   /* clear of the titlebar hairline, which now crosses here */
   display: flex; flex-direction: column;
 }
 
@@ -133,7 +158,7 @@ body { display: grid; grid-template-columns: 208px 1fr; }
 
 .screen {
   position: absolute; inset: 0;
-  padding: 46px 34px 0;
+  padding: 54px 34px 0;
   display: none; flex-direction: column;
   opacity: 0; transform: translateY(6px);
 }
@@ -479,7 +504,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 /* The first thing anyone sees, and previously it was a disk picker. Centre the mark,
    set the name in the wordmark face, and say what the thing is before asking for
    anything. Scrolls on its own so a short window never clips the two choices. */
-.center-screen { padding: 46px 34px 26px; overflow-y: auto; }
+.center-screen { padding: 54px 34px 26px; overflow-y: auto; }
 .center-screen::-webkit-scrollbar { width: 7px; }
 .center-screen::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 

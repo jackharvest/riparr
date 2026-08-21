@@ -27,7 +27,7 @@ from AppKit import (NSApplication, NSWindow, NSApp, NSScreen, NSColor, NSView,
                     NSApplicationActivationPolicyRegular, NSBackingStoreBuffered,
                     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable,
-                    NSWindowStyleMaskFullSizeContentView, NSWindowTitleHidden,
+                    NSWindowStyleMaskFullSizeContentView, NSWindowTitleVisible,
                     NSMakeRect, NSMakeSize, NSWorkspace)
 from Foundation import NSObject, NSURL, NSString, NSTimer
 from WebKit import (WKWebView, WKWebViewConfiguration, WKUserContentController,
@@ -590,7 +590,9 @@ class Shot(NSObject):
         NSApp().terminate_(None)
 
 
-TITLEBAR_H = 28.0
+# Tall enough to read as a titlebar rather than a coincidence, and matched by
+# `.titlebar` in app.css -- the visible half of the same strip.
+TITLEBAR_H = 38.0
 
 
 class NoSleep:
@@ -692,16 +694,22 @@ class DragStrip(NSView):
     """
 
     def mouseDownCanMoveWindow(self):
+        # Kept because it is the correct declaration -- "this area behaves like
+        # titlebar" -- but it is not what does the work. AppKit dispatches mouseDown:
+        # to a view that implements it rather than running its own drag, so on its own
+        # this returned YES to nobody. -hitTest: reached the strip and the window still
+        # did not move.
         return True
 
     def isOpaque(self):
         return False
 
     def mouseDown_(self, event):
-        if event.clickCount() == 2:
-            self.window().zoom_(None)
-        else:
-            objc.super(DragStrip, self).mouseDown_(event)
+        # The explicit, supported way to drag a window from a view (10.11+). It runs
+        # the real titlebar drag loop -- snapping, Spaces, and the system's
+        # double-click-to-zoom or minimise preference all come with it, which is why
+        # there is no clickCount() branch here any more.
+        self.window().performWindowDragWithEvent_(event)
 
     def acceptsFirstMouse_(self, event):
         # Drag an inactive window without first clicking to focus it, the way Finder
@@ -786,7 +794,12 @@ def main():
         frame, mask, NSBackingStoreBuffered, False)
     win.setTitle_("Riparr Preparer")
     win.setTitlebarAppearsTransparent_(True)
-    win.setTitleVisibility_(NSWindowTitleHidden)
+    # The title was hidden, which left the top of the window as bare page with three
+    # traffic lights floating on it and nothing that reads as "grab here". Every Mac
+    # app in this style -- Safari, Mail, Notes -- keeps a visibly distinct top strip
+    # even when the content runs underneath it. Showing the title is half of that; the
+    # `.titlebar` bar in app.css is the other half.
+    win.setTitleVisibility_(NSWindowTitleVisible)
     win.setMinSize_(NSMakeSize(860, 600))
     win.center()
 
