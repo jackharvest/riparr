@@ -73,10 +73,20 @@ network and a card that has to be redone.
 
 | File | Purpose |
 |---|---|
-| `app.py` | The window, and the JavaScript↔Python bridge |
-| `core.py` | Wi-Fi scan, PSK derivation, `$6$` hashing, the `custom.toml` schema, disk guards |
-| `writer.py` | Runs as root. Image write, provisioning, verification, eject |
-| `ui/` | The interface |
+| `ui/` | The interface. Hosted by either shell, unchanged |
+| `bridge.py` | Every method JavaScript can call. **One copy, both shells** |
+| `core.py` | The rules: PSK derivation, `$6$` hashing, the TOML and conf schemas, disk classification, card sizing. No platform code |
+| `hostos/` | The facts: disks, Wi-Fi, desktop integration. One module per platform |
+| `shell.py` | The window, on **any** OS, via pywebview |
+| `app.py` | The window on macOS, hand-built in AppKit. Being replaced by `shell.py` |
+| `shots.py` | `--shot` fixtures, shared by both shells |
+| `writer.py` | Runs as root. Image write, provisioning, verification, eject. **macOS only so far** |
+
+**`core.py` decides; `hostos/` gathers.** Whether a device is a card (D24) is one
+function applied to all three operating systems, because all three expose the same
+underlying SCSI removable-medium bit under different names — `RemovableMedia` on macOS,
+a `"Removable Media"` MediaType on Windows, `/sys/block/*/removable` on Linux. Adding a
+platform means adding a module to `hostos/` and nothing else.
 
 **`core.py` is the single source of truth** for everything dangerous to get subtly wrong.
 [`tools/flasher/riparr-flash.py`](../flasher/README.md) — the scripted path — delegates to

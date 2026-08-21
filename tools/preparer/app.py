@@ -33,8 +33,9 @@ from Foundation import NSObject, NSURL, NSString, NSTimer
 from WebKit import (WKWebView, WKWebViewConfiguration, WKUserContentController,
                     WKUserScript, WKPreferences, WKSnapshotConfiguration)
 
+import bridge as _bridge
 import core
-import finish
+import shots
 
 VERSION = "1.0.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,335 +46,6 @@ UI = os.path.join(HERE, "ui")
 RUNDIR = tempfile.mkdtemp(prefix="riparr-prep-")
 os.chmod(RUNDIR, 0o700)
 
-
-class Bridge:
-    """Every method here is callable from JavaScript by name."""
-
-    def __init__(self, assets):
-        self.assets = assets
-        self.progress_path = os.path.join(RUNDIR, "progress.json")
-        self.write_thread = None
-        self.write_error = None
-        # ── the second half ──
-        self.setup_path = os.path.join(RUNDIR, "setup.json")
-        self.finisher = None
-        self.setup_thread = None
-        self.nosleep = NoSleep()
-
-    # ── initial state ──
-    def boot(self):
-        pw, generated = core.ensure_password(self.assets)
-        images = core.find_images(self.assets)
-        return {
-            "version": VERSION,
-            "repo": core.RIPARR_REPO,
-            "assets": self.assets,
-            "images": images,
-            "image_missing": not images,
-            "disks": core.list_disks(),
-            "password": pw,
-            "password_generated": generated,
-            "has_key": core.public_key(self.assets) is not None,
-            "makemkv": os.path.isdir(os.path.join(self.assets, "makemkv")),
-            "ssh_config": (os.path.join(self.assets, "ssh_config")
-                           if os.path.exists(os.path.join(self.assets, "ssh_config"))
-                           else None),
-            "default_port": core.DEFAULT_PORT,
-            # The setup-only route needs the *private* key, not the public one that
-            # goes onto the card -- different file, different question. Without it
-            # "set up a box I already wrote a card for" can only fail, so the welcome
-            # screen needs to know before it offers the button.
-            "can_setup": os.path.exists(os.path.join(self.assets, "riparr_key")),
-            "size_guide": core.size_guide(),
-            "timezone": core.host_timezone(),
-            "country": os.environ.get("RIPARR_COUNTRY", "US"),
-        }
-
-    def scan_wifi(self):
-        nets, method = core.scan_networks()
-        return {"networks": nets, "method": method}
-
-    def keychain_password(self, ssid):
-        """Fetch a Wi-Fi passphrase this Mac already knows.
-
-        Never called on its own -- only when the user presses the button offering it,
-        so the keychain dialog macOS raises is always in response to something they
-        just did.
-        """
-        pw, err = core.keychain_wifi_password(ssid)
-        return {"ok": bool(pw), "password": pw, "error": err}
-
-    def refresh_disks(self):
-        return {"disks": core.list_disks()}
-
-    def check_update(self):
-        return core.check_for_update(VERSION)
-
-    def preview_toml(self, cfg):
-        return {"toml": self._toml(cfg), "conf": core.build_conf(cfg)}
-
-    def check_tools(self, image=None):
-        """Tools this write needs that are not installed. See core.missing_tools."""
-        return {"missing": core.missing_tools(image)}
-
-    def check_port(self, port):
-        ok, message = core.check_port(port)
-        return {"ok": ok, "message": message}
-
-    def save_toml_only(self, cfg):
-        out = os.path.join(self.assets, "custom.toml")
-        with open(out, "w") as f:
-            f.write(self._toml(cfg))
-        return {"path": out}
-
-    def reveal(self, path):
-        subprocess.run(["open", "-R", path])
-        return {"ok": True}
-
-    def open_url(self, url):
-        if url.startswith("http://") or url.startswith("https://"):
-            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
-        return {"ok": True}
-
-    # ── the write ──
-    def _toml(self, cfg):
-        return core.build_toml({
-            "hostname": cfg["hostname"],
-            "user": cfg["user"],
-            "pw_hash": core.sha512_crypt(cfg["password"]),
-            "ssid": cfg["ssid"],
-            "wifi_pw": cfg.get("wifi_pw", ""),
-            "secure": cfg.get("secure", True),
-            "hidden": cfg.get("hidden", False),
-            "country": cfg.get("country", "US"),
-            "timezone": cfg.get("timezone", core.host_timezone()),
-            "keymap": "us",
-            "authorized_key": core.public_key(self.assets),
-        })
-
-    def start_write(self, cfg):
-        # allow_other is set only by the user revealing "other disks" and picking one
-        # there. Anything else, including a device that has re-classified itself since
-        # the list was drawn, is refused rather than written to.
-        disk = core.validate_disk(cfg["disk"], allow_any=bool(cfg.get("allow_other")))
-        if not disk:
-            return {"ok": False,
-                    "error": "That card is no longer available. Reinsert it and rescan."}
-        image = cfg.get("image") or (core.find_images(self.assets) or [{}])[0].get("path")
-        if not image or not os.path.exists(image):
-            return {"ok": False, "error": "The operating system image is missing."}
-
-        # Before the password dialog, and before anything is unmounted. Finding this
-        # out afterwards costs the user an admin password and an ejected card, and
-        # arrives as "The write stopped unexpectedly" plus an errno.
-        missing = core.missing_tools(image)
-        if missing:
-            return {
-                "ok": False,
-                "error": "Riparr needs %s, which %s not installed on this Mac."
-                         % (" and ".join(m["tool"] for m in missing),
-                            "is" if len(missing) == 1 else "are"),
-                "detail": "\n\n".join(
-                    "%s — %s\n    %s" % (m["tool"], m["why"], m["fix"])
-                    for m in missing)
-                + "\n\nNothing has been written and your card is untouched.",
-            }
-
-        toml_path = os.path.join(RUNDIR, "custom.toml")
-        with open(toml_path, "w") as f:
-            f.write(self._toml(cfg))
-        os.chmod(toml_path, 0o600)
-
-        conf_path = os.path.join(RUNDIR, "riparr.conf")
-        with open(conf_path, "w") as f:
-            f.write(core.build_conf(cfg))
-
-        total = core.uncompressed_size(image)
-        sha = core.expected_sha256(image) or ""
-        verify = bool(cfg.get("verify", True))
-        mkv = os.path.join(self.assets, "makemkv")
-        mkv = mkv if os.path.isdir(mkv) else ""
-        self.nosleep.hold("writing a card")
-        core_publish(self.progress_path, phase="auth",
-                     message="Waiting for your administrator password")
-
-        self.write_error = None
-        self.write_thread = threading.Thread(
-            target=self._run_privileged,
-            args=(image, disk["id"], toml_path, total, sha, verify, mkv, conf_path),
-            daemon=True)
-        self.write_thread.start()
-        return {"ok": True, "total": total, "verify": verify,
-                "kind": core.image_kind(image)}
-
-    def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv="",
-                        conf=""):
-        """One authorization dialog covers write, provision and eject.
-
-        Elevation is `sudo -A`, deliberately, and not osascript's `with administrator
-        privileges`. The latter runs the helper through security_authtrampoline, which
-        re-parents it away from the launching application — and macOS attributes disk
-        and removable-volume consent to the *responsible* application, not to the user
-        and not to root. A trampolined helper therefore inherits no consent at all and
-        is refused with EPERM on /dev/rdiskN even as root, while the terminal it was
-        launched from can write the very same card. sudo keeps the writer a direct
-        descendant, so the consent that is already granted still applies.
-        """
-        script = os.path.join(RUNDIR, "write.sh")
-        with open(script, "w") as f:
-            f.write("#!/bin/sh\nexec %s %s --image %s --dev %s --toml %s "
-                    "--progress %s --total %d --sha256 %s%s\n" % (
-                        _q(sys.executable), _q(os.path.join(HERE, "writer.py")),
-                        _q(image), _q(dev), _q(toml_path),
-                        _q(self.progress_path), total, _q(sha),
-                        (" --verify" if verify else "")
-                        + ((" --makemkv " + _q(mkv)) if mkv else "")
-                        + ((" --conf " + _q(conf)) if conf else "")))
-        os.chmod(script, 0o700)
-
-        # sudo asks for the password up to three times. The sentinel makes a cancelled
-        # dialog cancel the whole write instead of asking twice more.
-        cancel = os.path.join(RUNDIR, "cancelled")
-        askpass = os.path.join(RUNDIR, "askpass.sh")
-        with open(askpass, "w") as f:
-            f.write(
-                '#!/bin/sh\n'
-                '[ -f %s ] && exit 1\n'
-                'pw=$(osascript -e \'display dialog "Riparr needs permission to write '
-                'to your SD card." with title "Riparr Preparer" default answer "" '
-                'with hidden answer with icon caution\' -e \'text returned of result\' '
-                '2>/dev/null) || { : > %s; exit 1; }\n'
-                'printf %%s "$pw"\n' % (_q(cancel), _q(cancel)))
-        os.chmod(askpass, 0o700)
-
-        env = dict(os.environ, SUDO_ASKPASS=askpass)
-        p = subprocess.run(["sudo", "-A", "/bin/sh", script],
-                           capture_output=True, text=True, env=env)
-        if p.returncode != 0:
-            err = (p.stderr or "").strip()
-            if os.path.exists(cancel):
-                core_publish(self.progress_path, phase="cancelled",
-                             message="Cancelled. Nothing was written to the card.")
-            else:
-                # If the helper itself failed it already published a real error.
-                cur = self.write_status()
-                if cur.get("phase") not in ("error", "done"):
-                    core_publish(self.progress_path, phase="error",
-                                 message="Could not get permission to write the card.",
-                                 detail=err or "sudo exited %d." % p.returncode)
-
-    # ── the second half: from a powered-on board to a running Riparr ──
-    def start_setup(self, cfg):
-        """Kick off remote setup. Returns immediately; poll setup_status().
-
-        No elevation here, and no password prompt: everything happens on the box over
-        SSH, authenticated by the key the card already carries. That is the whole
-        reason this can be automatic rather than a console the user has to drive.
-        """
-        if self.setup_thread and self.setup_thread.is_alive():
-            return {"ok": False, "error": "Setup is already running."}
-
-        key = os.path.join(self.assets, "riparr_key")
-        if not os.path.exists(key):
-            return {"ok": False,
-                    "error": "The SSH key is missing from your build folder, so the "
-                             "box cannot be reached. Prepare a card again."}
-
-        self.finisher = finish.Finisher(
-            {"hostname": cfg.get("hostname", "riparr"),
-             "port": int(cfg.get("port", core.DEFAULT_PORT)),
-             "user": cfg.get("remote_user", "root"),
-             "key": key,
-             "known_hosts": os.path.join(self.assets, "known_hosts"),
-             "repo": os.path.abspath(os.path.join(HERE, "..", ".."))},
-            self.setup_path)
-        self.nosleep.hold("setting up the box")
-        core_publish(self.setup_path, phase="running", message="Starting",
-                     pct=0, steps=[], log=[])
-        self.setup_thread = threading.Thread(target=self.finisher.run, daemon=True)
-        self.setup_thread.start()
-        return {"ok": True}
-
-    def setup_status(self):
-        try:
-            with open(self.setup_path) as f:
-                st = json.load(f)
-        except Exception:
-            return {"phase": "idle"}
-        if st.get("phase") in ("done", "error", "cancelled"):
-            self._release_if_idle()
-        return st
-
-    def name_taken(self, hostname):
-        """Is something already answering to this name on the network?
-
-        People build more than one of these -- concept.md says to assume it -- and two
-        boxes both called `riparr` means mDNS renames one to `riparr-2.local` behind
-        your back. Cheaper to say so while it is still a text field.
-        """
-        name = "%s.local" % (hostname or "").strip().lower()
-        try:
-            ip = socket.gethostbyname(name)
-        except Exception:
-            return {"taken": False}
-        return {"taken": True, "address": ip, "name": name}
-
-    def cancel_setup(self):
-        if self.finisher:
-            self.finisher.cancel.set()
-        return {"ok": True}
-
-    def write_status(self):
-        try:
-            with open(self.progress_path) as f:
-                st = json.load(f)
-        except Exception:
-            return {"phase": "idle"}
-        if st.get("phase") in ("done", "error", "cancelled"):
-            self._release_if_idle()
-        return st
-
-    def _release_if_idle(self):
-        if not self.busy_reason():
-            self.nosleep.release()
-
-    def busy_reason(self):
-        """Whether quitting right now would break something, and what to say about it.
-
-        Called from the app delegate, not from JavaScript.
-        """
-        phase = (self.write_status() or {}).get("phase")
-        if phase in ("write", "verify-card", "provision", "auth", "eject"):
-            return {
-                "title": "Your card is still being written.",
-                "body": ("Quitting now leaves it half-written, which means a card that "
-                         "boots into nothing and has to be prepared again from the "
-                         "start. Take the card out only after this finishes."),
-                "quit": "Quit and ruin the card",
-            }
-        if self.setup_thread and self.setup_thread.is_alive():
-            return {
-                "title": "Riparr is still being set up on the box.",
-                "body": ("Quitting stops it partway. The card is fine and the box is "
-                         "fine — you can open this app again and pick up from "
-                         "\u201cIt's plugged in\u201d."),
-                "quit": "Quit anyway",
-            }
-        return ""
-
-
-def core_publish(path, **kw):
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(kw, f)
-    os.replace(tmp, path)
-
-
-def _q(s):
-    return "'" + str(s).replace("'", "'\\''") + "'"
-
-
-# ─────────────────────────── the bridge plumbing ───────────────────────────
 
 BOOTSTRAP_JS = """
 window.__riparr_pending = {};
@@ -429,128 +101,6 @@ class Handler(NSObject):
         self.webview.evaluateJavaScript_completionHandler_(str(js), None)
 
 
-# Sample state for --shot. Driving the real flow needs a card, a network and a board;
-# this paints the same DOM from fixed data so a screen can be looked at on demand.
-SHOTS = {
-    "welcome": "setRail(null); show('welcome');",
-    # One real card, one device we classified as a drive, and the size guide open --
-    # the three things that changed about this screen, all visible at once.
-    "card": """
-      setRail('card'); show('card');
-      renderGuide(%s);
-      renderDisks([
-        {id:'disk4', name:'SDXC Card', protocol:'Secure Digital', size_gb:128,
-         kind:'sd', kind_label:'SD card', is_card:true,
-         why:"in this Mac's card slot",
-         advice:{headline:'A comfortable Blu-ray evening',
-                 detail:'Bursts 2 Blu-rays back to back, streams UHD.'}},
-        {id:'disk6', name:'My Passport 25E2', protocol:'USB', size_gb:4000,
-         kind:'disk', kind_label:'External drive', is_card:false,
-         why:'the name reads as an external drive, not a card', advice:{}}
-      ]);
-      document.querySelector('#size-guide').open = true;
-    """ % json.dumps(core.size_guide()),
-    # The state the reveal exists for: no card recognised, but something removable is
-    # attached. Worth being able to look at, because it is the screen a person hits
-    # when their reader reports itself as a fixed disk.
-    "card-other": """
-      setRail('card'); show('card');
-      renderGuide(%s);
-      renderDisks([
-        {id:'disk6', name:'Samsung PSSD T7', protocol:'USB', size_gb:1000,
-         kind:'disk', kind_label:'External drive', is_card:false,
-         why:'the name reads as an external drive, not a card', advice:{}},
-        {id:'disk7', name:'USB 3.0 Device', protocol:'USB', size_gb:64,
-         kind:'disk', kind_label:'External drive', is_card:false,
-         why:'fixed media — this may be an external drive',
-         advice:{headline:'Bursts one Blu-ray'}}
-      ]);
-      document.querySelector('#other-disks').open = true;
-    """ % json.dumps(core.size_guide()),
-    "connect": """
-      state.boot = state.boot || {};
-      state.boot.can_setup = true;
-      state.boot.assets = '/Users/you/riparr-build';
-      state.boot.ssh_config = '/Users/you/riparr-build/ssh_config';
-      setRail('connect'); show('connect'); connectPreview();
-      document.querySelector('#connect-manual').open = true;
-      document.querySelector('#connect-found').className = 'micro good';
-      document.querySelector('#connect-found').textContent =
-        'riparr.local is answering at 192.168.3.143.';
-    """,
-    # A network chosen, so the password field and the keychain offer are both on
-    # screen -- the state that actually needs looking at.
-    "wifi": """
-      setRail('card'); show('wifi');
-      renderNets([
-        {ssid:'Harvest House', bands:['2.4','5'], rssi:-43, secure:true, pi_ok:true, saved:true, seen:true},
-        {ssid:'Harvest House 5G', bands:['5'], rssi:-51, secure:true, pi_ok:true, saved:false, seen:true},
-        {ssid:'BTWiFi-with-FON', bands:['2.4'], rssi:-78, secure:false, pi_ok:true, saved:false, seen:true},
-        {ssid:'NEIGHBOUR-6E', bands:['6'], rssi:-60, secure:true, pi_ok:false, saved:false, seen:true}
-      ], 'live');
-      pickNet({ssid:'Harvest House', bands:['2.4','5'], rssi:-43, secure:true, pi_ok:true, saved:true});
-    """,
-    "handoff": """
-      setRail('card'); show('handoff');
-      document.querySelector('#handoff-skip').innerHTML =
-        '<a href="#">Skip — I\\'ll set it up myself</a>';
-    """,
-    "setup": """
-      state.hostname = 'riparr'; state.port = 9797;
-      setRail('card'); show('setup');
-      renderTasks([
-        {id:'find',      title:'Finding your Riparr',   detail:'Looking for the box on your network', state:'done'},
-        {id:'connect',   title:'Connecting',            detail:'Opening a secure connection', state:'done'},
-        {id:'copy',      title:'Copying Riparr across', detail:'Sending the software to the box', state:'done'},
-        {id:'bootstrap', title:'Preparing the system',  detail:'Installing build tools and recording what the hardware is', state:'done'},
-        {id:'install',   title:'Installing Riparr',     detail:'Building the Python environment — the slowest part, several minutes', state:'running'},
-        {id:'verify',    title:'Checking it answers',   detail:'Making sure the web interface is really up', state:'waiting'}
-      ]);
-      document.querySelector('#setup-fill').style.width = '62%';
-      document.querySelector('#setup-pct').textContent = '62%';
-      document.querySelector('#setup-detail').textContent = 'riparr.local';
-      document.querySelector('#setup-hint').textContent = 'Installing Riparr';
-      document.querySelector('#log-reveal').open = true;
-      document.querySelector('#setup-log').textContent =
-        ['$ cd /root/riparr && sudo bash tools/install.sh',
-         'Installing Riparr',
-         '  port 9797 · /opt/riparr · OrangePi Zero 2W',
-         '1/6  Packages',
-         '  \u2713 avahi owns riparr.local (resolved\u2019s responder stood down)',
-         '  \u2713 dependencies present',
-         '2/6  Account',
-         '  \u2713 user \u2018riparr\u2019 ready; staging at /srv/staging',
-         '3/6  Riparr',
-         '  \u2713 Riparr 0.1.0 in /opt/riparr',
-         '4/6  Python environment',
-         '  installing dependencies (a few minutes on a Zero 2 W)'].join('\\n');
-    """,
-    "done": """
-      state.hostname = 'riparr'; state.port = 9797; state.elapsed = 571;
-      setRail('card'); show('done'); renderDone(true);
-    """,
-    # The message people are most likely to actually read, so it is worth being able
-    # to look at without failing a real setup.
-    "failed": """
-      setRail('card'); show('failed');
-      document.querySelector('#fail-title').textContent =
-        "Couldn't find your Riparr on the network.";
-      document.querySelector('#fail-msg').textContent = '';
-      document.querySelector('#fail-detail').textContent =
-        "Checked riparr.local and swept this network for 300 seconds. In order of likelihood:\\n\\n" +
-        "1. The Wi-Fi password is wrong. Nothing before this point can check it, and the box cannot tell you: it boots perfectly and never joins. Write the card again, and use the keychain button on the Wi-Fi step.\\n" +
-        "2. The box is on a network this Mac can't see \\u2014 a guest network, or a band your router keeps on a separate subnet.\\n" +
-        "3. It is still starting. A first boot resizes the card and can take a few minutes; if it has been under five, wait and try again.\\n" +
-        "4. It has no power. The light on the board should be on.";
-    """,
-    "done-skipped": """
-      state.hostname = 'riparr'; state.port = 9797;
-      state.boot = state.boot || {}; state.boot.ssh_config = null;
-      setRail('card'); show('done'); renderDone(false);
-    """,
-}
-
-
 class Shot(NSObject):
     """Render one screen to a PNG, then quit.
 
@@ -572,13 +122,8 @@ class Shot(NSObject):
     # forwards` to become visible, so without this the pane snapshots blank while the
     # un-animated sidebar renders perfectly — which looks like a broken layout and is
     # not one. Killing animation also makes shots byte-stable between runs.
-    STILL = ("var s=document.createElement('style');"
-             "s.textContent='*{animation:none !important;transition:none !important}"
-             ".screen.on{opacity:1 !important;transform:none !important}';"
-             "document.head.appendChild(s);")
-
     def fire_(self, timer):
-        js = self.STILL + SHOTS.get(self.screen, "show('%s');" % self.screen)
+        js = shots.script_for(self.screen)
         self.webview.evaluateJavaScript_completionHandler_(js, None)
         NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             0.7, self, "snap:", None, False)
@@ -613,41 +158,6 @@ class Shot(NSObject):
 # Tall enough to read as a titlebar rather than a coincidence, and matched by
 # `.titlebar` in app.css -- the visible half of the same strip.
 TITLEBAR_H = 38.0
-
-
-class NoSleep:
-    """Hold the Mac awake while a card is being written or a box set up.
-
-    Both of these are long, unattended, and fail badly when interrupted: a display
-    sleep is harmless but a system sleep drops the SSH session mid-install and closes
-    the disk being written. `caffeinate -i` asserts only the idle-sleep assertion, so
-    the screen still dims and locks normally -- this prevents the machine going to
-    sleep, not the user's screensaver.
-
-    Closing the lid still sleeps regardless; nothing in userspace can prevent that, and
-    that limitation is what the setup screen's copy has to be honest about.
-    """
-
-    def __init__(self):
-        self.proc = None
-
-    def hold(self, why):
-        if self.proc and self.proc.poll() is None:
-            return
-        try:
-            self.proc = subprocess.Popen(
-                ["caffeinate", "-i", "-w", str(os.getpid())],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            self.proc = None
-
-    def release(self):
-        if self.proc and self.proc.poll() is None:
-            try:
-                self.proc.terminate()
-            except Exception:
-                pass
-        self.proc = None
 
 
 class UIDelegate(NSObject):
@@ -780,7 +290,7 @@ def main():
                     help="directory holding the .img.xz, SSH key and password file")
     ap.add_argument("--shot", default="",
                     help="render one screen to a PNG and exit: %s"
-                         % ", ".join(sorted(SHOTS)))
+                         % ", ".join(sorted(shots.SHOTS)))
     ap.add_argument("--shot-out", default="/tmp/riparr-preparer.png")
     ap.add_argument("--eval", default="",
                     help="with --shot: print this JS expression instead of a PNG")
@@ -830,7 +340,7 @@ def main():
     except Exception:
         pass
 
-    bridge = Bridge(assets)
+    bridge = _bridge.Bridge(assets)
     delegate.bridge = bridge
     handler = Handler.alloc().initWithBridge_webview_(bridge, webview)
     ucc.addScriptMessageHandler_name_(handler, "riparr")

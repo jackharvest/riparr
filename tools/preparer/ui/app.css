@@ -597,3 +597,13 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .screen-body::-webkit-scrollbar { width: 7px; }
 .screen-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 .screen-body > .reveal:last-child { margin-bottom: 14px; }
+
+/* ── when the window has a real titlebar of its own ─────── */
+/* shell.py (pywebview) gets an OS-drawn titlebar above the web view on every platform,
+   so the drawn one here would be a second bar under the real one, and the extra top
+   padding that kept content clear of it is just a gap. app.py's window has no separate
+   titlebar -- the content runs under it -- so it keeps both. */
+:root.native-titlebar .titlebar { display: none; }
+:root.native-titlebar .rail { padding-top: 20px; }
+:root.native-titlebar .screen { padding-top: 26px; }
+:root.native-titlebar .center-screen { padding-top: 26px; }

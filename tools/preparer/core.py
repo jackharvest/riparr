@@ -12,7 +12,6 @@ testable without a window server.
 import hashlib
 import json
 import os
-import plistlib
 import re
 import secrets
 import shutil
@@ -20,6 +19,8 @@ import string
 import subprocess
 import urllib.error
 import urllib.request
+
+import hostos
 
 # The official repository. The updater and the image manifest both hang off this.
 RIPARR_REPO = "jackharvest/riparr"
@@ -146,147 +147,10 @@ UHD100_GIB = 93.1
 
 
 # ───────────────────────────────── Wi-Fi ─────────────────────────────────
-
-def _band_for_channel(ch_band):
-    return {1: "2.4", 2: "5", 3: "6"}.get(ch_band)
-
-
-def scan_corewlan():
-    """Live scan via CoreWLAN: SSID, band, RSSI, security.
-
-    This is the only scan method that returns unredacted SSIDs without a Location
-    Services grant. `airport` was removed in macOS 26 and `system_profiler` redacts.
-    """
-    import CoreWLAN
-    iface = CoreWLAN.CWWiFiClient.sharedWiFiClient().interface()
-    if iface is None:
-        return {}
-    nets, _ = iface.scanForNetworksWithSSID_error_(None, None)
-    agg = {}
-    for n in nets or []:
-        ssid = n.ssid()
-        if not ssid:
-            continue
-        ch = n.wlanChannel()
-        band = _band_for_channel(ch.channelBand() if ch else 0)
-        try:
-            secure = not n.supportsSecurity_(0)  # kCWSecurityNone
-        except Exception:
-            secure = True
-        rssi = n.rssiValue()
-        e = agg.get(ssid)
-        if e is None:
-            agg[ssid] = {
-                "ssid": ssid,
-                "bands": [band] if band else [],
-                "rssi": rssi,
-                "secure": secure,
-                "saved": False,
-                "seen": True,
-            }
-        else:
-            if band and band not in e["bands"]:
-                e["bands"].append(band)
-            if rssi is not None and (e["rssi"] is None or rssi > e["rssi"]):
-                e["rssi"] = rssi
-    return agg
-
-
-def scan_system_profiler():
-    """Fallback scan. SSIDs come back '<redacted>' without Location Services."""
-    try:
-        out = subprocess.run(
-            ["system_profiler", "SPAirPortDataType"],
-            capture_output=True, text=True, timeout=45).stdout
-    except Exception:
-        return {}
-    agg, cur = {}, None
-    for line in out.splitlines():
-        m = re.match(r"^\s{12}([^\s:][^:]*):\s*$", line)
-        if m:
-            cur = m.group(1).strip()
-            if cur.startswith("<"):
-                cur = None
-            elif cur not in agg:
-                agg[cur] = {"ssid": cur, "bands": [], "rssi": None,
-                            "secure": True, "saved": False, "seen": True}
-            continue
-        if cur and "Channel:" in line:
-            b = re.search(r"\((2|5|6)GHz", line)
-            if b:
-                band = {"2": "2.4", "5": "5", "6": "6"}[b.group(1)]
-                if band not in agg[cur]["bands"]:
-                    agg[cur]["bands"].append(band)
-        if cur and "Security:" in line and "None" in line:
-            agg[cur]["secure"] = False
-    return agg
-
-
-def wifi_device():
-    """The Wi-Fi interface's BSD name. Not always en0.
-
-    On a Mac with Thunderbolt Ethernet, or any machine where the ports enumerate
-    differently, en0 is the wired interface and the Wi-Fi questions asked of it come
-    back empty -- which reads as "you have no saved networks" rather than "we asked the
-    wrong device".
-    """
-    try:
-        out = subprocess.run(["networksetup", "-listallhardwareports"],
-                             capture_output=True, text=True, timeout=15).stdout
-        block = None
-        for line in out.splitlines():
-            line = line.strip()
-            if line.startswith("Hardware Port:"):
-                block = line.split(":", 1)[1].strip()
-            elif line.startswith("Device:") and block in ("Wi-Fi", "AirPort"):
-                return line.split(":", 1)[1].strip()
-    except Exception:
-        pass
-    return "en0"
-
-
-def saved_networks():
-    """Preferred networks, unredacted, but with no band or signal information."""
-    try:
-        out = subprocess.run(
-            ["networksetup", "-listpreferredwirelessnetworks", wifi_device()],
-            capture_output=True, text=True, timeout=15).stdout
-        return [l.strip() for l in out.splitlines()[1:] if l.strip()]
-    except Exception:
-        return []
-
-
-def keychain_wifi_password(ssid):
-    """The Wi-Fi passphrase this Mac already knows, from the login keychain.
-
-    A mistyped Wi-Fi password is the single most expensive mistake available in this
-    tool: nothing detects it, the card writes perfectly, the box boots perfectly, and
-    it never appears on the network -- and the only recovery is to write the card
-    again. Meanwhile the correct passphrase is, in the overwhelmingly common case,
-    sitting in the keychain of the machine running the Preparer.
-
-    macOS shows its own authorization dialog the first time. That prompt is a feature:
-    it is the OS asking on the user's behalf, in a dialog they recognise, and no
-    passphrase is read without their consent. Returns (password, error).
-    """
-    if not ssid:
-        return "", "no network chosen"
-    try:
-        p = subprocess.run(
-            ["security", "find-generic-password",
-             "-D", "AirPort network password", "-a", ssid, "-w"],
-            capture_output=True, text=True, timeout=60)
-    except Exception as e:
-        return "", str(e)
-    if p.returncode == 0:
-        return p.stdout.rstrip("\n"), ""
-    err = (p.stderr or "").strip()
-    if "could not be found" in err or p.returncode == 44:
-        return "", "This Mac hasn't saved a password for that network."
-    if "User canceled" in err or "-128" in err:
-        return "", "Cancelled."
-    return "", err or "The keychain wouldn't give it up."
-
+#
+# The scanning itself lives in hostos/ -- CoreWLAN here, `nmcli` on Linux, `netsh` on
+# Windows. What stays is the part that is true regardless of which machine is asking:
+# whether the *board's* radio can reach a network, and how a passphrase becomes a PSK.
 
 def pi_can_join(net):
     """Can the board's radio reach this network?
@@ -299,32 +163,44 @@ def pi_can_join(net):
 
 
 def scan_networks():
-    """Returns (networks, method). Degrades gracefully; never raises."""
-    agg, method = {}, None
+    """Returns (networks, method). Never raises; an empty list is a valid answer.
+
+    hostos gathers, this decides: `pi_ok` is a fact about the appliance's radio, not
+    about the machine running the Preparer, so it is applied here and applies equally
+    on all three platforms.
+    """
     try:
-        agg = scan_corewlan()
-        if agg:
-            method = "live"
+        nets, method = hostos.scan_wifi()
     except Exception:
-        agg = {}
-    if not agg:
-        agg = scan_system_profiler()
-        if agg:
-            method = "system_profiler"
-    for s in saved_networks():
-        if s in agg:
-            agg[s]["saved"] = True
-        else:
-            agg[s] = {"ssid": s, "bands": [], "rssi": None, "secure": True,
-                      "saved": True, "seen": False}
-    if agg and not method:
-        method = "saved"
-    nets = list(agg.values())
+        nets, method = [], "none"
     for n in nets:
+        n.setdefault("bands", [])
+        n.setdefault("rssi", None)
+        n.setdefault("secure", True)
         n["pi_ok"] = pi_can_join(n)
     nets.sort(key=lambda n: (not n["pi_ok"], n["rssi"] is None,
-                             -(n["rssi"] or -100), n["ssid"].lower()))
+                             -(n["rssi"] or -100), (n.get("ssid") or "").lower()))
     return nets, (method or "none")
+
+
+def keychain_wifi_password(ssid):
+    """The passphrase this machine already knows for a network it has joined.
+
+    A mistyped Wi-Fi password is the most expensive mistake this tool allows: nothing
+    detects it, the card writes perfectly, the box boots perfectly and never appears,
+    and the only recovery is writing the card again. Meanwhile the correct passphrase
+    is, overwhelmingly often, already on the machine running the Preparer.
+
+    Named for the macOS keychain because that is where it started; every platform has
+    its own store and hostos knows which. Returns (password, error).
+    """
+    if not ssid:
+        return "", "no network chosen"
+    try:
+        pw, err = hostos.saved_network_password(ssid)
+    except Exception as e:
+        return "", str(e)
+    return (pw or ""), (err or "")
 
 
 def derive_psk(ssid, passphrase):
@@ -395,62 +271,61 @@ def _hdd_score(*names):
     return score
 
 
-def _media_icons():
-    """{bsd name: IOKit icon resource} -- the signal drivelist calls `isCard`.
-
-    `SD.icns` means the media is in a real card slot. Read from `ioreg` so this needs
-    no DiskArbitration binding: pyobjc-framework-DiskArbitration is not a dependency
-    and should not become one for a single dictionary lookup.
-    """
-    try:
-        out = subprocess.run(["ioreg", "-a", "-c", "IOMedia", "-r", "-l"],
-                             capture_output=True).stdout
-        root = plistlib.loads(out)
-    except Exception:
-        return {}
-    icons, stack = {}, [root]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, list):
-            stack.extend(node)
-            continue
-        if not isinstance(node, dict):
-            continue
-        bsd, icon = node.get("BSD Name"), node.get("IOMediaIcon")
-        if bsd and isinstance(icon, dict):
-            icons[bsd] = icon.get("IOBundleResourceFile", "")
-        stack.extend(node.get("IORegistryEntryChildren") or [])
-    return icons
+# Telling a USB stick apart from a card in a reader.
+#
+# Both set the removable-medium bit, and Etcher's own source comment records that even
+# the IOKit icon cannot separate them. So when the bit is set the *name* decides, and
+# when the name says nothing the honest answer is "removable media" rather than a
+# guess: calling a Kingston DataTraveler an "SD card" is a confident wrong answer, and
+# R5 says that is worse than no answer. All of them are still offered as a target --
+# this only decides what the thing is called.
+_READER_HINTS = ("CARD READER", "CARDREADER", "MULTI-CARD", "MULTICARD", "CRW",
+                 "SDXC", "SDHC", "MICROSD", "SD/MMC", "SD CARD", "MMC", "READER")
+_FLASH_HINTS = ("DATATRAVELER", "CRUZER", "ULTRA FIT", "FLASH DRIVE", "FLASH DISK",
+                "JUMPDRIVE", "THUMBDRIVE", "STORE N GO", "USB STICK", "BLADE")
 
 
-def _truthy_removable(value):
-    """`RemovableMedia` is a bool on current macOS and a string on older ones."""
-    if isinstance(value, str):
-        return value.strip().lower() == "removable"
-    return bool(value)
+def _name_hint(*names):
+    hay = " ".join(n.upper() for n in names if n)
+    if any(h in hay for h in _READER_HINTS):
+        return "reader"
+    if any(h in hay for h in _FLASH_HINTS):
+        return "flash"
+    return ""
 
+
+# What each platform calls the bus when the medium is a card in a real slot: macOS
+# `diskutil`, Windows `MSFT_Disk.BusType`, Linux `lsblk -o TRAN` plus the mmc subsystem.
+SD_BUS_PROTOCOLS = {"Secure Digital", "SD", "MMC", "mmc", "sd"}
 
 # kind → (label, is it offered as a card, sort rank)
 DISK_KINDS = {
     "sd":       ("SD card", True, 0),
     "reader":   ("SD card", True, 1),
     "flash":    ("USB flash drive", True, 2),
-    "disk":     ("External drive", False, 3),
+    "removable": ("Removable media", True, 3),
+    "disk":     ("External drive", False, 4),
 }
 
 
-def classify_disk(info, icon=""):
-    """What is this thing, and should it be offered as a card? → (kind, why)."""
-    protocol = (info.get("BusProtocol") or "").strip()
-    media_removable = _truthy_removable(info.get("RemovableMedia"))
-    name = (info.get("MediaName") or "").strip()
-    score = _hdd_score(name, info.get("IORegistryEntryName") or "")
+def classify_disk(dev, icon=""):
+    """What is this thing, and should it be offered as a card? → (kind, why).
+
+    `dev` is the normalised shape hostos returns, so this one function answers the
+    question for macOS, Windows and Linux alike. All three expose the same underlying
+    signal -- the SCSI removable-medium bit -- under different names, which is exactly
+    why the gathering is per-platform and the judgement is not.
+    """
+    protocol = (dev.get("protocol") or "").strip()
+    media_removable = bool(dev.get("removable_media"))
+    name = (dev.get("name") or "").strip()
+    score = _hdd_score(name, dev.get("model") or "")
 
     # Strongest signals first, and both mean a real card slot.
-    if protocol == "Secure Digital":
-        return "sd", "in this Mac's card slot"
-    if icon == "SD.icns":
-        return "sd", "recognised by macOS as an SD card"
+    if protocol in SD_BUS_PROTOCOLS:
+        return "sd", "in this machine's card slot"
+    if icon == "SD.icns":                      # macOS names its own card slots
+        return "sd", "recognised by the system as an SD card"
 
     # A name that shouts hard disk overrides everything below. This is Rufus's
     # `IsHDD` doing its job: a USB enclosure can and does report removable media.
@@ -461,9 +336,14 @@ def classify_disk(info, icon=""):
     # it; USB disk enclosures do not. Etcher throws this away by or-ing it with
     # Ejectable, and that is the distinction the whole list depends on.
     if media_removable:
-        if score <= -10:
+        hint = _name_hint(name, dev.get("model") or "")
+        if hint == "reader":
             return "reader", "removable media in a card reader"
-        return "reader", "removable media — this is a card in a reader"
+        if hint == "flash":
+            return "flash", "a USB flash drive, not a card"
+        # The bit only says the medium can leave the device, which is equally true of a
+        # card in a reader and of a USB stick. Say that, rather than pick one.
+        return "removable", "removable media — a card reader or a USB drive"
 
     if score <= -10:
         return "flash", "removable USB storage"
@@ -502,10 +382,17 @@ def card_advice(size):
         head, detail = "Bursts one Blu-ray", (
             "Holds one Blu-ray at full speed and streams UHD. Fine if you feed it a "
             "disc at a time.")
-    else:
+    elif dvd >= 2:
         head, detail = "Streams everything, including UHD", (
             "Every disc still rips — the upload follows the rip rather than waiting "
             "for it. Batch-feeds %d DVDs; Blu-rays go one at a time." % dvd)
+    else:
+        # Less than one disc of staging. It still rips everything -- that is the whole
+        # of D11 -- but nothing is held back, so say that instead of printing
+        # "batch-feeds 0 DVDs", which is arithmetic nobody read.
+        head, detail = "Small, but it works", (
+            "Every disc still rips: the upload follows the rip rather than waiting for "
+            "it, so nothing has to fit. One disc at a time, with no room to queue.")
 
     note = ""
     if size >= 100_000_000_000:
@@ -532,7 +419,10 @@ def size_guide():
 
 
 def list_disks():
-    """External, physical media, classified. The boot drive can never appear.
+    """Candidate devices, classified. The startup disk can never appear.
+
+    hostos returns raw facts; every judgement below is made here, once, so macOS,
+    Windows and Linux cannot end up with three different answers to "is that a card".
 
     Everything that survives is returned -- including things that look like external
     drives, flagged as such. Filtering them out of the *card* list is the interface's
@@ -540,43 +430,28 @@ def list_disks():
     the user is sure they inserted is its own support problem.
     """
     try:
-        out = subprocess.run(
-            ["diskutil", "list", "-plist", "external", "physical"],
-            capture_output=True).stdout
-        disks = plistlib.loads(out).get("AllDisksAndPartitions", [])
+        devices = hostos.list_block_devices()
     except Exception:
         return []
-    icons = _media_icons()
     res = []
-    for d in disks:
-        ident = d.get("DeviceIdentifier")
-        if not ident:
+    for d in devices:
+        if d.get("virtual") or d.get("internal"):
             continue
-        try:
-            info = plistlib.loads(subprocess.run(
-                ["diskutil", "info", "-plist", ident], capture_output=True).stdout)
-        except Exception:
+        # Ejectable *or* removable media decides whether a device is a candidate at
+        # all; it is only the card-versus-drive question that needs them apart.
+        if not d.get("ejectable") and not d.get("removable_media"):
             continue
-        if info.get("VirtualOrPhysical") == "Virtual":
-            continue
-        if info.get("Internal", False) or info.get("SystemImage", False):
-            continue
-        # Ejectable *or* removable media still decides whether a device is a candidate
-        # at all -- it is only the card-versus-drive question that needs them apart.
-        if not info.get("Ejectable", False) and \
-                not _truthy_removable(info.get("RemovableMedia")):
-            continue
-        size = info.get("TotalSize", 0)
+        size = d.get("size") or 0
         if not (MIN_DISK_BYTES < size < MAX_DISK_BYTES):
             continue
-        kind, why = classify_disk(info, icons.get(ident, ""))
+        kind, why = classify_disk(d, d.get("icon", ""))
         label, is_card, rank = DISK_KINDS[kind]
         res.append({
-            "id": ident,
+            "id": d["id"],
             "size": size,
             "size_gb": round(size / 1e9, 1),
-            "name": (info.get("MediaName") or "?").strip(),
-            "protocol": info.get("BusProtocol", ""),
+            "name": (d.get("name") or "?").strip() or "?",
+            "protocol": d.get("protocol", ""),
             "kind": kind,
             "kind_label": label,
             "is_card": is_card,
