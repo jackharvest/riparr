@@ -56,7 +56,33 @@ CREATE TABLE IF NOT EXISTS discs (
   ripped_at   INTEGER,
   correction  TEXT
 );
+CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state);
 """
+
+# Columns added after the first release. SQLite cannot add a column that is already
+# there and has no IF NOT EXISTS for it, so this is applied by inspection rather than
+# by a version number -- an appliance whose upgrade path involves a migration table is
+# an appliance that eventually needs a DBA (D2).
+ADDED_COLUMNS = {
+    "jobs": [
+        ("queued_at", "INTEGER"),      # the queue orders by this, not by started_at
+        ("fingerprint", "TEXT"),       # links a job to the disc it came from
+        ("dest_path", "TEXT"),         # where it actually landed, for History
+        ("phase", "TEXT"),             # sub-state within `state`, for the progress line
+        ("updated_at", "INTEGER"),     # last progress write; stall detection and ETA
+        ("eta_seconds", "INTEGER"),
+        ("attempts", "INTEGER DEFAULT 0"),
+        ("titles", "TEXT"),            # JSON: candidate titles found on the disc
+        ("chosen_title", "INTEGER"),
+        ("question", "TEXT"),          # what Riparr needs a human to answer
+        ("local_path", "TEXT"),        # staging file, so a resumed job can find it
+        ("bytes_verified", "INTEGER DEFAULT 0"),
+    ],
+    "discs": [
+        ("title_index", "INTEGER"),    # the remembered title choice (R5: fix once, ever)
+        ("job_id", "INTEGER"),
+    ],
+}
 
 # Defaults are the shipped opinion. The settings reference in docs/guide mirrors these.
 DEFAULTS = {
@@ -80,6 +106,20 @@ DEFAULTS = {
     "keep_local_copy": True,
     "webhook_url": "",
     "watch_folder": "",
+    # Notifications. The box's whole promise is "walk away", so these are the only way
+    # it can reach someone who did.
+    "notify_events": ["done", "needs_you", "failed", "share_lost", "key_expiring"],
+    "ntfy_server": "https://ntfy.sh",
+    "ntfy_topic": "",
+    "ntfy_token": "",
+    "discord_webhook": "",
+    "smtp_host": "",
+    "smtp_port": 587,
+    "smtp_tls": True,
+    "smtp_username": "",
+    "smtp_password": "",
+    "smtp_from": "",
+    "smtp_to": "",
     "makemkv_key": "",
     "makemkv_eula_accepted_at": 0,
     "warn_key_days": 7,
@@ -103,6 +143,11 @@ def conn():
 def init():
     c = conn()
     c.executescript(SCHEMA)
+    for table, cols in ADDED_COLUMNS.items():
+        have = {r["name"] for r in c.execute("PRAGMA table_info(%s)" % table)}
+        for name, decl in cols:
+            if name not in have:
+                c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, name, decl))
     c.commit()
 
 
@@ -222,4 +267,104 @@ def list_discs(limit=200):
 def forget_disc(fingerprint):
     c = conn()
     c.execute("DELETE FROM discs WHERE fingerprint=?", (fingerprint,))
+    c.commit()
+
+
+# ── the job lifecycle ──
+#
+# Every state the engine can be in. `needs_input` is the one that did not exist before
+# the scenario walk-through: `on_unknown_disc` defaults to "ask", and until there was a
+# state meaning "waiting on a human" there was nowhere for that default to go.
+
+ACTIVE_STATES = ["queued", "identifying", "ripping", "transferring", "verifying",
+                 "needs_input"]
+FINAL_STATES = ["done", "failed", "cancelled"]
+
+# States a rip is physically mid-flight in. Anything found in one of these at boot was
+# interrupted by the cable coming out, which D4 says to expect rather than prevent.
+INTERRUPTIBLE = ["identifying", "ripping", "transferring", "verifying"]
+
+
+def get_job(job_id):
+    row = conn().execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def create_job(**fields):
+    fields.setdefault("state", "queued")
+    fields.setdefault("queued_at", int(time.time()))
+    fields.setdefault("updated_at", int(time.time()))
+    if isinstance(fields.get("titles"), (list, dict)):
+        fields["titles"] = json.dumps(fields["titles"])
+    keys = list(fields)
+    c = conn()
+    cur = c.execute("INSERT INTO jobs(%s) VALUES(%s)"
+                    % (",".join(keys), ",".join("?" * len(keys))),
+                    [fields[k] for k in keys])
+    c.commit()
+    return cur.lastrowid
+
+
+def update_job(job_id, **fields):
+    if not fields:
+        return
+    if isinstance(fields.get("titles"), (list, dict)):
+        fields["titles"] = json.dumps(fields["titles"])
+    fields["updated_at"] = int(time.time())
+    keys = list(fields)
+    c = conn()
+    c.execute("UPDATE jobs SET %s WHERE id=?" % ",".join("%s=?" % k for k in keys),
+              [fields[k] for k in keys] + [job_id])
+    c.commit()
+
+
+def next_queued_job():
+    """The oldest job waiting to start. One at a time -- there is one drive."""
+    row = conn().execute(
+        "SELECT * FROM jobs WHERE state='queued' ORDER BY id LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
+def active_job():
+    row = conn().execute(
+        "SELECT * FROM jobs WHERE state IN (%s) ORDER BY id LIMIT 1"
+        % ",".join("?" * len(INTERRUPTIBLE)), INTERRUPTIBLE).fetchone()
+    return dict(row) if row else None
+
+
+def job_for_fingerprint(fingerprint, states=None):
+    q = "SELECT * FROM jobs WHERE fingerprint=?"
+    args = [fingerprint]
+    if states:
+        q += " AND state IN (%s)" % ",".join("?" * len(states))
+        args += list(states)
+    q += " ORDER BY id DESC LIMIT 1"
+    row = conn().execute(q, args).fetchone()
+    return dict(row) if row else None
+
+
+def get_disc(fingerprint):
+    row = conn().execute("SELECT * FROM discs WHERE fingerprint=?",
+                         (fingerprint,)).fetchone()
+    return dict(row) if row else None
+
+
+def record_disc(fingerprint, **fields):
+    """Remember a disc by fingerprint, so it is refused next time and any correction
+    made to it survives (R5: get it right most of the time, easy to fix, never ask
+    twice)."""
+    c = conn()
+    existing = get_disc(fingerprint)
+    if existing:
+        if fields:
+            c.execute("UPDATE discs SET %s WHERE fingerprint=?"
+                      % ",".join("%s=?" % k for k in fields),
+                      list(fields.values()) + [fingerprint])
+            c.commit()
+        return
+    fields["fingerprint"] = fingerprint
+    keys = list(fields)
+    c.execute("INSERT INTO discs(%s) VALUES(%s)"
+              % (",".join(keys), ",".join("?" * len(keys))),
+              [fields[k] for k in keys])
     c.commit()

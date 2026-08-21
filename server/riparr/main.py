@@ -2,6 +2,7 @@
 The Riparr service. API-first: the web UI is just the first client of this API (D2),
 which is what makes Homepage widgets and multi-unit setups nearly free later.
 """
+import json
 import os
 import time
 
@@ -12,8 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from itsdangerous import URLSafeSerializer, BadSignature
 
-from . import (__version__, db, makemkv as MK, platform as P, shares as SH,
-               system as SY, updater)
+from . import (__version__, db, makemkv as MK, notify as NT, platform as P,
+               rip as RIP, shares as SH, system as SY, updater)
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
@@ -35,6 +36,7 @@ def _startup():
     _secret()
     SY.init()
     SY.start_scheduler()
+    RIP.start()
 
 
 # ─────────────────────────────── auth ───────────────────────────────
@@ -348,11 +350,26 @@ def autorip_set(body: AutoRip, user=Depends(require_user)):
 
 # ─────────────────────────────── settings ───────────────────────────────
 
+# Settings that are credentials. They go out to the browser as a placeholder and come
+# back the same way when untouched, which is what makes "save" on a page you did not
+# retype your SMTP password into not wipe it. `list_shares` established the precedent
+# of never returning a stored password at all; these follow it.
+SECRET_SETTINGS = ("smtp_password", "ntfy_token")
+SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
+
+
+def _redact(s):
+    s = dict(s)
+    s.pop("session_secret", None)
+    for k in SECRET_SETTINGS:
+        if s.get(k):
+            s[k] = SECRET_MASK
+    return s
+
+
 @app.get("/api/settings")
 def get_settings(user=Depends(require_user)):
-    s = db.all_settings()
-    s.pop("session_secret", None)
-    return s
+    return _redact(db.all_settings())
 
 
 @app.put("/api/settings")
@@ -362,8 +379,29 @@ async def put_settings(request: Request, user=Depends(require_user)):
         raise HTTPException(status_code=400, detail="Expected an object")
     body.pop("session_secret", None)
     for k, v in body.items():
+        if k in SECRET_SETTINGS and v == SECRET_MASK:
+            continue                      # unchanged; do not overwrite with the mask
         db.set(k, v)
-    return db.all_settings()
+    return _redact(db.all_settings())
+
+
+@app.get("/api/notifications")
+def notifications(user=Depends(require_user)):
+    return {"events": [{"key": k, "label": label, "default": on} for k, label, on in NT.EVENTS],
+            "enabled": NT.enabled_events(),
+            "configured": NT.configured()}
+
+
+class NotifyTest(BaseModel):
+    channel: str
+
+
+@app.post("/api/notifications/test")
+def notifications_test(body: NotifyTest, user=Depends(require_user)):
+    r = NT.test(body.channel)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error"))
+    return r
 
 
 # ─────────────────────────────── shares ───────────────────────────────
@@ -462,9 +500,96 @@ def wifi_connect(body: WifiConnect, user=Depends(require_user)):
 
 # ─────────────────────────────── queue ───────────────────────────────
 
+def _job_out(j):
+    """Shape a job row for the interface: parse the JSON column, drop the noise."""
+    j = dict(j)
+    if j.get("titles"):
+        try:
+            j["titles"] = json.loads(j["titles"])
+        except (ValueError, TypeError):
+            j["titles"] = []
+    return j
+
+
 @app.get("/api/queue")
 def queue(user=Depends(require_user)):
-    return {"jobs": db.list_jobs(states=["queued", "ripping", "transferring", "verifying"])}
+    return {"jobs": [_job_out(j) for j in db.list_jobs(states=db.ACTIVE_STATES)]}
+
+
+class RipRequest(BaseModel):
+    force: bool = False
+
+
+@app.post("/api/rip")
+def rip_now(body: RipRequest = RipRequest(), user=Depends(require_user)):
+    """Rip the disc that is in the tray, right now.
+
+    The product had no manual verb at all before this: the only way to rip anything
+    was to turn Auto Rip on and re-insert the disc. A page that correctly names the
+    disc it can see and offers no way to act on it is the worst kind of broken,
+    because everything on it looks like it is working.
+    """
+    job_id, why = RIP.enqueue(force=body.force)
+    if not job_id:
+        raise HTTPException(status_code=400, detail=why)
+    return {"ok": True, "job_id": job_id}
+
+
+@app.post("/api/queue/{job_id}/cancel")
+def rip_cancel(job_id: int, user=Depends(require_user)):
+    ok, message = RIP.cancel(job_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message}
+
+
+@app.post("/api/queue/{job_id}/retry")
+def rip_retry(job_id: int, user=Depends(require_user)):
+    ok, message = RIP.resume_transfer(job_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message}
+
+
+class DiscAnswer(BaseModel):
+    title_index: int = None
+    name: str = ""
+    skip: bool = False
+
+
+@app.post("/api/queue/{job_id}/answer")
+def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
+    """The other end of `on_unknown_disc: ask`, which has been the default setting
+    since the beginning with nothing anywhere that could do the asking."""
+    ok, message = RIP.answer(job_id, title_index=body.title_index,
+                             name=(body.name or "").strip(), skip=body.skip)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message}
+
+
+@app.post("/api/discs/{fingerprint}/rerip")
+def disc_rerip(fingerprint: str, user=Depends(require_user)):
+    """Re-rip a disc Riparr already knows.
+
+    `docs/guide/06-ripping-discs.md` has told people to "force a re-rip from the web
+    page if you meant it" for as long as the guide has existed, and until now there was
+    no such control -- only "Forget", which is a different thing wearing a name that
+    does not match the sentence the guide taught them.
+    """
+    drives = P.optical_drives()
+    d = next((x for x in drives if x.get("present")), None)
+    if not d:
+        raise HTTPException(status_code=400,
+                            detail="Put the disc back in the tray first.")
+    if RIP.fingerprint(d) != fingerprint:
+        raise HTTPException(
+            status_code=400,
+            detail="The disc in the tray isn't that one. Insert it and try again.")
+    job_id, why = RIP.enqueue(force=True)
+    if not job_id:
+        raise HTTPException(status_code=400, detail=why)
+    return {"ok": True, "job_id": job_id}
 
 
 @app.get("/api/history")
