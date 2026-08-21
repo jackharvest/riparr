@@ -59,8 +59,14 @@ function bars(rssi) {
 function renderDisks(disks) {
   const el = $("#disk-list");
   if (!disks.length) {
+    // Saying only "insert one" is unhelpful to the person who *has*: the filter is
+    // deliberately narrow, so the reasons a real card is missing are worth naming.
     el.innerHTML = `<div class="empty">No SD card found.<br>
-      Insert one and choose <b>Rescan</b>.</div>`;
+      Insert one and choose <b>Rescan</b>.
+      <div class="empty-why">Already inserted? Only external, removable cards between
+        4 and 70 GB are listed, so a reader that reports itself as a fixed disk, or a
+        card larger than 70 GB, won't appear. Try a different reader, or a
+        direct slot if your Mac has one.</div></div>`;
     $("#card-next").disabled = true;
     $("#card-hint").textContent = "";
     return;
@@ -216,6 +222,16 @@ async function buildReview() {
   $("#summary").innerHTML = rows
     .map(([k, v]) => `<div class="r"><div class="k">${k}</div><div class="v">${v}</div></div>`)
     .join("");
+  // Without an image there is nothing to write, and "Erase & write" was a button that
+  // could only ever produce an error dialog. Settings-only still works and is the
+  // useful thing to offer instead.
+  const haveImage = !!img;
+  $("#do-write").disabled = !haveImage;
+  $("#review-warn").innerHTML = haveImage ? "" :
+    "There's no <b>.img.xz</b> in your build folder, so there is nothing to write. "
+    + "You can still save the settings file and copy it onto a card that is already "
+    + "flashed.";
+
   const t = await riparr.preview_toml(c);
   $("#toml").textContent = t.toml;
 }
@@ -496,6 +512,8 @@ $("#wifi-pw").onkeydown = (e) => {
 };
 $("#wifi-next").onclick = () => show("name");
 
+let hostCheckToken = 0;
+
 async function refreshHostPreview() {
   const v = state.hostname, okName = validHost(v);
   const { ok, message } = await riparr.check_port(state.port);
@@ -503,6 +521,23 @@ async function refreshHostPreview() {
     ? `Reachable at <b>http://${esc(v)}.local:${esc(state.port)}</b>`
     : `<span style="color:var(--danger)">${
         !okName ? "Lowercase letters, digits and hyphens only" : esc(message)}</span>`;
+
+  // Debounced, and never blocking: a name already in use is a warning, not an error.
+  // Someone re-flashing the card for the box that is currently answering will see this
+  // and should absolutely be allowed to carry on.
+  const token = ++hostCheckToken;
+  $("#name-taken").textContent = "";
+  if (okName) {
+    let t;
+    try { t = await riparr.name_taken(v); } catch (e) { t = { taken: false }; }
+    if (token === hostCheckToken && t.taken) {
+      $("#name-taken").innerHTML =
+        `Something already answers to <b>${esc(t.name)}</b> at ${esc(t.address)}. `
+        + `If that is a different box, pick another name — otherwise they will fight `
+        + `over it and one will quietly become <b>${esc(v)}-2.local</b>. `
+        + `If it is the box you are re-flashing, carry on.`;
+    }
+  }
   $("#port-note").textContent = ok && message
     ? message
     : "9797 is Riparr's own port, chosen to sit alongside Radarr on 7878 and Sonarr on "

@@ -115,6 +115,7 @@
       <input id="port" value="9797" inputmode="numeric" spellcheck="false">
     </label>
     <div class="callout" id="host-preview">Reachable at <b>http://riparr.local:9797</b></div>
+    <p class="micro warn" id="name-taken"></p>
     <p class="micro" id="port-note">9797 is Riparr's own port, chosen to sit alongside
       Radarr on 7878 and Sonarr on 8989. Change it only if something already uses it.</p>
     <div class="divider"></div>
@@ -143,6 +144,7 @@
       <summary>Show the exact settings file</summary>
       <pre id="toml"></pre>
     </details>
+    <p class="micro warn" id="review-warn"></p>
     <label class="check" id="verify-row">
       <input type="checkbox" id="verify-card" checked>
       <span>Check the card after writing
@@ -192,7 +194,9 @@
   <section class="screen" data-screen="setup">
     <h1 id="setup-title">Setting up your Riparr</h1>
     <p class="lede" id="setup-lede">This takes about ten minutes. You can leave it —
-      it doesn't need you.</p>
+      it doesn't need you, and this Mac won't fall asleep partway.</p>
+    <p class="lede dim">Leave the lid open, though. Closing it sleeps the Mac whatever
+      any app asks for, and that drops the connection to the box.</p>
 
     <!-- Scrolls on its own so the bar, the percentage and Stop can never be pushed
          off the bottom of the window by a long task list or an open log. -->

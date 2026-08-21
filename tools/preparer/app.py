@@ -10,6 +10,7 @@ the bridge between JavaScript and Python.
 """
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,7 @@ class Bridge:
         self.setup_path = os.path.join(RUNDIR, "setup.json")
         self.finisher = None
         self.setup_thread = None
+        self.nosleep = NoSleep()
 
     # ── initial state ──
     def boot(self):
@@ -161,6 +163,7 @@ class Bridge:
         verify = bool(cfg.get("verify", True))
         mkv = os.path.join(self.assets, "makemkv")
         mkv = mkv if os.path.isdir(mkv) else ""
+        self.nosleep.hold("writing a card")
         core_publish(self.progress_path, phase="auth",
                      message="Waiting for your administrator password")
 
@@ -254,6 +257,7 @@ class Bridge:
              "known_hosts": os.path.join(self.assets, "known_hosts"),
              "repo": os.path.abspath(os.path.join(HERE, "..", ".."))},
             self.setup_path)
+        self.nosleep.hold("setting up the box")
         core_publish(self.setup_path, phase="running", message="Starting",
                      pct=0, steps=[], log=[])
         self.setup_thread = threading.Thread(target=self.finisher.run, daemon=True)
@@ -263,9 +267,26 @@ class Bridge:
     def setup_status(self):
         try:
             with open(self.setup_path) as f:
-                return json.load(f)
+                st = json.load(f)
         except Exception:
             return {"phase": "idle"}
+        if st.get("phase") in ("done", "error", "cancelled"):
+            self._release_if_idle()
+        return st
+
+    def name_taken(self, hostname):
+        """Is something already answering to this name on the network?
+
+        People build more than one of these -- concept.md says to assume it -- and two
+        boxes both called `riparr` means mDNS renames one to `riparr-2.local` behind
+        your back. Cheaper to say so while it is still a text field.
+        """
+        name = "%s.local" % (hostname or "").strip().lower()
+        try:
+            ip = socket.gethostbyname(name)
+        except Exception:
+            return {"taken": False}
+        return {"taken": True, "address": ip, "name": name}
 
     def cancel_setup(self):
         if self.finisher:
@@ -275,9 +296,16 @@ class Bridge:
     def write_status(self):
         try:
             with open(self.progress_path) as f:
-                return json.load(f)
+                st = json.load(f)
         except Exception:
             return {"phase": "idle"}
+        if st.get("phase") in ("done", "error", "cancelled"):
+            self._release_if_idle()
+        return st
+
+    def _release_if_idle(self):
+        if not self.busy_reason():
+            self.nosleep.release()
 
     def busy_reason(self):
         """Whether quitting right now would break something, and what to say about it.
@@ -507,6 +535,41 @@ class Shot(NSObject):
 
 
 TITLEBAR_H = 28.0
+
+
+class NoSleep:
+    """Hold the Mac awake while a card is being written or a box set up.
+
+    Both of these are long, unattended, and fail badly when interrupted: a display
+    sleep is harmless but a system sleep drops the SSH session mid-install and closes
+    the disk being written. `caffeinate -i` asserts only the idle-sleep assertion, so
+    the screen still dims and locks normally -- this prevents the machine going to
+    sleep, not the user's screensaver.
+
+    Closing the lid still sleeps regardless; nothing in userspace can prevent that, and
+    that limitation is what the setup screen's copy has to be honest about.
+    """
+
+    def __init__(self):
+        self.proc = None
+
+    def hold(self, why):
+        if self.proc and self.proc.poll() is None:
+            return
+        try:
+            self.proc = subprocess.Popen(
+                ["caffeinate", "-i", "-w", str(os.getpid())],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            self.proc = None
+
+    def release(self):
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.terminate()
+            except Exception:
+                pass
+        self.proc = None
 
 
 class UIDelegate(NSObject):

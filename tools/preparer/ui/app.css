@@ -236,6 +236,8 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
 .micro.warn { color: var(--warn); }
 #wifi-keychain-row { align-items: center; gap: 10px; margin-top: 2px; }
 #wifi-manual-block { margin-top: 10px; }
+.empty-why { margin-top: 10px; font-size: 11.5px; line-height: 1.5;
+             max-width: 46ch; margin-inline: auto; opacity: .8; }
 
 /* ── summary ────────────────────────────────────────────── */
 .summary {
@@ -449,7 +451,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 
 .micro.dim { margin-top: 15px; opacity: .75; }
-.lede.dim { opacity: .8; margin-top: -4px; }
+.lede.dim { opacity: .72; margin-top: 8px; font-size: 13px; }
 .micro.dim a { color: var(--text-2); }
 
 /* On the done screen, steps that already happened are stated in the past tense with
