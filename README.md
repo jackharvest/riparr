@@ -102,6 +102,7 @@ Installing from a local checkout works today.
 | [`docs/design/storage-sizing.md`](docs/design/storage-sizing.md) | What card size actually buys, all math shown |
 | [`docs/design/risks.md`](docs/design/risks.md) | Known risks + the validation plan that retires them |
 | [`docs/design/backlog.md`](docs/design/backlog.md) | Feature ideas, roughly prioritized |
+| [`docs/design/scenarios.md`](docs/design/scenarios.md) | Twenty-three layman scenarios walked against the code, and what they surfaced |
 | [`server/`](server/) | The appliance service — FastAPI + SQLite, *arr-style web UI |
 
 ---
