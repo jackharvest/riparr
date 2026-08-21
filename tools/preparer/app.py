@@ -19,8 +19,9 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import objc
-from AppKit import (NSApplication, NSWindow, NSApp, NSScreen, NSColor,
-                    NSBitmapImageRep,
+from AppKit import (NSApplication, NSWindow, NSApp, NSScreen, NSColor, NSView,
+                    NSAlert, NSTextField, NSAlertFirstButtonReturn,
+                    NSBitmapImageRep, NSViewWidthSizable, NSViewMinYMargin,
                     NSApplicationActivationPolicyRegular, NSBackingStoreBuffered,
                     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable,
@@ -82,6 +83,16 @@ class Bridge:
     def scan_wifi(self):
         nets, method = core.scan_networks()
         return {"networks": nets, "method": method}
+
+    def keychain_password(self, ssid):
+        """Fetch a Wi-Fi passphrase this Mac already knows.
+
+        Never called on its own -- only when the user presses the button offering it,
+        so the keychain dialog macOS raises is always in response to something they
+        just did.
+        """
+        pw, err = core.keychain_wifi_password(ssid)
+        return {"ok": bool(pw), "password": pw, "error": err}
 
     def refresh_disks(self):
         return {"disks": core.list_disks()}
@@ -268,6 +279,30 @@ class Bridge:
         except Exception:
             return {"phase": "idle"}
 
+    def busy_reason(self):
+        """Whether quitting right now would break something, and what to say about it.
+
+        Called from the app delegate, not from JavaScript.
+        """
+        phase = (self.write_status() or {}).get("phase")
+        if phase in ("write", "verify-card", "provision", "auth", "eject"):
+            return {
+                "title": "Your card is still being written.",
+                "body": ("Quitting now leaves it half-written, which means a card that "
+                         "boots into nothing and has to be prepared again from the "
+                         "start. Take the card out only after this finishes."),
+                "quit": "Quit and ruin the card",
+            }
+        if self.setup_thread and self.setup_thread.is_alive():
+            return {
+                "title": "Riparr is still being set up on the box.",
+                "body": ("Quitting stops it partway. The card is fine and the box is "
+                         "fine — you can open this app again and pick up from "
+                         "\u201cIt's plugged in\u201d."),
+                "quit": "Quit anyway",
+            }
+        return ""
+
 
 def core_publish(path, **kw):
     tmp = path + ".tmp"
@@ -339,6 +374,18 @@ class Handler(NSObject):
 # Sample state for --shot. Driving the real flow needs a card, a network and a board;
 # this paints the same DOM from fixed data so a screen can be looked at on demand.
 SHOTS = {
+    # A network chosen, so the password field and the keychain offer are both on
+    # screen -- the state that actually needs looking at.
+    "wifi": """
+      show('wifi');
+      renderNets([
+        {ssid:'Harvest House', bands:['2.4','5'], rssi:-43, secure:true, pi_ok:true, saved:true, seen:true},
+        {ssid:'Harvest House 5G', bands:['5'], rssi:-51, secure:true, pi_ok:true, saved:false, seen:true},
+        {ssid:'BTWiFi-with-FON', bands:['2.4'], rssi:-78, secure:false, pi_ok:true, saved:false, seen:true},
+        {ssid:'NEIGHBOUR-6E', bands:['6'], rssi:-60, secure:true, pi_ok:false, saved:false, seen:true}
+      ], 'live');
+      pickNet({ssid:'Harvest House', bands:['2.4','5'], rssi:-43, secure:true, pi_ok:true, saved:true});
+    """,
     "handoff": """
       show('handoff');
       document.querySelector('#handoff-skip').innerHTML =
@@ -377,6 +424,20 @@ SHOTS = {
     "done": """
       state.hostname = 'riparr'; state.port = 9797; state.elapsed = 571;
       show('done'); renderDone(true);
+    """,
+    # The message people are most likely to actually read, so it is worth being able
+    # to look at without failing a real setup.
+    "failed": """
+      show('failed');
+      document.querySelector('#fail-title').textContent =
+        "Couldn't find your Riparr on the network.";
+      document.querySelector('#fail-msg').textContent = '';
+      document.querySelector('#fail-detail').textContent =
+        "Checked riparr.local and swept this network for 300 seconds. In order of likelihood:\\n\\n" +
+        "1. The Wi-Fi password is wrong. Nothing before this point can check it, and the box cannot tell you: it boots perfectly and never joins. Write the card again, and use the keychain button on the Wi-Fi step.\\n" +
+        "2. The box is on a network this Mac can't see \\u2014 a guest network, or a band your router keeps on a separate subnet.\\n" +
+        "3. It is still starting. A first boot resizes the card and can take a few minutes; if it has been under five, wait and try again.\\n" +
+        "4. It has no power. The light on the board should be on.";
     """,
     "done-skipped": """
       state.hostname = 'riparr'; state.port = 9797;
@@ -445,9 +506,121 @@ class Shot(NSObject):
         NSApp().terminate_(None)
 
 
+TITLEBAR_H = 28.0
+
+
+class UIDelegate(NSObject):
+    """Native panels for `alert`, `confirm` and `prompt`.
+
+    A WKWebView with no UI delegate does not show these -- it silently does nothing and
+    hands JavaScript `undefined`/`null`. That is not a theoretical gap: "Enter a name
+    manually" was a dead button for the whole life of this tool, and it is the only way
+    to reach a hidden network *and* the fallback the empty state tells you to use when
+    the scan finds nothing.
+
+    Wired up so the failure cannot recur silently, even though the two places that
+    needed it now have proper in-page interfaces instead.
+    """
+
+    # PyObjC exports every method on an NSObject subclass as a selector, and a helper
+    # with keyword arguments is not one. Same reason tools/shot-web.py marks its own.
+    @objc.python_method
+    def _alert(self, message, style=1, buttons=("OK",)):
+        a = NSAlert.alloc().init()
+        a.setMessageText_("Riparr Preparer")
+        a.setInformativeText_(message or "")
+        a.setAlertStyle_(style)
+        for b in buttons:
+            a.addButtonWithTitle_(b)
+        return a
+
+    def webView_runJavaScriptAlertPanelWithMessage_initiatedByFrame_completionHandler_(
+            self, view, message, frame, handler):
+        self._alert(message).runModal()
+        handler()
+
+    def webView_runJavaScriptConfirmPanelWithMessage_initiatedByFrame_completionHandler_(
+            self, view, message, frame, handler):
+        r = self._alert(message, buttons=("OK", "Cancel")).runModal()
+        handler(r == NSAlertFirstButtonReturn)
+
+    def webView_runJavaScriptTextInputPanelWithPrompt_defaultText_initiatedByFrame_completionHandler_(
+            self, view, prompt, default_text, frame, handler):
+        a = self._alert(prompt, buttons=("OK", "Cancel"))
+        field = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 0, 260, 24))
+        field.setStringValue_(default_text or "")
+        a.setAccessoryView_(field)
+        a.window().setInitialFirstResponder_(field)
+        if a.runModal() == NSAlertFirstButtonReturn:
+            handler(field.stringValue())
+        else:
+            handler(None)
+
+
+class DragStrip(NSView):
+    """An invisible strip across the top of the window that drags it.
+
+    `NSWindowStyleMaskFullSizeContentView` runs the web view up under the titlebar,
+    which is what makes the window look like an app rather than a browser -- and which
+    also means the web view is sitting exactly where the titlebar's drag region used to
+    be. WKWebView consumes the mouse events, so the window could not be moved at all.
+    A window that cannot be dragged is not a small blemish: it is the first thing
+    anybody tries, and failing it makes everything after feel like a web page in a box.
+
+    `mouseDownCanMoveWindow` is the supported way to say "this area behaves like
+    titlebar". The strip lives inside the web view, which puts it *below* the traffic
+    lights in the window's own z-order, so close/minimise/zoom keep working even though
+    it spans the full width.
+    """
+
+    def mouseDownCanMoveWindow(self):
+        return True
+
+    def isOpaque(self):
+        return False
+
+    def mouseDown_(self, event):
+        if event.clickCount() == 2:
+            self.window().zoom_(None)
+        else:
+            objc.super(DragStrip, self).mouseDown_(event)
+
+    def acceptsFirstMouse_(self, event):
+        # Drag an inactive window without first clicking to focus it, the way Finder
+        # and every native window do.
+        return True
+
+
 class AppDelegate(NSObject):
+    """Quitting is guarded while the card is being written.
+
+    Closing the window used to quit immediately, with a root `dd` mid-flight on the
+    card. That produces a half-written card that boots into nothing, and the person who
+    did it has no idea that is what they did -- they closed a window. Every other app
+    that can lose your work asks first; this one has more to lose than most.
+
+    Setting up over SSH is interruptible and harmless by comparison, so it gets a
+    lighter question and the box is simply left as it is.
+    """
+
+    bridge = None
+
     def applicationShouldTerminateAfterLastWindowClosed_(self, app):
         return True
+
+    def applicationShouldTerminate_(self, app):
+        busy = self.bridge.busy_reason() if self.bridge else ""
+        if not busy:
+            return 1                                  # NSTerminateNow
+        a = NSAlert.alloc().init()
+        a.setMessageText_(busy["title"])
+        a.setInformativeText_(busy["body"])
+        a.setAlertStyle_(2)                           # NSAlertStyleCritical
+        a.addButtonWithTitle_("Keep going")
+        a.addButtonWithTitle_(busy["quit"])
+        if a.runModal() == NSAlertFirstButtonReturn:
+            return 0                                  # NSTerminateCancel
+        return 1
 
     def applicationWillTerminate_(self, note):
         import shutil
@@ -507,14 +680,28 @@ def main():
         pass
 
     bridge = Bridge(assets)
+    delegate.bridge = bridge
     handler = Handler.alloc().initWithBridge_webview_(bridge, webview)
     ucc.addScriptMessageHandler_name_(handler, "riparr")
+
+    ui_delegate = UIDelegate.alloc().init()
+    webview.setUIDelegate_(ui_delegate)
+    bridge.ui_delegate = ui_delegate            # keep it alive; PyObjC holds weakly
 
     index = os.path.join(UI, "index.html")
     webview.loadFileURL_allowingReadAccessToURL_(
         NSURL.fileURLWithPath_(index), NSURL.fileURLWithPath_(UI))
 
     win.setContentView_(webview)
+
+    # Above the web view in subview order, so it sees the click first. Pinned to the
+    # top and stretched on resize.
+    strip = DragStrip.alloc().initWithFrame_(
+        NSMakeRect(0, h - TITLEBAR_H, w, TITLEBAR_H))
+    strip.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
+    webview.addSubview_(strip)
+
+    win.setMovableByWindowBackground_(False)   # only the strip; not stray drags on a form
     win.makeKeyAndOrderFront_(None)
     if a.shot:
         shot = Shot.alloc().initWithWebview_screen_out_eval_(

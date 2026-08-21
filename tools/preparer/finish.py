@@ -278,9 +278,20 @@ class Finisher:
 
         raise StepFailed(
             "find", "Couldn't find your Riparr on the network.",
-            "Checked %s and swept the local network for %d seconds.\n"
-            "The board may still be starting up — a first boot resizes the card and "
-            "can take a few minutes. Check that it has power, then try again."
+            # Ordered by what actually goes wrong, which is not what the old message
+            # said. It led with "it may still be starting", so the one cause that is
+            # both most likely and unrecoverable-without-rewriting -- a mistyped Wi-Fi
+            # password -- went unmentioned, and people waited instead of re-writing.
+            "Checked %s and swept this network for %d seconds. In order of likelihood:\n"
+            "\n"
+            "1. The Wi-Fi password is wrong. Nothing before this point can check it, "
+            "and the box cannot tell you: it boots perfectly and never joins. Write "
+            "the card again, and use the keychain button on the Wi-Fi step.\n"
+            "2. The box is on a network this Mac can't see — a guest network, or a "
+            "band your router keeps on a separate subnet.\n"
+            "3. It is still starting. A first boot resizes the card and can take a few "
+            "minutes; if it has been under five, wait and try again.\n"
+            "4. It has no power. The light on the board should be on."
             % (name, TIMEOUTS["find"]))
 
     def _sweep(self):

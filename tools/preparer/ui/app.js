@@ -138,6 +138,11 @@ function pickNet(n) {
   $("#wifi-pw-block").classList.toggle("hidden", !needsPw);
   $("#wifi-pw-for").textContent = n.ssid;
   $("#wifi-pw").value = "";
+  $("#wifi-keychain-note").textContent = "";
+  $("#wifi-keychain-note").className = "micro";
+  // Offered only for a network macOS has actually saved. Showing it for one it has
+  // never seen would be a button that can only fail.
+  $("#wifi-keychain-row").classList.toggle("hidden", !(needsPw && n.saved));
   if (needsPw) $("#wifi-pw").focus();
   updateWifiNext();
   $("#wifi-hint").textContent = (!n.bands || !n.bands.length)
@@ -439,11 +444,51 @@ $("#rescan-disks").onclick = loadDisks;
 $("#card-next").onclick = () => { show("wifi"); loadWifi(); };
 
 $("#rescan-wifi").onclick = loadWifi;
+/* Manual entry is an inline field, not `prompt()`. A WKWebView without a UI delegate
+   silently returns null from prompt(), so this button did nothing whatsoever — and it
+   is both the only way to reach a hidden network and the thing the empty state tells
+   you to use when the scan finds nothing. app.py now has a delegate too, so the
+   failure cannot recur silently somewhere else. */
 $("#manual-wifi").onclick = () => {
-  const ssid = prompt("Network name (SSID)");
-  if (!ssid) return;
+  $("#wifi-manual-block").classList.remove("hidden");
+  $("#wifi-manual").value = "";
+  $("#wifi-manual").focus();
+};
+$("#wifi-manual-cancel").onclick = () => $("#wifi-manual-block").classList.add("hidden");
+$("#wifi-manual").onkeydown = (e) => { if (e.key === "Enter") $("#wifi-manual-ok").click(); };
+$("#wifi-manual-ok").onclick = () => {
+  const ssid = $("#wifi-manual").value.trim();
+  if (!ssid) { $("#wifi-manual").focus(); return; }
+  $("#wifi-manual-block").classList.add("hidden");
   $$("#wifi-list .item").forEach(n => n.classList.remove("sel"));
-  pickNet({ ssid, bands: [], rssi: null, secure: true, pi_ok: true, hidden: true });
+  pickNet({ ssid, bands: [], rssi: null, secure: true, pi_ok: true, hidden: true,
+            saved: true });
+};
+
+/* The most expensive mistake this tool allows is a mistyped Wi-Fi password: nothing
+   detects it, the card writes perfectly, the box boots perfectly and never appears —
+   and the only fix is to write the card again. The correct passphrase is usually
+   sitting in the keychain of the Mac running this. */
+$("#wifi-keychain").onclick = async () => {
+  const btn = $("#wifi-keychain"), note = $("#wifi-keychain-note");
+  if (!state.net) return;
+  btn.disabled = true;
+  note.className = "micro";
+  note.textContent = "Asking your keychain…";
+  let r;
+  try { r = await riparr.keychain_password(state.net.ssid); }
+  catch (e) { r = { ok: false, error: String(e) }; }
+  btn.disabled = false;
+  if (!r.ok) {
+    note.className = "micro warn";
+    note.textContent = r.error || "Couldn't get it.";
+    return;
+  }
+  $("#wifi-pw").value = r.password;
+  state.wifiPw = r.password;
+  note.className = "micro good";
+  note.textContent = "Filled in from this Mac's keychain.";
+  updateWifiNext();
 };
 $("#wifi-pw").oninput = (e) => { state.wifiPw = e.target.value; updateWifiNext(); };
 $("#wifi-pw").onkeydown = (e) => {

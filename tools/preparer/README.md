@@ -18,11 +18,21 @@ Electron, no bundled browser, and nothing to download.
 
 ## What it does that Raspberry Pi Imager doesn't
 
-**It knows the Pi Zero 2W is 2.4 GHz only.** A live CoreWLAN scan gives SSID, band and
-signal for every nearby network. 5 GHz networks are listed but **cannot be selected**,
-with the reason stated inline. This is the single most common cause of a box that never
-appears on the network, and the preparer makes it unrepresentable rather than merely
-documented.
+**It knows which bands the board can actually reach.** A live CoreWLAN scan gives SSID,
+band and signal for every nearby network, and anything the radio cannot join is listed
+greyed out with the reason inline rather than silently offered. The board is an Orange Pi
+Zero 2W — dual-band WiFi 5 — so 2.4 and 5 GHz are both offered and 5 GHz is preferred,
+because upload is the binding constraint in the streaming design. Only 6 GHz is refused.
+
+> Earlier versions of this file said the board was 2.4 GHz only and that 5 GHz could not
+> be selected. That was true while the hardware was believed to be a Raspberry Pi Zero
+> 2 W, whose radio genuinely is single-band. See `PI_BANDS` in `core.py`.
+
+**It can take the Wi-Fi password out of your keychain.** A mistyped passphrase is the
+most expensive mistake this tool allows: nothing detects it, the card writes perfectly,
+the box boots perfectly, and it never appears — and the only recovery is writing the card
+again. For any network macOS has saved, one button fills it in from the login keychain,
+with the OS asking permission in its own dialog.
 
 **It never writes a plaintext Wi-Fi password to the card.** The passphrase becomes a
 PBKDF2-HMAC-SHA1 PSK — the same derivation `wpa_passphrase(8)` performs — before anything

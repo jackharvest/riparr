@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Riparr Preparer</title>
+<link rel="preload" href="fonts/RussoOne-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -11,7 +12,7 @@
 
 <aside class="rail">
   <div class="brand">
-    <div class="mark">◉</div>
+    <img class="mark" src="img/riparr-mark.png" alt="">
     <div>
       <div class="brand-name">Riparr</div>
       <div class="brand-sub">Preparer</div>
@@ -54,20 +55,42 @@
   <!-- ── Wi-Fi ─────────────────────────────────────────────── -->
   <section class="screen" data-screen="wifi">
     <h1>Join a Wi-Fi network</h1>
-    <p class="lede">The box has dual-band WiFi. 5&nbsp;GHz is faster, which matters here &mdash;
-      uploading is the slowest part of a rip. Networks it cannot reach are
-      shown but can't be selected — this is the single most common reason a box never
-      appears on the network.</p>
+    <p class="lede">The box has dual-band Wi-Fi, so 5&nbsp;GHz is available and worth
+      taking &mdash; uploading is the slowest part of a rip. Anything the board's radio
+      can't reach (6&nbsp;GHz) is listed but greyed out.</p>
+    <p class="lede dim">Get the password right here. Nothing downstream can check it:
+      the card writes, the box boots, and it simply never appears on your network.
+      If this Mac already knows the network, take the password from it.</p>
     <div id="wifi-list" class="list scroll"></div>
     <div class="row-actions">
       <button class="ghost" id="rescan-wifi">Rescan</button>
       <button class="ghost" id="manual-wifi">Enter a name manually…</button>
     </div>
+
+    <!-- Inline, not a prompt(): a WKWebView with no UI delegate silently returns null
+         from prompt(), so this was a button that did nothing at all — and it is the
+         only route to a hidden network. -->
+    <div id="wifi-manual-block" class="hidden">
+      <label class="field">
+        <span>Network name (SSID)</span>
+        <input id="wifi-manual" autocomplete="off" spellcheck="false"
+               autocapitalize="off" placeholder="Exactly as it appears on your router">
+      </label>
+      <div class="row-actions">
+        <button class="primary" id="wifi-manual-ok">Use this network</button>
+        <button class="ghost" id="wifi-manual-cancel">Cancel</button>
+      </div>
+    </div>
+
     <div id="wifi-pw-block" class="hidden">
       <label class="field">
         <span>Password for <b id="wifi-pw-for"></b></span>
         <input type="password" id="wifi-pw" autocomplete="off" spellcheck="false">
       </label>
+      <div class="row-actions" id="wifi-keychain-row">
+        <button class="ghost" id="wifi-keychain">Use the password saved on this Mac</button>
+        <span class="micro" id="wifi-keychain-note"></span>
+      </div>
       <p class="micro">Converted to a PBKDF2 key before it is written. The passphrase
         itself never touches the card.</p>
     </div>

@@ -1,6 +1,15 @@
 /* Riparr Preparer — macOS-native visual language. System font, system accent,
    restrained motion. Nothing here should read as "a web page in a window". */
 
+/* The one exception to "system font": the wordmark, which is the same Russo One the
+   web interface uses. Two tools that carry the same name should set it the same way,
+   and this is the only place in either of them that is not the body face. */
+@font-face {
+  font-family: "Russo One";
+  src: url("fonts/RussoOne-Regular.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
 :root {
   --bg:            #f2f2f7;
   --rail:          rgba(246,246,248,.72);
@@ -68,14 +77,21 @@ body { display: grid; grid-template-columns: 208px 1fr; }
 }
 
 .brand { display: flex; gap: 10px; align-items: center; padding: 0 18px 22px; }
+/* The real disc mark, not a gradient square with a Unicode ring in it. Same asset the
+   web interface uses in its topbar, so the thing you flash the card with and the thing
+   you open afterwards are visibly one product. */
 .mark {
-  width: 30px; height: 30px; border-radius: 8px; flex: none;
-  background: linear-gradient(160deg, var(--accent), #7a3bff);
-  color: #fff; display: grid; place-items: center; font-size: 15px;
-  box-shadow: 0 2px 6px rgba(10,108,255,.35);
+  width: 30px; height: 30px; flex: none; display: block; border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0,0,0,.28);
 }
-.brand-name { font-weight: 600; font-size: 14px; letter-spacing: -.01em; }
-.brand-sub  { font-size: 11px; color: var(--text-2); }
+/* Russo One sets much heavier than the system face at the same size, so the wordmark
+   steps down and takes a little tracking to stop the double 'r' closing up -- the same
+   correction app.css makes in the web interface, for the same reason. */
+.brand-name {
+  font-family: "Russo One", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13.5px; font-weight: 400; letter-spacing: .045em; line-height: 1.15;
+}
+.brand-sub  { font-size: 11px; color: var(--text-2); margin-top: 1px; }
 
 .steps { list-style: none; padding: 0 10px; display: grid; gap: 1px; }
 .steps li {
@@ -216,6 +232,10 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
 .cred .k { color: var(--text-2); font-size: 12.5px; }
 .cred .v { font-size: 12.5px; user-select: text; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.micro.good { color: var(--good); }
+.micro.warn { color: var(--warn); }
+#wifi-keychain-row { align-items: center; gap: 10px; margin-top: 2px; }
+#wifi-manual-block { margin-top: 10px; }
 
 /* ── summary ────────────────────────────────────────────── */
 .summary {
@@ -315,11 +335,16 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 .next li { padding-left: 4px; }
 
+/* Set in the body face, not monospace. What goes in here is now mostly advice --
+   "in order of likelihood, 1..4" -- and prose set in SF Mono at 11px in a 130px box
+   reads as a stack trace, which is exactly the wrong signal to send somebody who has
+   just been told their box could not be found. Command output still lands here and is
+   still perfectly legible; it was never column-aligned. */
 .detail {
   margin-top: 14px; text-align: left; background: var(--card);
-  border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 11px; color: var(--text-2); max-height: 130px; overflow: auto;
+  border: 1px solid var(--line-soft); border-radius: 8px; padding: 12px 14px;
+  font: inherit; font-size: 12.5px; line-height: 1.55; color: var(--text-2);
+  max-height: 260px; overflow: auto;
   user-select: text; white-space: pre-wrap;
 }
 .detail:empty { display: none; }
@@ -424,6 +449,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 
 .micro.dim { margin-top: 15px; opacity: .75; }
+.lede.dim { opacity: .8; margin-top: -4px; }
 .micro.dim a { color: var(--text-2); }
 
 /* On the done screen, steps that already happened are stated in the past tense with

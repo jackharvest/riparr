@@ -161,15 +161,70 @@ def scan_system_profiler():
     return agg
 
 
+def wifi_device():
+    """The Wi-Fi interface's BSD name. Not always en0.
+
+    On a Mac with Thunderbolt Ethernet, or any machine where the ports enumerate
+    differently, en0 is the wired interface and the Wi-Fi questions asked of it come
+    back empty -- which reads as "you have no saved networks" rather than "we asked the
+    wrong device".
+    """
+    try:
+        out = subprocess.run(["networksetup", "-listallhardwareports"],
+                             capture_output=True, text=True, timeout=15).stdout
+        block = None
+        for line in out.splitlines():
+            line = line.strip()
+            if line.startswith("Hardware Port:"):
+                block = line.split(":", 1)[1].strip()
+            elif line.startswith("Device:") and block in ("Wi-Fi", "AirPort"):
+                return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return "en0"
+
+
 def saved_networks():
     """Preferred networks, unredacted, but with no band or signal information."""
     try:
         out = subprocess.run(
-            ["networksetup", "-listpreferredwirelessnetworks", "en0"],
+            ["networksetup", "-listpreferredwirelessnetworks", wifi_device()],
             capture_output=True, text=True, timeout=15).stdout
         return [l.strip() for l in out.splitlines()[1:] if l.strip()]
     except Exception:
         return []
+
+
+def keychain_wifi_password(ssid):
+    """The Wi-Fi passphrase this Mac already knows, from the login keychain.
+
+    A mistyped Wi-Fi password is the single most expensive mistake available in this
+    tool: nothing detects it, the card writes perfectly, the box boots perfectly, and
+    it never appears on the network -- and the only recovery is to write the card
+    again. Meanwhile the correct passphrase is, in the overwhelmingly common case,
+    sitting in the keychain of the machine running the Preparer.
+
+    macOS shows its own authorization dialog the first time. That prompt is a feature:
+    it is the OS asking on the user's behalf, in a dialog they recognise, and no
+    passphrase is read without their consent. Returns (password, error).
+    """
+    if not ssid:
+        return "", "no network chosen"
+    try:
+        p = subprocess.run(
+            ["security", "find-generic-password",
+             "-D", "AirPort network password", "-a", ssid, "-w"],
+            capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        return "", str(e)
+    if p.returncode == 0:
+        return p.stdout.rstrip("\n"), ""
+    err = (p.stderr or "").strip()
+    if "could not be found" in err or p.returncode == 44:
+        return "", "This Mac hasn't saved a password for that network."
+    if "User canceled" in err or "-128" in err:
+        return "", "Cancelled."
+    return "", err or "The keychain wouldn't give it up."
 
 
 def pi_can_join(net):
