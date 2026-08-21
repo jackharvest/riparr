@@ -91,6 +91,13 @@ python3 -m venv .venv
 Use [`tools/flasher/`](../flasher/README.md) instead. It takes `--ssid`, `--disk` and
 `--yes`, and shares this directory's `core.py`. It needs a TTY.
 
+## Scenarios
+
+[`docs/design/scenarios-preparer.md`](../../docs/design/scenarios-preparer.md) walks
+twenty-five things a person does between picking up a card and having a browser open on
+their box, with a verdict against the code for each. Four are still open; the largest by
+far is that there is no `.app` bundle.
+
 ## Status
 
 Verified end to end on macOS 26.6.1, Apple Silicon: all screens render, the live scan

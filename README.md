@@ -103,6 +103,7 @@ Installing from a local checkout works today.
 | [`docs/design/risks.md`](docs/design/risks.md) | Known risks + the validation plan that retires them |
 | [`docs/design/backlog.md`](docs/design/backlog.md) | Feature ideas, roughly prioritized |
 | [`docs/design/scenarios.md`](docs/design/scenarios.md) | Twenty-three layman scenarios walked against the code, and what they surfaced |
+| [`docs/design/scenarios-preparer.md`](docs/design/scenarios-preparer.md) | The same walk for the Mac Preparer app |
 | [`server/`](server/) | The appliance service — FastAPI + SQLite, *arr-style web UI |
 
 ---
