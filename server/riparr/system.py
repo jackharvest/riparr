@@ -356,6 +356,16 @@ def _task_key_check():
         return "No MakeMKV key registered"
     if days <= db.get("warn_key_days", 7):
         component("MakeMKV").warning("Key expires in %s day(s)", days)
+        # Notified rather than only logged: a lapsed key is the classic "came home
+        # after a month, ripped five discs, all five failed" -- and every warning
+        # Riparr had for it lived on a page nobody had open.
+        from . import notify
+        notify.send(
+            "key_expiring",
+            title="MakeMKV key expires in %d day%s" % (days, "" if days == 1 else "s"),
+            body=("Every rip fails the day it lapses. Settings \u2192 General fetches "
+                  "the current beta key in one click.") if days > 0 else
+                 "The key has expired. Rips will fail until it's replaced.")
     return "MakeMKV key: %s day(s) left" % days
 
 

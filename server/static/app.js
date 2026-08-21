@@ -979,17 +979,98 @@ settingsPages.ripping = (s) => `
         "Retains the rip until the space is needed, so a downstream problem is a re-copy rather than a re-rip.")}
   </div></div>${saveBar()}`;
 
-settingsPages.connect = (s) => `
+/* Connect — how Riparr reaches you, and how finished files reach everything else.
+   The notification half exists because a box whose entire promise is "walk away" had
+   no way to tell you to come back: an LED covers the person walking past it and
+   nothing covered the person at work. */
+settingsPages.connect = async (s) => {
+  const n = await api.get("/api/notifications");
+  const on = new Set(n.enabled || []);
+  const ch = n.configured || {};
+  return `
+  <div class="section"><h2>Tell me when</h2><div>
+    <p class="muted">Riparr sends these to every channel you set up below. Nothing is
+      sent anywhere until at least one is configured.</p>
+    <div class="notify-events">
+      ${n.events.map(e => `
+        <label class="switch"><input type="checkbox" data-set="notify_events" data-multi
+                value="${esc(e.key)}" ${on.has(e.key) ? "checked" : ""}>
+          <span class="track"></span><span class="lbl">${esc(e.label)}</span></label>`).join("")}
+    </div>
+  </div></div>
+
+  <div class="section"><h2>ntfy
+    <span class="grow"></span>${chanBadge(ch.ntfy)}</h2><div>
+    <p class="muted">The least work: pick a topic nobody else would guess, install the
+      ntfy app, subscribe to it. No account, no signup.</p>
+    <label class="f"><span>Topic</span>
+      <input data-set="ntfy_topic" value="${esc(s.ntfy_topic || "")}" placeholder="riparr-3f9a2b">
+      <span class="help">Anyone who knows the topic can read your notifications, so make
+        it unguessable rather than memorable.</span></label>
+    <label class="f"><span>Server</span>
+      <input data-set="ntfy_server" value="${esc(s.ntfy_server || "")}"></label>
+    <label class="f"><span>Access token</span>
+      <input data-set="ntfy_token" type="password" value="${esc(s.ntfy_token || "")}"
+             placeholder="only for a private server"></label>
+    ${testRow("ntfy")}
+  </div></div>
+
+  <div class="section"><h2>Discord
+    <span class="grow"></span>${chanBadge(ch.discord)}</h2><div>
+    <label class="f"><span>Webhook URL</span>
+      <input data-set="discord_webhook" value="${esc(s.discord_webhook || "")}"
+             placeholder="https://discord.com/api/webhooks/…">
+      <span class="help">Server Settings → Integrations → Webhooks → Copy Webhook URL.</span></label>
+    ${testRow("discord")}
+  </div></div>
+
+  <div class="section"><h2>Email
+    <span class="grow"></span>${chanBadge(ch.email)}</h2><div>
+    <div class="grid2">
+      <label class="f"><span>SMTP server</span>
+        <input data-set="smtp_host" value="${esc(s.smtp_host || "")}" placeholder="smtp.gmail.com"></label>
+      <label class="f"><span>Port</span>
+        <input data-set="smtp_port" type="number" value="${esc(String(s.smtp_port ?? 587))}"></label>
+      <label class="f"><span>Username</span>
+        <input data-set="smtp_username" value="${esc(s.smtp_username || "")}"></label>
+      <label class="f"><span>Password</span>
+        <input data-set="smtp_password" type="password" value="${esc(s.smtp_password || "")}"></label>
+      <label class="f"><span>From</span>
+        <input data-set="smtp_from" value="${esc(s.smtp_from || "")}" placeholder="riparr@example.com"></label>
+      <label class="f"><span>To</span>
+        <input data-set="smtp_to" value="${esc(s.smtp_to || "")}" placeholder="you@example.com"></label>
+    </div>
+    ${sw("smtp_tls", "Use STARTTLS", s.smtp_tls, "Leave on unless the port is 465, which is TLS from the start.")}
+    ${testRow("email")}
+  </div></div>
+
+  <div class="section"><h2>Webhook
+    <span class="grow"></span>${chanBadge(ch.webhook)}</h2><div>
+    <label class="f"><span>URL</span>
+      <input data-set="webhook_url" value="${esc(s.webhook_url)}" placeholder="https://…">
+      <span class="help">POSTs JSON — event, title, body — for Home Assistant, n8n or
+        anything else that speaks HTTP.</span></label>
+    ${testRow("webhook")}
+  </div></div>
+
   <div class="section"><h2>Handoff</h2><div>
     <p class="muted">Riparr does not transcode — a Pi Zero 2W would take days and the
       result would be poor. Hand finished files to a real machine instead.</p>
-    <label class="f" style="margin-top:14px"><span>Webhook on completion</span>
-      <input data-set="webhook_url" value="${esc(s.webhook_url)}" placeholder="https://…">
-      <span class="help">POSTs the file path and metadata once a rip is verified.</span></label>
-    <label class="f"><span>Watch folder</span>
+    <label class="f" style="margin-top:14px"><span>Watch folder</span>
       <input data-set="watch_folder" value="${esc(s.watch_folder)}" placeholder="/Media/_incoming">
       <span class="help">Write here instead, for Tdarr or Unmanic to pick up.</span></label>
   </div></div>${saveBar()}`;
+};
+
+const chanBadge = (ok) =>
+  `<span class="badge ${ok ? "ok" : ""}">${ok ? "configured" : "off"}</span>`;
+
+/* Save first, then send. A test button that tests the values already stored rather
+   than the ones on screen answers a question nobody asked. */
+function testRow(channel) {
+  return `<div class="btn-row"><button class="btn" data-test-notify="${channel}">
+    Save and send a test</button><span class="test-out" id="test-${channel}"></span></div>`;
+}
 
 settingsPages.network = async () => {
   const w = await api.get("/api/wifi");
@@ -1510,7 +1591,12 @@ function collectSettings() {
   const out = {};
   $$("[data-set]").forEach(el => {
     const k = el.dataset.set;
-    if (el.type === "checkbox") out[k] = el.checked;
+    // `data-multi` means several checkboxes share one key and collect into a list --
+    // the notification event switches, where each is a member rather than a boolean.
+    if (el.dataset.multi !== undefined) {
+      out[k] = out[k] || [];
+      if (el.checked) out[k].push(el.value);
+    } else if (el.type === "checkbox") out[k] = el.checked;
     else if (el.dataset.list !== undefined)
       out[k] = el.value.split(",").map(s => s.trim()).filter(Boolean);
     else if (el.type === "number") out[k] = Number(el.value);
@@ -1532,6 +1618,25 @@ function wireContent(section, sub) {
       toast(e.message, "bad");
     }
   };
+
+  $$("[data-test-notify]").forEach(b => b.onclick = async () => {
+    const channel = b.dataset.testNotify;
+    const out = $("#test-" + channel);
+    b.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Saving…";
+    try {
+      await api.put("/api/settings", collectSettings());
+      out.textContent = "Sending…";
+      const r = await api.post("/api/notifications/test", { channel });
+      out.className = "test-out ok";
+      out.textContent = r.message;
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    b.disabled = false;
+  });
 
   /* ── System: Tasks, Backup, Events, Log Files ── */
   $$("[data-task]").forEach(b => b.onclick = async () => {

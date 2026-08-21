@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 from email.message import EmailMessage
 
-from . import db, system as SY
+from . import db, platform as P, system as SY
 
 log = SY.component("Notifications")
 
@@ -63,7 +63,7 @@ def send(event, title="", body="", force=False):
     if not force and event not in enabled_events():
         return
     payload = {"event": event, "title": title, "body": body,
-               "hostname": db.get("hostname") or ""}
+               "hostname": P.hostname()}
     threading.Thread(target=_fanout, args=(event, title, body, payload),
                      name="riparr-notify", daemon=True).start()
 
