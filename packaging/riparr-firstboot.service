@@ -1,0 +1,28 @@
+[Unit]
+Description=Riparr first-boot provisioning from the boot partition
+Documentation=https://github.com/jackharvest/riparr
+DefaultDependencies=no
+# Everything this writes is consumed by units that start later, so it has to land before
+# the network comes up rather than alongside it. A box that joins Wi-Fi before its
+# wpa_supplicant config exists joins nothing.
+After=local-fs.target
+Before=network-pre.target wpa_supplicant@wlan0.service systemd-networkd.service
+Wants=network-pre.target
+# The stamp is written by the script; without this the unit runs on every boot and
+# rewrites config a user may since have changed by hand.
+ConditionPathExists=|/boot/riparr.conf
+ConditionPathExists=|/boot/firmware/riparr.conf
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/riparr-firstboot.sh
+# Provisioning failing must not stop the boot: a box that comes up on Ethernet-less
+# Wi-Fi it could not configure is still worth having at a console, and the journal now
+# persists so the reason survives.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target
