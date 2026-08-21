@@ -12,19 +12,37 @@ const state = {
   wifiPw: "",
   hostname: "riparr",
   port: 9797,
-  screen: "card",
+  screen: "welcome",
   poll: null,
   logLen: -1,        // so the first poll always paints the log
   setupUrl: null,
   elapsed: null,
+  route: "card",     // "card" = write then set up · "connect" = set up only
+  allowOther: false, // the user revealed and chose a device we classified as a drive
 };
 
-const ORDER = ["card", "wifi", "name", "review", "write", "setup"];
+// Two routes, two step lists. Someone who came in to set up a box that already has a
+// card should not be shown a card-writing checklist they are never going to do.
+const ROUTES = {
+  card:    [["card", "SD card"], ["wifi", "Wi-Fi"], ["name", "Name & account"],
+            ["review", "Review"], ["write", "Write"], ["setup", "Set up"]],
+  connect: [["connect", "Find the box"], ["setup", "Set up"]],
+};
+let ORDER = ROUTES.card.map(s => s[0]);
+
+function setRail(route) {
+  const el = $("#steps");
+  if (!route) { el.innerHTML = ""; ORDER = []; return; }   // welcome: no checklist yet
+  state.route = route;
+  ORDER = ROUTES[route].map(s => s[0]);
+  el.innerHTML = ROUTES[route].map(([id, label]) =>
+    `<li data-step="${id}"><span class="dot"></span>${esc(label)}</li>`).join("");
+}
 
 // Screens that are not themselves rail steps still have a place in the rail. Without
 // this, reaching the handoff or the finish line clears every tick the user just
 // earned, because indexOf returns -1 and nothing counts as behind it.
-const RAIL_AS = { handoff: "setup", failed: null, done: "__all__" };
+const RAIL_AS = { handoff: "setup", failed: null, done: "__all__", welcome: null };
 
 function show(name) {
   state.screen = name;
@@ -56,40 +74,110 @@ function bars(rssi) {
 }
 
 /* ── step 1: card ───────────────────────────────────────── */
+/* Two lists, not one filtered list. core.classify_disk decides which -- the SCSI
+   removable-medium bit, the IOKit media icon, and a Rufus-style score over the device
+   name. Cards go in the main list; anything that reads like an external drive goes
+   behind a reveal, because hiding it outright just produces someone who is certain
+   they inserted a card and cannot see it. */
+
+/* A 4 TB backup drive shown as "4000 GB" reads like a typo, and this list now
+   deliberately contains devices that large. */
+function capLabel(gb) {
+  return gb >= 1000 ? (gb / 1000).toFixed(gb % 1000 ? 1 : 0) + " TB" : gb + " GB";
+}
+
+function diskRow(d, i, other) {
+  const adv = d.advice || {};
+  const tag = other
+    ? `<span class="tag warn">${esc(d.kind_label)}</span>`
+    : (d.kind === "sd" ? `<span class="tag good">SD card</span>`
+                       : `<span class="tag">${esc(d.kind_label)}</span>`);
+  return `<div class="item" data-i="${i}" data-other="${other ? 1 : 0}">
+      <div class="grow">
+        <div class="title">${esc(d.name || "SD card")}${tag}</div>
+        <div class="sub">/dev/${esc(d.id)}${d.protocol ? " · " + esc(d.protocol) : ""}
+          · ${esc(d.why)}</div>
+      </div>
+      <div class="right">
+        <div class="cap">${capLabel(d.size_gb)}</div>
+        <div class="verdict">${esc(adv.headline || "")}</div>
+      </div>
+    </div>`;
+}
+
 function renderDisks(disks) {
+  disks = disks || [];
+  const cards = disks.filter(d => d.is_card);
+  const other = disks.filter(d => !d.is_card);
   const el = $("#disk-list");
-  if (!disks.length) {
-    // Saying only "insert one" is unhelpful to the person who *has*: the filter is
-    // deliberately narrow, so the reasons a real card is missing are worth naming.
+
+  if (!cards.length) {
+    // Saying only "insert one" is unhelpful to the person who *has*. Now that the list
+    // is classified rather than capped, the reasons are different from before -- and
+    // one of them is that their card is sitting in the other list.
     el.innerHTML = `<div class="empty">No SD card found.<br>
       Insert one and choose <b>Rescan</b>.
-      <div class="empty-why">Already inserted? Only external, removable cards between
-        4 and 70 GB are listed, so a reader that reports itself as a fixed disk, or a
-        card larger than 70 GB, won't appear. Try a different reader, or a
-        direct slot if your Mac has one.</div></div>`;
+      <div class="empty-why">Already inserted? ${other.length
+        ? `${other.length} removable ${other.length === 1 ? "disk was" : "disks were"}
+           found but ${other.length === 1 ? "did" : "did"} not identify
+           ${other.length === 1 ? "itself" : "themselves"} as
+           ${other.length === 1 ? "a card" : "cards"} — open
+           <b>Show other removable disks</b> below and check.`
+        : `Some readers report themselves as fixed disks rather than card readers. Try a
+           different reader, or a direct slot if your Mac has one.`}</div></div>`;
+  } else {
+    el.innerHTML = cards.map((d, i) => diskRow(d, i, false)).join("");
+  }
+
+  $("#other-disks-wrap").classList.toggle("hidden", !other.length);
+  $("#other-disks-sum").textContent = other.length === 1
+    ? "Show 1 other removable disk" : `Show ${other.length} other removable disks`;
+  $("#other-list").innerHTML = other.map((d, i) => diskRow(d, i, true)).join("");
+
+  const pick = (d, isOther) => {
+    $$("#disk-list .item, #other-list .item").forEach(n => n.classList.remove("sel"));
+    state.disk = d;
+    state.allowOther = isOther;
+    $("#card-next").disabled = false;
+    const adv = d.advice || {};
+    $("#card-hint").innerHTML = isOther
+      ? `<b class="warn">/dev/${esc(d.id)} is not a card.</b> Everything on it will be
+         erased. Make sure this is not a drive with your files on it.`
+      : `Everything on /dev/${esc(d.id)} will be erased.` +
+        (adv.detail ? ` <span class="dim">${esc(adv.detail)}</span>` : "");
+  };
+
+  // pick() clears .sel across both lists, so the highlight has to go on *after* it,
+  // not before -- otherwise the row is selected in state and unmarked on screen.
+  $$("#disk-list .item").forEach((node, i) => {
+    node.onclick = () => { pick(cards[i], false); node.classList.add("sel"); };
+  });
+  $$("#other-list .item").forEach((node, i) => {
+    node.onclick = () => { pick(other[i], true); node.classList.add("sel"); };
+  });
+
+  if (!cards.length) {
+    state.disk = null;
     $("#card-next").disabled = true;
     $("#card-hint").textContent = "";
-    return;
+  } else if (cards.length === 1) {
+    // Auto-select a single *card*. Never auto-select out of the other list: picking
+    // someone's backup drive for them is exactly the mistake this split prevents.
+    $("#disk-list .item").click();
   }
-  el.innerHTML = disks.map(d => `
-    <div class="item" data-id="${esc(d.id)}">
-      <div class="grow">
-        <div class="title">${esc(d.name || "SD card")}</div>
-        <div class="sub">/dev/${esc(d.id)}${d.protocol ? " · " + esc(d.protocol) : ""}</div>
-      </div>
-      <div class="right">${d.size_gb} GB</div>
-    </div>`).join("");
+}
 
-  el.querySelectorAll(".item").forEach(node => {
-    node.onclick = () => {
-      el.querySelectorAll(".item").forEach(n => n.classList.remove("sel"));
-      node.classList.add("sel");
-      state.disk = disks.find(d => d.id === node.dataset.id);
-      $("#card-next").disabled = false;
-      $("#card-hint").textContent = `Everything on /dev/${state.disk.id} will be erased.`;
-    };
-  });
-  if (disks.length === 1) el.querySelector(".item").click();
+function renderGuide(rows) {
+  if (!rows || !rows.length) return;
+  $("#guide-rows").innerHTML = rows.map(r => `
+    <div class="g-row">
+      <div class="g-size">${esc(r.label)}</div>
+      <div class="g-body">
+        <div class="g-head">${esc(r.headline)}</div>
+        <div class="g-detail">${esc(r.detail)}</div>
+      </div>
+      <div class="g-stage">${r.staging_gib} GiB<small>staging</small></div>
+    </div>`).join("");
 }
 
 async function loadDisks() {
@@ -192,6 +280,9 @@ function cfg() {
     country: state.boot.country,
     timezone: state.boot.timezone,
     verify: state.verify,
+    // Set only by choosing something out of "other removable disks". core.validate_disk
+    // refuses a non-card without it, so this cannot be reached by accident.
+    allow_other: state.allowOther,
   };
 }
 
@@ -199,8 +290,12 @@ async function buildReview() {
   const c = cfg();
   const img = state.boot.images[0];
   const rows = [
-    ["Card", state.disk
-      ? `${esc(state.disk.name)} · /dev/${esc(state.disk.id)} · ${state.disk.size_gb} GB`
+    [state.allowOther ? "Disk" : "Card", state.disk
+      ? `${esc(state.disk.name)} · /dev/${esc(state.disk.id)} · ${capLabel(state.disk.size_gb)}`
+        + (state.allowOther
+            ? ' <span class="tag warn">not identified as a card</span>'
+            : (state.disk.advice && state.disk.advice.headline
+                ? ` <span class="tag">${esc(state.disk.advice.headline)}</span>` : ""))
       : "—"],
     ["Image", img ? esc(img.name) : "missing"],
     ["Wi-Fi", esc(c.ssid) + (c.hidden ? " (hidden)" : "")],
@@ -399,9 +494,13 @@ function renderDone(installed) {
   } else {
     // The card is written but the box was never set up — the user skipped it.
     $("#done-title").textContent = "Your card is ready";
+    // This used to say "run this app again to finish", which was true only in the
+    // sense that the app would reopen -- there was no way back to the setup half from
+    // a fresh start. There is now, and it is worth naming so the promise is real.
     $("#done-lede").textContent =
-      "Riparr isn't installed on the box yet. Put the card in, power it on, and run "
-      + "this app again to finish — or do it yourself over SSH.";
+      "Riparr isn't installed on the box yet. Put the card in and power it on, then "
+      + "come back to this and choose \u201cSet up a box that already has a card\u201d "
+      + "\u2014 or do it yourself over SSH.";
     $("#done-steps").innerHTML = [
       "Slide the card into the box",
       "Plug in the single USB-C cable",
@@ -420,10 +519,67 @@ function renderDone(installed) {
   if (open) open.onclick = () => riparr_open(`http://${addr}`);
   const resume = $("#resume-setup");
   if (resume) resume.onclick = () => show("handoff");
-  $("#again").onclick = () => { state.disk = null; show("card"); loadDisks(); };
+  $("#again").onclick = () => {
+    state.disk = null; state.allowOther = false;
+    setRail(null); show("welcome");
+  };
 }
 
 function riparr_open(url) { riparr.open_url(url); }
+
+/* ── the setup half, entered on its own ─────────────────── */
+/* start_setup() only ever needed a hostname, a port and the SSH key sitting in the
+   build folder. None of those come from writing a card, so this route is a way in to
+   work that already existed rather than a second implementation of it. */
+
+function connectPreview() {
+  const h = ($("#connect-host").value || "").trim().toLowerCase() || "riparr";
+  const p = parseInt($("#connect-port").value, 10) || 9797;
+  $("#connect-preview").innerHTML = `Looking for <b>${esc(h)}.local</b>`;
+  const ok = validHost(h);
+  $("#connect-next").disabled = !ok || !state.boot.can_setup;
+  $("#connect-warn").innerHTML = state.boot.can_setup ? (ok ? "" :
+      "Names can use letters, numbers and hyphens only.")
+    : "The SSH key <b>riparr_key</b> is missing from your build folder, so there is no "
+      + "way to get into the box. Use the build folder that wrote the card, or prepare "
+      + "a card again.";
+  const ssh = state.boot.ssh_config
+    ? `ssh -F ${state.boot.ssh_config} root@${h}.local`
+    : `ssh -i ${state.boot.assets}/riparr_key root@${h}.local`;
+  $("#connect-ssh").textContent = ssh;
+  return { host: h, port: p, ok };
+}
+
+/* Cheap and worth doing: mDNS either answers or it does not, and knowing which before
+   committing to a ten-minute setup turns "it failed" into "it is not there yet". */
+async function connectProbe() {
+  const { host } = connectPreview();
+  $("#connect-found").textContent = "";
+  let r;
+  try { r = await riparr.name_taken(host); } catch (e) { return; }
+  $("#connect-found").className = "micro " + (r.taken ? "good" : "");
+  $("#connect-found").textContent = r.taken
+    ? `${host}.local is answering at ${r.address}.`
+    : `Nothing is answering to ${host}.local yet — that is normal if you have just `
+      + `plugged it in, and the sweep below will find it anyway.`;
+}
+
+async function startConnect() {
+  const { host, port, ok } = connectPreview();
+  if (!ok) return;
+  state.hostname = host;
+  state.port = port;
+  setRail("connect");
+  const r = await riparr.start_setup({ hostname: host, port: port });
+  if (!r.ok) {
+    $("#connect-warn").textContent = r.error || "Setup could not be started.";
+    return;
+  }
+  state.logLen = -1;
+  $("#setup-title").textContent = "Setting up your Riparr";
+  show("setup");
+  pollSetup();
+}
 
 /* ── updates ────────────────────────────────────────────── */
 async function checkUpdate() {
@@ -447,14 +603,36 @@ async function init() {
 
   state.port = state.boot.default_port || 9797;
   $("#port").value = state.port;
+  $("#connect-port").value = state.port;
   renderDisks(state.boot.disks);
+  renderGuide(state.boot.size_guide);
   if (state.boot.image_missing) {
     $("#card-hint").textContent =
       "No .img.xz found in the build folder — you can still save settings only.";
   }
-  show("card");
+
+  // The second route can only work with the private key in the build folder. Offer it
+  // greyed with the reason rather than letting someone walk into a dead end.
+  if (!state.boot.can_setup) {
+    $("#go-connect").disabled = true;
+    $("#welcome-note").innerHTML =
+      "Setting up an existing box needs the SSH key <b>riparr_key</b> from the build "
+      + "folder that wrote its card. It isn't in " + esc(state.boot.assets) + ".";
+  }
+  connectPreview();
+
+  setRail(null);
+  show("welcome");
   checkUpdate();
 }
+
+$("#go-card").onclick = () => { setRail("card"); show("card"); loadDisks(); };
+$("#go-connect").onclick = () => {
+  setRail("connect"); show("connect"); connectPreview(); connectProbe();
+};
+$("#connect-host").oninput = connectPreview;
+$("#connect-port").oninput = connectPreview;
+$("#connect-next").onclick = startConnect;
 
 $("#rescan-disks").onclick = loadDisks;
 $("#card-next").onclick = () => { show("wifi"); loadWifi(); };
@@ -613,9 +791,17 @@ $("#retry").onclick = () => {
   // A setup that failed leaves a perfectly good card in a running box. Sending the
   // user back to "choose a card and erase it" would be actively wrong, so retry means
   // "try the setup again" whenever that is what failed.
+  // The setup-only route first: there is no card in that story at all, so the handoff
+  // screen ("slide the card into the box") would be answering a question nobody asked.
+  if (state.route === "connect") { show("connect"); connectProbe(); return; }
   if (state.screen === "failed" && state.triedSetup) { show("handoff"); return; }
   show("card"); loadDisks();
 };
-$$("[data-back]").forEach(b => b.onclick = () => show(b.dataset.back));
+// Going back to the welcome screen unpicks the route as well as the screen, or the
+// rail keeps showing a checklist for a flow the user has just stepped out of.
+$$("[data-back]").forEach(b => b.onclick = () => {
+  if (b.dataset.back === "welcome") setRail(null);
+  show(b.dataset.back);
+});
 
 init();

@@ -44,9 +44,26 @@ against both IEEE 802.11i Annex H.4 reference vectors.
 the console — discoverable only after flashing and booting. The preparer uses passlib and
 refuses to run without it.
 
-**It refuses to write to the wrong disk.** Only external, removable, physical media
-between 4 GB and 70 GB is offered, and the chosen disk is re-validated immediately before
-writing. Your startup disk is never in the list.
+**It refuses to write to the wrong disk — by classifying it, not by capping its size.**
+There used to be a 4–70 GB filter here, and it was doing safety's job: the removability
+test underneath it was an *or* (`Ejectable or RemovableMedia`) that a USB SSD passes on
+the first term, so capacity was the only thing standing between the user and a photo
+backup drive. It also hid every card this project recommends — `storage-sizing.md` says
+128 or 256 GB for Blu-ray.
+
+`classify_disk()` now separates the two flags. `RemovableMedia` is the SCSI
+removable-medium bit — the *medium* leaves the *device*, which is what a card reader is —
+while `Ejectable` only says the whole device can be detached, which every USB disk
+claims. Add the bus protocol, the IOKit media icon macOS uses to draw an SD card, and a
+Rufus-style score over the device name, and cards separate from drives. Drives are shown
+behind **"Show other removable disks"** with the reason they were demoted, not hidden,
+and writing to one is refused unless it was revealed and picked deliberately. Your
+startup disk is never in the list at all. Prior art and the full rule: **D24**.
+
+**It tells you what a card size actually buys.** Under D11 every size rips every disc,
+4K included — what a bigger card buys is early eject and batch feeding. The panel on the
+card screen is computed by `core.size_guide()` from the same constants as the rest of the
+design, so it cannot drift away from `docs/design/storage-sizing.md`.
 
 **It verifies the settings file after writing it.** A FAT32 write returning success is not
 proof of a good file, and `custom.toml` is the difference between a box that joins your
@@ -94,7 +111,7 @@ Use [`tools/flasher/`](../flasher/README.md) instead. It takes `--ssid`, `--disk
 ## Scenarios
 
 [`docs/design/scenarios-preparer.md`](../../docs/design/scenarios-preparer.md) walks
-twenty-five things a person does between picking up a card and having a browser open on
+thirty-five things a person does between opening the app and having a browser open on
 their box, with a verdict against the code for each. Four are still open; the largest by
 far is that there is no `.app` bundle.
 
@@ -136,6 +153,13 @@ put in front of the user works from *their* machine. Those are different claims.
 No elevation and no password prompt — everything happens over SSH with the key the
 card already carries. That is the whole reason it can be automatic.
 
+**It does not need a card write to have happened.** `Finisher` takes a hostname, a port
+and the SSH key from the build folder — none of which come from writing a card. That was
+always true and was never reachable: until the welcome screen existed, the only route to
+setup was finishing a write in the same sitting, so anyone who closed the app after
+ejecting the card was stuck. **Set up a box that already has a card** on the welcome
+screen is the same code path entered on its own.
+
 Three ways in, one code path:
 
 ```sh
@@ -158,7 +182,8 @@ rest of the session, and a genuine mid-session substitution is still refused.
 ~/riparr-build/prepare --shot setup --eval "document.querySelectorAll('.task').length"
 ```
 
-Screens: `handoff`, `setup`, `done`, `done-skipped`.
+Screens: `welcome`, `card`, `card-other`, `connect`, `wifi`, `handoff`, `setup`, `done`,
+`done-skipped`, `failed`.
 
 Two things this had to work around, both of which look like bugs in the page and are
 not:

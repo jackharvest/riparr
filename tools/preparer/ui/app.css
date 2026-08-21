@@ -474,3 +474,101 @@ button:disabled { opacity: .4; cursor: not-allowed; }
    tight", and cost real time to find. */
 .track { flex: none; }
 .meta  { flex: none; }
+
+/* ── welcome ────────────────────────────────────────────── */
+/* The first thing anyone sees, and previously it was a disk picker. Centre the mark,
+   set the name in the wordmark face, and say what the thing is before asking for
+   anything. Scrolls on its own so a short window never clips the two choices. */
+.center-screen { padding: 46px 34px 26px; overflow-y: auto; }
+.center-screen::-webkit-scrollbar { width: 7px; }
+.center-screen::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+.hero { margin: auto; max-width: 520px; text-align: center; padding: 8px 0; }
+.hero-mark {
+  width: 84px; height: 84px; border-radius: 50%; display: block; margin: 0 auto 16px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.30);
+}
+/* Same face and the same tracking correction as the rail wordmark and the web
+   interface -- three places, one way of setting the name. */
+.hero-name {
+  font-family: "Russo One", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 34px; font-weight: 400; letter-spacing: .045em; line-height: 1.1;
+}
+.hero-sub {
+  font-size: 12px; color: var(--text-2); letter-spacing: .14em;
+  text-transform: uppercase; margin-top: 6px;
+}
+.hero-lede {
+  color: var(--text-2); font-size: 12.5px; margin: 16px auto 0; max-width: 46ch;
+  line-height: 1.6;
+}
+.hero-lede.dim { color: var(--text-3); margin-top: 10px; }
+
+.choices { display: grid; gap: 9px; margin-top: 26px; text-align: left; }
+.choice {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  background: var(--card); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: 13px 15px; box-shadow: var(--shadow);
+  color: var(--text); font: inherit;
+}
+.choice:hover:not(:disabled) { background: var(--card-hover); border-color: var(--accent); }
+.choice:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.choice-t { display: block; font-size: 13.5px; font-weight: 600; }
+.choice-d {
+  display: block; font-size: 11.5px; color: var(--text-2); margin-top: 3px;
+  line-height: 1.5;
+}
+
+/* ── card list: capacity plus what it buys ──────────────── */
+.item .right .cap { font-size: 12.5px; color: var(--text); font-weight: 550; }
+.item .right .verdict {
+  font-size: 10.5px; color: var(--text-3); margin-top: 1px;
+  max-width: 17ch; line-height: 1.35;
+}
+.hint .dim, .lede .dim { color: var(--text-3); }
+.hint .warn, b.warn { color: var(--warn); }
+
+#other-disks-wrap { margin-top: 12px; }
+#other-disks .list { margin-top: 8px; }
+#other-disks .item { border-color: color-mix(in srgb, var(--warn) 35%, var(--line-soft)); }
+
+/* ── size guide ─────────────────────────────────────────── */
+.reveal.guide { margin-top: 18px; }
+.guide-rows {
+  margin-top: 10px; background: var(--card); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: 2px 14px;
+}
+.g-row {
+  display: flex; align-items: baseline; gap: 14px; padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.g-row:last-child { border: 0; }
+.g-size { width: 58px; flex: none; font-size: 13px; font-weight: 600; }
+.g-body { flex: 1; min-width: 0; }
+.g-head { font-size: 12.5px; font-weight: 550; }
+.g-detail { font-size: 11.5px; color: var(--text-2); margin-top: 2px; line-height: 1.5; }
+.g-stage {
+  flex: none; text-align: right; font-size: 11.5px; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.g-stage small { display: block; font-size: 10px; color: var(--text-3); }
+
+/* ── connect ────────────────────────────────────────────── */
+#connect-ssh {
+  margin-top: 8px; background: var(--card); border: 1px solid var(--line-soft);
+  border-radius: 8px; padding: 10px 11px; user-select: text;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px; color: var(--text-2); overflow-x: auto;
+}
+#connect-manual { margin-top: 16px; }
+
+/* Same job as .setup-body, and for the same reason: the size guide is taller than the
+   window when it is open, and without this the footer -- Continue included -- is
+   pushed off the bottom entirely. */
+.screen-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin-right: -8px; padding-right: 8px;
+}
+.screen-body::-webkit-scrollbar { width: 7px; }
+.screen-body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.screen-body > .reveal:last-child { margin-bottom: 14px; }

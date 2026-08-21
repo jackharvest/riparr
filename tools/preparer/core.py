@@ -79,9 +79,35 @@ def build_conf(cfg):
 # the faster band directly raises how many discs an hour the box can clear.
 PI_BANDS = {"2.4", "5"}
 
-# Removable-media guard rails. A card outside this range is not an SD card we wrote.
+# Removable-media guard rails.
+#
+# There used to be a 70 GB ceiling here, and it was doing a job it should never have
+# been given: it was the only thing standing between the user and their photo backup
+# drive, because the removability test below it was an *or* -- `Ejectable or
+# RemovableMedia` -- which a USB SSD passes on the first term. Size was carrying the
+# safety.
+#
+# It also contradicted our own advice. `docs/design/storage-sizing.md` recommends 128
+# or 256 GB for anyone who feeds the box a stack of Blu-rays in an evening, and the
+# ceiling made every recommended card invisible. Rufus does not do this: it classifies
+# devices and hides the ones that look like hard disks behind a reveal (Alt+F), rather
+# than capping capacity. See `classify_disk`.
+#
+# So the floor stays -- below this nothing can hold the image -- and the ceiling is now
+# only a sanity bound on what could conceivably be a card.
 MIN_DISK_BYTES = 4_000_000_000
-MAX_DISK_BYTES = 70_000_000_000
+MAX_DISK_BYTES = 2_000_000_000_000
+
+# Fixed overhead written by the image before any staging exists: boot 0.5 GiB + rootfs
+# 8.0 GiB (D4). Everything in `card_advice` is derived from what is left after this.
+GIB = 1024 ** 3
+OVERHEAD_GIB = 8.5
+
+# Commercial disc sizes, real GiB rather than marketed GB
+# (docs/design/storage-sizing.md -- "Marketing capacity is a lie").
+DVD9_GIB = 7.9
+BD50_GIB = 46.6
+UHD100_GIB = 93.1
 
 
 # ───────────────────────────────── Wi-Fi ─────────────────────────────────
@@ -277,9 +303,207 @@ def derive_psk(ssid, passphrase):
 
 
 # ───────────────────────────────── Disks ─────────────────────────────────
+#
+# The problem this section solves: macOS will happily tell you a device is external,
+# physical and ejectable, and that describes both a 32 GB SD card in a reader and a
+# 4 TB photo archive. Getting that wrong destroys someone's data.
+#
+# What the other tools do:
+#
+#   Rufus classifies rather than caps. `IsHDD()` scores each device from four tables --
+#   manufacturer prefixes ("SEAGATE", "WDC" positive; "SANDISK", "LEXAR" negative),
+#   keywords ("SSD", "SATA" positive; "Flash", "SD-CARD" negative), and USB VID and
+#   VID:PID tables -- combines that with the bus type and the removable-media flag, and
+#   files the device as a flash drive, a card reader or a hard disk. Hard disks are
+#   *hidden, not excluded*: Alt+F reveals them for the person who really did mean the
+#   USB drive. Capacity never removes a device from the list.
+#
+#   balenaEtcher (drivelist, src/darwin/list.mm) reads DiskArbitration and derives
+#   `isSystem = internal && !removable`, `isCard` from the media's IOKit icon being
+#   `SD.icns`, and `isUSB`/`isSCSI` from the device protocol. Its own comment records
+#   the limit we inherit: since macOS 10.14.3 an external card reader reports
+#   `Removable.icns`, and so does an external drive, so the icon cannot separate those
+#   two. It then collapses the distinction anyway -- `isRemovable = removable ||
+#   ejectable` -- which is exactly the `or` that made the size cap load-bearing here.
+#
+# So: keep the two flags apart, score the name the way Rufus does, and rank rather than
+# exclude. `RemovableMedia` is the SCSI removable-medium bit -- the medium can leave the
+# device, which is what a card reader is. `Ejectable` only says the whole device can be
+# detached, which every USB disk claims.
+
+# Rufus-style name scoring, in miniature. Positive means hard disk, negative means card
+# or flash. Matched against the media name and the IORegistry entry name, upper-cased.
+_NAME_SCORES = (
+    # Reads as a hard disk or an SSD
+    ("SSD", 20), ("HDD", 20), ("SATA", 18), ("NVME", 20), ("SCSI", 15),
+    ("MY PASSPORT", 25), ("MY BOOK", 25), ("BACKUP PLUS", 25), ("EXPANSION", 20),
+    ("ELEMENTS", 20), ("SEAGATE", 14), ("WDC", 14), ("PORTABLE", 8), ("ARCHIVE", 10),
+    ("TIME MACHINE", 25), ("CRUCIAL", 10), ("RUGGED", 15), ("LACIE", 14),
+    # Reads as a card or a card reader
+    ("SDXC", -30), ("SDHC", -30), ("CARD READER", -30), ("CARDREADER", -30),
+    ("MULTI-CARD", -30), ("MULTICARD", -30), ("MMC", -20), ("MICROSD", -30),
+    ("SD CARD", -30), ("SD/MMC", -30), ("FLASH", -12), ("STORAGE DEVICE", -6),
+    ("MASS STORAGE", -6), ("ULTRA FIT", -12),
+)
+
+
+def _hdd_score(*names):
+    """Positive: this reads like a hard disk. Negative: like a card or flash."""
+    hay = " ".join(n.upper() for n in names if n)
+    score = 0
+    for needle, weight in _NAME_SCORES:
+        if needle in hay:
+            score += weight
+    # Bare "SD" as its own word, after the compound forms above have had their say.
+    if re.search(r"\bSD\b", hay):
+        score -= 15
+    return score
+
+
+def _media_icons():
+    """{bsd name: IOKit icon resource} -- the signal drivelist calls `isCard`.
+
+    `SD.icns` means the media is in a real card slot. Read from `ioreg` so this needs
+    no DiskArbitration binding: pyobjc-framework-DiskArbitration is not a dependency
+    and should not become one for a single dictionary lookup.
+    """
+    try:
+        out = subprocess.run(["ioreg", "-a", "-c", "IOMedia", "-r", "-l"],
+                             capture_output=True).stdout
+        root = plistlib.loads(out)
+    except Exception:
+        return {}
+    icons, stack = {}, [root]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, list):
+            stack.extend(node)
+            continue
+        if not isinstance(node, dict):
+            continue
+        bsd, icon = node.get("BSD Name"), node.get("IOMediaIcon")
+        if bsd and isinstance(icon, dict):
+            icons[bsd] = icon.get("IOBundleResourceFile", "")
+        stack.extend(node.get("IORegistryEntryChildren") or [])
+    return icons
+
+
+def _truthy_removable(value):
+    """`RemovableMedia` is a bool on current macOS and a string on older ones."""
+    if isinstance(value, str):
+        return value.strip().lower() == "removable"
+    return bool(value)
+
+
+# kind → (label, is it offered as a card, sort rank)
+DISK_KINDS = {
+    "sd":       ("SD card", True, 0),
+    "reader":   ("SD card", True, 1),
+    "flash":    ("USB flash drive", True, 2),
+    "disk":     ("External drive", False, 3),
+}
+
+
+def classify_disk(info, icon=""):
+    """What is this thing, and should it be offered as a card? → (kind, why)."""
+    protocol = (info.get("BusProtocol") or "").strip()
+    media_removable = _truthy_removable(info.get("RemovableMedia"))
+    name = (info.get("MediaName") or "").strip()
+    score = _hdd_score(name, info.get("IORegistryEntryName") or "")
+
+    # Strongest signals first, and both mean a real card slot.
+    if protocol == "Secure Digital":
+        return "sd", "in this Mac's card slot"
+    if icon == "SD.icns":
+        return "sd", "recognised by macOS as an SD card"
+
+    # A name that shouts hard disk overrides everything below. This is Rufus's
+    # `IsHDD` doing its job: a USB enclosure can and does report removable media.
+    if score >= 15:
+        return "disk", "the name reads as an external drive, not a card"
+
+    # The SCSI removable-medium bit: the medium leaves the device. Card readers set
+    # it; USB disk enclosures do not. Etcher throws this away by or-ing it with
+    # Ejectable, and that is the distinction the whole list depends on.
+    if media_removable:
+        if score <= -10:
+            return "reader", "removable media in a card reader"
+        return "reader", "removable media — this is a card in a reader"
+
+    if score <= -10:
+        return "flash", "removable USB storage"
+
+    # Ejectable, fixed media, nothing in the name either way. Could be a USB stick,
+    # could be an SSD. Say so rather than guess, and keep it out of the card list.
+    return "disk", "fixed media — this may be an external drive"
+
+
+def card_advice(size):
+    """What this card buys you, derived rather than tabulated.
+
+    The numbers come from docs/design/storage-sizing.md, and they are all consequences
+    of D11: staging is a buffer, not a requirement, so a small card is *slow to feed*,
+    never incapable. Nothing here should ever say a disc will not fit.
+    """
+    staging = size / GIB - OVERHEAD_GIB
+    if staging < 4:
+        return {"ok": False, "staging_gib": round(max(staging, 0), 1),
+                "headline": "Too small",
+                "detail": "The system alone needs 8.5 GiB, so this card has no room "
+                          "left to stage a rip into."}
+    bd = int(staging // BD50_GIB)
+    uhd = int(staging // UHD100_GIB)
+    dvd = int(staging // DVD9_GIB)
+
+    if bd >= 4:
+        head, detail = "Full batch feeding", (
+            "Bursts %d Blu-rays or %d UHD discs back to back. Load an evening's stack "
+            "and walk away." % (bd, uhd))
+    elif bd >= 2:
+        head, detail = "A comfortable Blu-ray evening", (
+            "Bursts %d Blu-rays back to back, streams UHD. The drive frees up in about "
+            "40 minutes a disc instead of three hours." % bd)
+    elif bd >= 1:
+        head, detail = "Bursts one Blu-ray", (
+            "Holds one Blu-ray at full speed and streams UHD. Fine if you feed it a "
+            "disc at a time.")
+    else:
+        head, detail = "Streams everything, including UHD", (
+            "Every disc still rips — the upload follows the rip rather than waiting "
+            "for it. Batch-feeds %d DVDs; Blu-rays go one at a time." % dvd)
+
+    note = ""
+    if size >= 100_000_000_000:
+        note = ("At this size, buy high-endurance (SanDisk Max Endurance, Samsung Pro "
+                "Endurance) rather than A2 — and not SD Express, which falls back to "
+                "legacy speed on this board for 3–4× the price.")
+    return {"ok": True, "staging_gib": round(staging, 1), "headline": head,
+            "detail": detail, "note": note, "bd50": bd, "uhd": uhd, "dvd9": dvd}
+
+
+def size_guide():
+    """The recommendation table, computed from the same constants as card_advice.
+
+    Written out rather than hard-coded in the interface so the advice on screen cannot
+    drift away from the maths in docs/design/storage-sizing.md.
+    """
+    rows = []
+    for gb in (32, 64, 128, 256):
+        a = card_advice(gb * 1_000_000_000)
+        rows.append({"label": "%d GB" % gb, "bytes": gb * 1_000_000_000,
+                     "staging_gib": a["staging_gib"], "headline": a["headline"],
+                     "detail": a["detail"]})
+    return rows
+
 
 def list_disks():
-    """External, removable, physical media only. The boot drive can never appear."""
+    """External, physical media, classified. The boot drive can never appear.
+
+    Everything that survives is returned -- including things that look like external
+    drives, flagged as such. Filtering them out of the *card* list is the interface's
+    job (it offers them behind a reveal, the way Rufus does), because a hidden device
+    the user is sure they inserted is its own support problem.
+    """
     try:
         out = subprocess.run(
             ["diskutil", "list", "-plist", "external", "physical"],
@@ -287,6 +511,7 @@ def list_disks():
         disks = plistlib.loads(out).get("AllDisksAndPartitions", [])
     except Exception:
         return []
+    icons = _media_icons()
     res = []
     for d in disks:
         ident = d.get("DeviceIdentifier")
@@ -299,27 +524,44 @@ def list_disks():
             continue
         if info.get("VirtualOrPhysical") == "Virtual":
             continue
-        if not info.get("Ejectable", False) and not info.get("RemovableMedia", False):
+        if info.get("Internal", False) or info.get("SystemImage", False):
             continue
-        if info.get("Internal", False):
+        # Ejectable *or* removable media still decides whether a device is a candidate
+        # at all -- it is only the card-versus-drive question that needs them apart.
+        if not info.get("Ejectable", False) and \
+                not _truthy_removable(info.get("RemovableMedia")):
             continue
         size = info.get("TotalSize", 0)
         if not (MIN_DISK_BYTES < size < MAX_DISK_BYTES):
             continue
+        kind, why = classify_disk(info, icons.get(ident, ""))
+        label, is_card, rank = DISK_KINDS[kind]
         res.append({
             "id": ident,
             "size": size,
             "size_gb": round(size / 1e9, 1),
             "name": (info.get("MediaName") or "?").strip(),
             "protocol": info.get("BusProtocol", ""),
+            "kind": kind,
+            "kind_label": label,
+            "is_card": is_card,
+            "why": why,
+            "advice": card_advice(size),
         })
+    res.sort(key=lambda d: (DISK_KINDS[d["kind"]][2], d["id"]))
     return res
 
 
-def validate_disk(ident):
-    """Re-check a disk immediately before writing. Never trust a cached list."""
+def validate_disk(ident, allow_any=False):
+    """Re-check a disk immediately before writing. Never trust a cached list.
+
+    `allow_any` is the user having deliberately revealed and chosen something we
+    classified as an external drive. Without it, a device that changed classification
+    between listing and writing -- or an identifier that arrived from somewhere other
+    than the list -- is refused.
+    """
     for d in list_disks():
-        if d["id"] == ident:
+        if d["id"] == ident and (allow_any or d["is_card"]):
             return d
     return None
 

@@ -78,6 +78,12 @@ class Bridge:
                            if os.path.exists(os.path.join(self.assets, "ssh_config"))
                            else None),
             "default_port": core.DEFAULT_PORT,
+            # The setup-only route needs the *private* key, not the public one that
+            # goes onto the card -- different file, different question. Without it
+            # "set up a box I already wrote a card for" can only fail, so the welcome
+            # screen needs to know before it offers the button.
+            "can_setup": os.path.exists(os.path.join(self.assets, "riparr_key")),
+            "size_guide": core.size_guide(),
             "timezone": core.host_timezone(),
             "country": os.environ.get("RIPARR_COUNTRY", "US"),
         }
@@ -141,7 +147,10 @@ class Bridge:
         })
 
     def start_write(self, cfg):
-        disk = core.validate_disk(cfg["disk"])
+        # allow_other is set only by the user revealing "other disks" and picking one
+        # there. Anything else, including a device that has re-classified itself since
+        # the list was drawn, is refused rather than written to.
+        disk = core.validate_disk(cfg["disk"], allow_any=bool(cfg.get("allow_other")))
         if not disk:
             return {"ok": False,
                     "error": "That card is no longer available. Reinsert it and rescan."}
@@ -402,10 +411,56 @@ class Handler(NSObject):
 # Sample state for --shot. Driving the real flow needs a card, a network and a board;
 # this paints the same DOM from fixed data so a screen can be looked at on demand.
 SHOTS = {
+    "welcome": "setRail(null); show('welcome');",
+    # One real card, one device we classified as a drive, and the size guide open --
+    # the three things that changed about this screen, all visible at once.
+    "card": """
+      setRail('card'); show('card');
+      renderGuide(%s);
+      renderDisks([
+        {id:'disk4', name:'SDXC Card', protocol:'Secure Digital', size_gb:128,
+         kind:'sd', kind_label:'SD card', is_card:true,
+         why:"in this Mac's card slot",
+         advice:{headline:'A comfortable Blu-ray evening',
+                 detail:'Bursts 2 Blu-rays back to back, streams UHD.'}},
+        {id:'disk6', name:'My Passport 25E2', protocol:'USB', size_gb:4000,
+         kind:'disk', kind_label:'External drive', is_card:false,
+         why:'the name reads as an external drive, not a card', advice:{}}
+      ]);
+      document.querySelector('#size-guide').open = true;
+    """ % json.dumps(core.size_guide()),
+    # The state the reveal exists for: no card recognised, but something removable is
+    # attached. Worth being able to look at, because it is the screen a person hits
+    # when their reader reports itself as a fixed disk.
+    "card-other": """
+      setRail('card'); show('card');
+      renderGuide(%s);
+      renderDisks([
+        {id:'disk6', name:'Samsung PSSD T7', protocol:'USB', size_gb:1000,
+         kind:'disk', kind_label:'External drive', is_card:false,
+         why:'the name reads as an external drive, not a card', advice:{}},
+        {id:'disk7', name:'USB 3.0 Device', protocol:'USB', size_gb:64,
+         kind:'disk', kind_label:'External drive', is_card:false,
+         why:'fixed media — this may be an external drive',
+         advice:{headline:'Bursts one Blu-ray'}}
+      ]);
+      document.querySelector('#other-disks').open = true;
+    """ % json.dumps(core.size_guide()),
+    "connect": """
+      state.boot = state.boot || {};
+      state.boot.can_setup = true;
+      state.boot.assets = '/Users/you/riparr-build';
+      state.boot.ssh_config = '/Users/you/riparr-build/ssh_config';
+      setRail('connect'); show('connect'); connectPreview();
+      document.querySelector('#connect-manual').open = true;
+      document.querySelector('#connect-found').className = 'micro good';
+      document.querySelector('#connect-found').textContent =
+        'riparr.local is answering at 192.168.3.143.';
+    """,
     # A network chosen, so the password field and the keychain offer are both on
     # screen -- the state that actually needs looking at.
     "wifi": """
-      show('wifi');
+      setRail('card'); show('wifi');
       renderNets([
         {ssid:'Harvest House', bands:['2.4','5'], rssi:-43, secure:true, pi_ok:true, saved:true, seen:true},
         {ssid:'Harvest House 5G', bands:['5'], rssi:-51, secure:true, pi_ok:true, saved:false, seen:true},
@@ -415,13 +470,13 @@ SHOTS = {
       pickNet({ssid:'Harvest House', bands:['2.4','5'], rssi:-43, secure:true, pi_ok:true, saved:true});
     """,
     "handoff": """
-      show('handoff');
+      setRail('card'); show('handoff');
       document.querySelector('#handoff-skip').innerHTML =
         '<a href="#">Skip — I\\'ll set it up myself</a>';
     """,
     "setup": """
       state.hostname = 'riparr'; state.port = 9797;
-      show('setup');
+      setRail('card'); show('setup');
       renderTasks([
         {id:'find',      title:'Finding your Riparr',   detail:'Looking for the box on your network', state:'done'},
         {id:'connect',   title:'Connecting',            detail:'Opening a secure connection', state:'done'},
@@ -451,12 +506,12 @@ SHOTS = {
     """,
     "done": """
       state.hostname = 'riparr'; state.port = 9797; state.elapsed = 571;
-      show('done'); renderDone(true);
+      setRail('card'); show('done'); renderDone(true);
     """,
     # The message people are most likely to actually read, so it is worth being able
     # to look at without failing a real setup.
     "failed": """
-      show('failed');
+      setRail('card'); show('failed');
       document.querySelector('#fail-title').textContent =
         "Couldn't find your Riparr on the network.";
       document.querySelector('#fail-msg').textContent = '';
@@ -470,7 +525,7 @@ SHOTS = {
     "done-skipped": """
       state.hostname = 'riparr'; state.port = 9797;
       state.boot = state.boot || {}; state.boot.ssh_config = null;
-      show('done'); renderDone(false);
+      setRail('card'); show('done'); renderDone(false);
     """,
 }
 

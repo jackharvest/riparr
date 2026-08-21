@@ -19,14 +19,11 @@
     </div>
   </div>
 
-  <ol class="steps" id="steps">
-    <li data-step="card"><span class="dot"></span>SD card</li>
-    <li data-step="wifi"><span class="dot"></span>Wi-Fi</li>
-    <li data-step="name"><span class="dot"></span>Name &amp; account</li>
-    <li data-step="review"><span class="dot"></span>Review</li>
-    <li data-step="write"><span class="dot"></span>Write</li>
-    <li class="phase2" data-step="setup"><span class="dot"></span>Set up</li>
-  </ol>
+  <!-- Built by app.js: there are two routes through this app now -- write a card and
+       set the box up, or set up a box whose card was written earlier -- and showing a
+       card-writing checklist to someone on the second route is a lie about what is
+       going to happen. setRail() swaps the list. -->
+  <ol class="steps" id="steps"></ol>
 
   <div class="rail-foot">
     <div id="update-slot"></div>
@@ -36,17 +33,87 @@
 
 <main class="pane">
 
+  <!-- ── Welcome ───────────────────────────────────────────── -->
+  <!-- The app used to open on "Choose your SD card", which assumes the reader already
+       knows what this is, that they need a card, and that a card is the first thing
+       that happens. None of that is true for the person opening it for the first
+       time. It is also the only honest place to put the second route in: someone who
+       wrote a card last night and closed the app had no way back to the setup half. -->
+  <section class="screen center-screen" data-screen="welcome">
+    <div class="hero">
+      <img class="hero-mark" src="img/riparr-mark.png" alt="">
+      <h1 class="hero-name">Riparr</h1>
+      <div class="hero-sub">Preparer</div>
+      <p class="hero-lede">Riparr is a disc ripper you feed and walk away from: put a
+        Blu-ray or DVD in the tray and the file lands on your library share, named,
+        checked and ready to play.</p>
+      <p class="hero-lede dim">This app builds one. It writes the software onto an SD
+        card, hands you the card, then finds the box on your network and installs
+        everything on it for you. You will not need a terminal at any point.</p>
+
+      <div class="choices">
+        <button class="choice" id="go-card">
+          <span class="choice-t">Prepare a new SD card</span>
+          <span class="choice-d">Write Riparr to a card, set your Wi-Fi and name, then
+            install it on the box. About fifteen minutes, most of it unattended.</span>
+        </button>
+        <button class="choice" id="go-connect">
+          <span class="choice-t">Set up a box that already has a card</span>
+          <span class="choice-d">Skip the card. Find a box that is already running and
+            install Riparr on it — for when the card was written earlier, or setup
+            stopped partway.</span>
+        </button>
+      </div>
+      <p class="micro" id="welcome-note"></p>
+    </div>
+  </section>
+
   <!-- ── SD card ───────────────────────────────────────────── -->
   <section class="screen" data-screen="card">
     <h1>Choose your SD card</h1>
-    <p class="lede">Only external, removable cards between 4 and 70&nbsp;GB are shown.
-      Your startup disk can never appear in this list.</p>
+    <p class="lede">Your startup disk can never appear here. Anything that looks like an
+      external drive rather than a card is kept out of the list below and shown
+      separately, so a backup disk cannot be picked by accident.</p>
+
+    <!-- Cards first, then anything we classified as a drive, behind a reveal. Rufus
+         does the same thing (Alt+F) and for the same reason: hiding a device outright
+         creates a person who is certain they inserted a card and cannot see it. -->
+    <div class="screen-body">
     <div id="disk-list" class="list"></div>
+    <div id="other-disks-wrap" class="hidden">
+      <details class="reveal" id="other-disks">
+        <summary id="other-disks-sum">Show other removable disks</summary>
+        <p class="micro warn">These did not identify themselves as cards. One of them
+          may be an external drive with your files on it. Writing to it erases it.</p>
+        <div id="other-list" class="list"></div>
+      </details>
+    </div>
+
     <div class="row-actions">
       <button class="ghost" id="rescan-disks">Rescan</button>
     </div>
-    <div class="spacer"></div>
+
+    <!-- What size to buy, and why. The numbers are computed by core.size_guide() from
+         the same constants as everything else, so this panel cannot drift away from
+         docs/design/storage-sizing.md. -->
+    <details class="reveal guide" id="size-guide">
+      <summary>What size card should I use?</summary>
+      <p class="micro">Under adaptive streaming, the upload follows the rip rather than
+        waiting for it, so <b>every card size rips every disc — 4K included</b>. Size
+        does not decide what fits. It decides how long the drive stays busy, and
+        therefore whether you can load a stack of discs and leave.</p>
+      <div class="guide-rows" id="guide-rows"></div>
+      <p class="micro">Buy for how you feed it, not for what you rip. One disc at a time
+        whenever you think of it &rarr; 32&nbsp;GB is genuinely fine. Six discs in an
+        evening &rarr; 128 or 256&nbsp;GB. At Blu-ray sizes buy <b>high-endurance</b>
+        (SanDisk Max Endurance, Samsung Pro Endurance) rather than A2 — this is a
+        write-amplification machine — and <b>not SD&nbsp;Express</b>, which falls back
+        to legacy speed on this board and costs three to four times as much.</p>
+    </details>
+    </div>
+
     <footer class="bar">
+      <button class="ghost" data-back="welcome">Back</button>
       <div class="hint" id="card-hint"></div>
       <button class="primary" id="card-next" disabled>Continue</button>
     </footer>
@@ -188,6 +255,52 @@
       </div>
       <p class="micro dim" id="handoff-skip"></p>
     </div>
+  </section>
+
+  <!-- ── Connect: the setup half, entered on its own ───────── -->
+  <!-- Everything after the card was previously reachable only by finishing a write in
+       the same sitting. finish.py never needed that -- it takes a hostname, a port and
+       the SSH key from the build folder, none of which come from the write -- so this
+       screen is a route to work that already existed, not new work. -->
+  <section class="screen" data-screen="connect">
+    <h1>Set up a box that's already running</h1>
+    <p class="lede">Use this when the card was written earlier and the app was closed,
+      or when setup stopped partway and you want to pick it back up. The box needs to be
+      powered on and on your Wi-Fi — everything from there is automatic.</p>
+
+    <label class="field">
+      <span>What did you name it?</span>
+      <input id="connect-host" value="riparr" spellcheck="false" autocapitalize="off">
+    </label>
+    <label class="field">
+      <span>Port</span>
+      <input id="connect-port" value="9797" inputmode="numeric" spellcheck="false">
+    </label>
+    <div class="callout" id="connect-preview">Looking for <b>riparr.local</b></div>
+    <p class="micro" id="connect-found"></p>
+
+    <p class="micro">If the name doesn't answer, this sweeps your network and offers the
+      SSH key to every machine listening on port&nbsp;22. Only your box accepts it, so
+      nothing else on the network is touched.</p>
+
+    <!-- The escape hatch, which used to be reachable only by skipping setup after a
+         write. It is the same key and the same host either way. -->
+    <details class="reveal" id="connect-manual">
+      <summary>I'd rather do it myself over SSH</summary>
+      <p class="micro">The card carries this key already. Nothing else is needed to get
+        in — there is no password step.</p>
+      <pre id="connect-ssh"></pre>
+      <p class="micro">Then run <b>tools/bootstrap.sh</b> and <b>tools/install.sh</b>
+        from a copy of the repository on the box.</p>
+    </details>
+
+    <p class="micro warn" id="connect-warn"></p>
+    <div class="spacer"></div>
+    <footer class="bar">
+      <button class="ghost" data-back="welcome">Back</button>
+      <div class="hint" id="connect-hint"></div>
+      <button class="primary" id="connect-next">Find it and set it up</button>
+    </footer>
   </section>
 
   <!-- ── Set up: the second half ───────────────────────────── -->

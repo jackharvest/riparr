@@ -23,8 +23,15 @@ touches the FAT32 partition.
 `$6$` and *silently returns a DES hash* when asked for one — producing a card you cannot
 log into at the console. The wizard uses passlib and refuses to run without it.
 
-**It refuses to write to the wrong disk.** Only external, removable, physical media
-between 4 GB and 70 GB is offered. Your boot drive is never in the list.
+**It refuses to write to the wrong disk.** The list comes from `core.list_disks()`, which
+classifies each device rather than filtering on capacity — the bus protocol, the SCSI
+removable-medium bit, the IOKit media icon and a Rufus-style score over the device name
+(**D24**). Only things that identify as cards are offered in the menu; anything that reads
+like an external drive is named with its reason and reachable only by passing `--disk`
+deliberately. Your boot drive is never in the list at all.
+
+> This script used to keep its own copy of `list_disks`, with a hard 4–70 GB filter, while
+> the README opposite claimed it delegated. It delegates now.
 
 ## It needs a real terminal
 

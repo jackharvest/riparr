@@ -5,7 +5,7 @@ Riparr Flasher — prepares an SD card for a Riparr appliance.
 Scans for nearby Wi-Fi, filters to what a Pi Zero 2W can actually join,
 provisions hostname/user/SSH/Wi-Fi via custom.toml, and writes the image.
 """
-import os, re, sys, json, time, hashlib, plistlib, subprocess, argparse
+import os, re, sys, json, time, hashlib, subprocess, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "preparer"))
 import core          # single source of truth for PSK, $6$ hashing and the TOML schema
@@ -171,51 +171,49 @@ def choose_wifi(a=None):
 
 # ─────────────────────────────── Disks ───────────────────────────────
 
-def list_disks():
-    out = subprocess.run(["diskutil", "list", "-plist", "external", "physical"],
-                         capture_output=True).stdout
-    try: disks = plistlib.loads(out).get("AllDisksAndPartitions", [])
-    except Exception: return []
-    res = []
-    for d in disks:
-        ident = d.get("DeviceIdentifier")
-        info = plistlib.loads(subprocess.run(["diskutil", "info", "-plist", ident],
-                                             capture_output=True).stdout)
-        if info.get("VirtualOrPhysical") == "Virtual": continue
-        if not info.get("Ejectable", False) and not info.get("RemovableMedia", False): continue
-        res.append({
-            "id": ident,
-            "size": info.get("TotalSize", 0),
-            "name": info.get("MediaName", "?").strip(),
-            "internal": info.get("Internal", False),
-        })
-    return res
-
 def choose_disk(preset=None):
+    """Delegates to core.list_disks — this used to keep its own copy with a 4-70 GB
+    filter, which the README claimed did not exist and which D24 has since replaced
+    with real classification. A second copy of the guard that decides whose disk gets
+    erased is exactly the drift core.py exists to prevent."""
     step(1, STEPS, "SD card")
     with Spinner("Looking for removable drives…"):
-        disks = list_disks()
-    disks = [d for d in disks if 4e9 < d["size"] < 7e10 and not d["internal"]]
-    if not disks:
-        err("No removable card found between 4 GB and 70 GB.")
+        disks = core.list_disks()
+    cards = [d for d in disks if d["is_card"]]
+    other = [d for d in disks if not d["is_card"]]
+    if not cards and not other:
+        err("No removable card found.")
         note("Insert the SD card and run this again.")
         sys.exit(1)
     if preset:
+        # --disk is a deliberate act, so it may name something we classified as a
+        # drive -- but say which one it was, because that is the expensive mistake.
         for d in disks:
-            if d["id"] == preset: 
-                ok(f"Using /dev/{d['id']}"); return d
+            if d["id"] == preset:
+                if not d["is_card"]:
+                    warn(f"/dev/{d['id']} is not a card: {d['why']}.")
+                    note("Everything on it will be erased.")
+                ok(f"Using /dev/{d['id']}")
+                return d
         err(f"{preset} is not an eligible removable disk."); sys.exit(1)
-    ok(f"Found {len(disks)} removable drive(s)")
-    note("Only external, removable drives between 4 GB and 70 GB are listed.")
+    if not cards:
+        err("No SD card found.")
+        note(f"{len(other)} removable disk(s) were found but did not identify "
+             "themselves as cards. Pass --disk to use one anyway.")
+        for d in other:
+            note(f"  /dev/{d['id']}  {d['size_gb']} GB  {d['name']} — {d['why']}")
+        sys.exit(1)
+    ok(f"Found {len(cards)} card(s)")
+    note("Devices that look like external drives are not listed; --disk selects one.")
     print()
     def render_disk(d, sel):
         name = "/dev/" + d["id"]
         if sel: name = BOLD + name + RESET
         size = "%.1f GB" % (d["size"] / 1e9)
         return pad(name, 16) + pad(size, 12) + GRY + d["name"] + RESET
-    i = menu(disks, render_disk, footer="↑↓ move · enter select · esc quit")
+    i = menu(cards, render_disk, footer="↑↓ move · enter select · esc quit")
     if i is None: sys.exit(1)
-    return disks[i]
+    return cards[i]
 
 # ──────────────────────────── Provisioning ────────────────────────────
 
