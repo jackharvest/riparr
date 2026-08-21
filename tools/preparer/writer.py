@@ -231,7 +231,10 @@ def run(args):
     publish(st, phase="write", written=0, total=total, rate=0, eta=0,
             message="Writing the operating system")
 
-    xz = subprocess.Popen(["xz", "-dc", args.image], stdout=subprocess.PIPE,
+    # Absolute path, handed down by app.py. `xz` is Homebrew-only and this process
+    # is root under sudo -- neither of which is guaranteed to have /opt/homebrew on
+    # PATH. app.py refuses the write before elevating if it cannot find one at all.
+    xz = subprocess.Popen([args.xz, "-dc", args.image], stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE)
     dd = subprocess.Popen(["dd", "of=%s" % rdev, "ibs=1m", "obs=4m"],
                           stdin=subprocess.PIPE,
@@ -529,6 +532,8 @@ def main():
     ap.add_argument("--progress", required=True)
     ap.add_argument("--total", type=int, default=0)
     ap.add_argument("--sha256", default="", help="expected image checksum")
+    ap.add_argument("--xz", default="xz",
+                    help="absolute path to xz(1); see core.find_xz")
     ap.add_argument("--conf", default="", help="riparr.conf to place on the boot partition")
     ap.add_argument("--makemkv", default="",
                     help="directory of MakeMKV tarballs to copy onto the boot partition")

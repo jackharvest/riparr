@@ -112,6 +112,10 @@ class Bridge:
     def preview_toml(self, cfg):
         return {"toml": self._toml(cfg), "conf": core.build_conf(cfg)}
 
+    def check_tools(self, image=None):
+        """Tools this write needs that are not installed. See core.missing_tools."""
+        return {"missing": core.missing_tools(image)}
+
     def check_port(self, port):
         ok, message = core.check_port(port)
         return {"ok": ok, "message": message}
@@ -159,6 +163,22 @@ class Bridge:
         if not image or not os.path.exists(image):
             return {"ok": False, "error": "The operating system image is missing."}
 
+        # Before the password dialog, and before anything is unmounted. Finding this
+        # out afterwards costs the user an admin password and an ejected card, and
+        # arrives as "The write stopped unexpectedly" plus an errno.
+        missing = core.missing_tools(image)
+        if missing:
+            return {
+                "ok": False,
+                "error": "Riparr needs %s, which %s not installed on this Mac."
+                         % (" and ".join(m["tool"] for m in missing),
+                            "is" if len(missing) == 1 else "are"),
+                "detail": "\n\n".join(
+                    "%s — %s\n    %s" % (m["tool"], m["why"], m["fix"])
+                    for m in missing)
+                + "\n\nNothing has been written and your card is untouched.",
+            }
+
         toml_path = os.path.join(RUNDIR, "custom.toml")
         with open(toml_path, "w") as f:
             f.write(self._toml(cfg))
@@ -202,10 +222,11 @@ class Bridge:
         script = os.path.join(RUNDIR, "write.sh")
         with open(script, "w") as f:
             f.write("#!/bin/sh\nexec %s %s --image %s --dev %s --toml %s "
-                    "--progress %s --total %d --sha256 %s%s\n" % (
+                    "--progress %s --total %d --sha256 %s --xz %s%s\n" % (
                         _q(sys.executable), _q(os.path.join(HERE, "writer.py")),
                         _q(image), _q(dev), _q(toml_path),
                         _q(self.progress_path), total, _q(sha),
+                        _q(core.find_xz() or "xz"),
                         (" --verify" if verify else "")
                         + ((" --makemkv " + _q(mkv)) if mkv else "")
                         + ((" --conf " + _q(conf)) if conf else "")))

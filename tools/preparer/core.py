@@ -15,6 +15,7 @@ import os
 import plistlib
 import re
 import secrets
+import shutil
 import string
 import subprocess
 import urllib.error
@@ -680,10 +681,104 @@ def find_images(assets):
     return out
 
 
+# ─────────────────────── External tools we shell out to ───────────────────────
+#
+# Two of them do not ship with macOS, and neither is on a stock PATH:
+#
+#   xz        Homebrew only. macOS has liblzma (bsdtar links it) but no xz(1).
+#   debugfs   e2fsprogs, Homebrew only, and keg-only so it is not linked onto PATH.
+#             Needed only for single-partition ext4 images -- Armbian, which is what
+#             this project actually writes -- because macOS cannot mount ext4.
+#
+# These worked for a year purely because the app is launched from a shell and inherits
+# a developer's PATH. `launchctl getenv PATH` is empty, so a Finder-launched .app gets
+# the launchd default -- /usr/bin:/bin:/usr/sbin:/sbin -- and both disappear. That is
+# the very next thing on the backlog (scenario A1), so resolve by absolute path now.
+
+XZ_CANDIDATES = [
+    "/opt/homebrew/bin/xz",          # Homebrew, Apple Silicon
+    "/usr/local/bin/xz",             # Homebrew, Intel
+    "/opt/local/bin/xz",             # MacPorts
+    "/usr/bin/xz",                   # if a future macOS ever ships it
+]
+
+
+def find_tool(name, candidates):
+    """Absolute path first, PATH second. PATH is not there under launchd."""
+    for p in candidates:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return p
+    return shutil.which(name)
+
+
+def find_xz():
+    return find_tool("xz", XZ_CANDIDATES)
+
+
+def image_layout(path):
+    """Does this image need debugfs? Read its MBR without expanding it.
+
+    Decompresses the first sector with the *stdlib* lzma module rather than xz(1),
+    which is the point: this has to work on a machine that does not have xz, because
+    the whole reason we are here is to tell that person so.
+    """
+    try:
+        import lzma
+        with lzma.open(path, "rb") as f:
+            mbr = f.read(512)
+    except Exception:
+        return "unknown"
+    if len(mbr) < 512:
+        return "unknown"
+    types = [mbr[0x1BE + 16 * i + 4] for i in range(4)]
+    first = next((t for t in types if t), 0)
+    if first in (0x0b, 0x0c):
+        return "fat-boot"            # Raspberry Pi style: provisioned by copying a file
+    if first == 0x83:
+        return "ext4-root"           # Armbian style: provisioned through debugfs
+    return "unknown"
+
+
+def missing_tools(image=None):
+    """Everything this write will shell out to that is not installed.
+
+    Checked *before* the authorization dialog. Discovering a missing tool afterwards
+    means the user has already typed an admin password and the card has already been
+    unmounted, and the failure arrives as "The write stopped unexpectedly" with an
+    errno -- which names neither the cause nor the fix.
+    """
+    out = []
+    if not find_xz():
+        out.append({
+            "tool": "xz",
+            "why": "needed to expand the operating system image",
+            "fix": "brew install xz",
+        })
+    # Only ask for debugfs when the image actually needs it. Warning about a tool this
+    # particular write will never run is its own kind of wrong.
+    if image and image_layout(image) in ("ext4-root", "unknown"):
+        try:
+            import armbian
+            have = armbian.find_debugfs()
+        except Exception:
+            have = None
+        if not have:
+            out.append({
+                "tool": "debugfs",
+                "why": "needed to write settings into the card's Linux partition, "
+                       "which macOS cannot mount",
+                "fix": "brew install e2fsprogs",
+            })
+    return out
+
+
 def uncompressed_size(path):
     """Read the real expanded size out of the xz index, for an honest progress bar."""
     try:
-        out = subprocess.run(["xz", "--robot", "--list", path],
+        xz = find_xz()
+        if not xz:
+            return 0
+        out = subprocess.run([xz, "--robot", "--list", path],
                              capture_output=True, text=True).stdout
         for line in out.splitlines():
             f = line.split("\t")

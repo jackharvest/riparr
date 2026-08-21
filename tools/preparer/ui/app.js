@@ -327,6 +327,23 @@ async function buildReview() {
     + "You can still save the settings file and copy it onto a card that is already "
     + "flashed.";
 
+  // Named here as well as refused in start_write, because the useful moment is before
+  // somebody commits to the red button -- and it is a two-minute fix they can go and do.
+  if (haveImage) {
+    let tools = { missing: [] };
+    try { tools = await riparr.check_tools(img.path); } catch (e) { /* non-fatal */ }
+    if (tools.missing && tools.missing.length) {
+      $("#do-write").disabled = true;
+      $("#review-warn").innerHTML =
+        "This Mac is missing " + tools.missing.map(m => `<b>${esc(m.tool)}</b>`).join(" and ")
+        + ", which " + (tools.missing.length === 1 ? "is" : "are") + " needed to write a "
+        + "card — neither ships with macOS. Install "
+        + (tools.missing.length === 1 ? "it" : "them") + ", then choose Rescan on the "
+        + "SD card step:<br>"
+        + tools.missing.map(m => `<span class="ssh-line">${esc(m.fix)}</span>`).join(" ");
+    }
+  }
+
   const t = await riparr.preview_toml(c);
   $("#toml").textContent = t.toml;
 }
@@ -754,7 +771,7 @@ $("#do-write").onclick = async () => {
   if (!r.ok) {
     $("#fail-title").textContent = "Can't start";
     $("#fail-msg").textContent = r.error;
-    $("#fail-detail").textContent = "";
+    $("#fail-detail").textContent = r.detail || "";
     show("failed");
     return;
   }

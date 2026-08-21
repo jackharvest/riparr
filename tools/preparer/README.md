@@ -115,6 +115,52 @@ thirty-five things a person does between opening the app and having a browser op
 their box, with a verdict against the code for each. Four are still open; the largest by
 far is that there is no `.app` bundle.
 
+## Platform
+
+**This is a macOS application, and always has been.** It is not portable and nothing in
+it is written to be: the window is `NSWindow` + `WKWebView` through PyObjC, the Wi-Fi
+scan is CoreWLAN, disks come from `diskutil` and `ioreg`, elevation is `sudo -A` driven
+by an `osascript` dialog, and the card is written with `dd` to `/dev/rdiskN`. The
+appliance is Linux and the web interface is a browser, so **the Preparer is the only
+component with an operating system in it** — which also makes it the only thing standing
+between a non-Mac owner and a working Riparr.
+
+| | |
+|---|---|
+| **Runs on** | macOS only |
+| **Floor** | macOS 13 Ventura — set by CSS `color-mix()` (WebKit 16.2) in `ui/app.css`. macOS 12 works only with a current Safari, since WKWebView uses the system WebKit. **Derived from feature availability, not tested** — this has only ever run on macOS 26. |
+| **Architecture** | Intel and Apple Silicon. Both Homebrew prefixes are searched; no arch-specific paths. |
+| **Python** | 3.9, which is what macOS ships. Every module compiles under it, so no user-installed Python is needed. |
+| **Verified on** | macOS 26.6.1, Apple Silicon |
+
+### Two tools macOS does not ship
+
+`xz` and `debugfs` (e2fsprogs) are both **Homebrew-only**, and e2fsprogs is keg-only so it
+is not even linked onto `PATH`.
+
+They worked for a year because the app is launched from a shell and inherits a
+developer's `PATH`. `launchctl getenv PATH` is empty, so a Finder-launched `.app` gets the
+launchd default — `/usr/bin:/bin:/usr/sbin:/sbin` — and **both disappear.** Bundling this
+as an `.app`, which is the largest item on the backlog, would have broken card writing on
+the machine it was developed on.
+
+Both are now resolved by absolute path (`core.find_xz`, `armbian.find_debugfs`) with
+`PATH` as a fallback rather than the mechanism, and `core.missing_tools()` refuses the
+write **before** the authorization dialog with the reason and the command that fixes it.
+Previously a missing `xz` surfaced as *"The write stopped unexpectedly"* plus an errno,
+after the user had typed an admin password and the card had been unmounted.
+
+`core.image_layout()` decides whether a given image needs `debugfs` at all by reading its
+MBR through the **stdlib `lzma` module** — deliberately not through `xz(1)`, because the
+machine being diagnosed is the one that does not have it.
+
+> **`xz(1)` is removable.** Python's `lzma` is in the standard library and links the same
+> liblzma that macOS already ships in libarchive. Both uses — `xz -dc` in the write
+> pipeline and `xz --robot --list` for the progress total — have stdlib equivalents. That
+> would delete one of the two Homebrew dependencies outright. Not done here: it is
+> surgery on the one code path that erases somebody's card, and it deserves its own
+> change with its own testing.
+
 ## Status
 
 Verified end to end on macOS 26.6.1, Apple Silicon: all screens render, the live scan
