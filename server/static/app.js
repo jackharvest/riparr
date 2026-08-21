@@ -612,26 +612,114 @@ views.queue = async () => {
   const { jobs } = await api.get("/api/queue");
   const drives = state.status.drives || [];
   const ar = await api.get("/api/autorip");
+  const busy = jobs.some(j => j.state !== "needs_input");
+  const loaded = drives.find(d => d.present);
   return `
     ${head("Queue", "Ripping and uploading happen as one overlapping operation.",
            `<button class="tool" id="t-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
-            <button class="tool" id="t-eject" ${drives.length ? "" : "disabled"}>
+            <button class="tool" id="t-eject" ${drives.length && !busy ? "" : "disabled"}>
               <span class="ti">${icon("eject")}</span>Eject</button>`)}
     ${autoRipPanel(ar)}
     <div class="card">
-      ${jobs.length ? `<table>
-        <thead><tr><th>Title</th><th>Mode</th><th>Rip</th><th>Upload</th><th>State</th></tr></thead>
-        <tbody>${jobs.map(j => `<tr>
-          <td>${esc(j.title || j.disc_label || "Unknown disc")}</td>
-          <td><span class="badge ${j.mode === "burst" ? "burst" : ""}">${esc(j.mode || "\u2014")}</span></td>
-          <td style="width:150px"><div class="bar"><i style="width:${pct(j.bytes_ripped, j.bytes_total)}%"></i></div></td>
-          <td style="width:150px"><div class="bar dual"><i class="sent" style="width:${pct(j.bytes_sent, j.bytes_total)}%"></i></div></td>
-          <td><span class="badge">${esc(j.state)}</span></td>
-        </tr>`).join("")}</tbody></table>
+      ${jobs.length ? `${jobs.map(jobRow).join("")}
         ${trayStrip(drives, state.status.optical)}`
-      : tray(drives, state.status.optical)}
+      : tray(drives, state.status.optical, loaded && !busy)}
     </div>`;
 };
+
+/* ── a job in flight ──
+   A table row cannot hold a question, and `needs_input` has to be able to ask one, so
+   a job is a block rather than a `<tr>`. That also buys room for the phase line, which
+   is the difference between a bar that is moving and a box that has hung -- the
+   distinction that decides whether somebody pulls the cable. */
+
+const STATE_LABEL = {
+  queued: "Waiting", identifying: "Reading the disc", ripping: "Ripping",
+  transferring: "Uploading", verifying: "Verifying", needs_input: "Needs you",
+};
+
+function jobRow(j) {
+  if (j.state === "needs_input") return identifyPrompt(j);
+  const ripPct = pct(j.bytes_ripped, j.bytes_total);
+  const sentPct = pct(j.bytes_sent, j.bytes_total);
+  const verPct = pct(j.bytes_verified, j.bytes_total);
+  const active = j.state === "ripping" ? ripPct
+               : j.state === "transferring" ? sentPct
+               : j.state === "verifying" ? verPct : 0;
+  return `
+    <div class="job">
+      <div class="job-head">
+        <div class="grow">
+          <div class="job-title">${esc(j.title || j.disc_label || "Unknown disc")}</div>
+          <div class="job-phase">${esc(j.phase || STATE_LABEL[j.state] || j.state)}</div>
+        </div>
+        ${j.mode ? `<span class="badge ${j.mode === "burst" ? "burst" : ""}">${esc(j.mode)}</span>` : ""}
+        <span class="badge">${esc(STATE_LABEL[j.state] || j.state)}</span>
+        <button class="icon-btn" data-cancel="${j.id}" title="Cancel">${icon("xmark")}</button>
+      </div>
+      <div class="bar"><i style="width:${active}%"></i></div>
+      <div class="job-legs">
+        <span class="${j.state === "ripping" ? "on" : ripPct >= 100 ? "did" : ""}">Rip ${leg(ripPct)}</span>
+        <span class="${j.state === "transferring" ? "on" : sentPct >= 100 ? "did" : ""}">Upload ${leg(sentPct)}</span>
+        <span class="${j.state === "verifying" ? "on" : verPct >= 100 ? "did" : ""}">Verify ${leg(verPct)}</span>
+        <span class="grow"></span>
+        ${j.eta_seconds ? `<span class="job-eta">${esc(duration(j.eta_seconds))} left</span>` : ""}
+      </div>
+    </div>`;
+}
+
+const leg = (p) => (p >= 100 ? "\u2713" : p > 0 ? `${Math.round(p)}%` : "");
+
+/* Time, not bytes. concept.md says the user should never see a gigabyte and says the
+   same about progress and time estimates; the queue did the first half and showed two
+   bars that answered "how far" but never "how long". */
+function duration(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 90) return `${sec}s`;
+  const m = Math.round(sec / 60);
+  if (m < 90) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+/* ── the identify prompt ──
+   `on_unknown_disc` has defaulted to "ask" since the beginning and nothing anywhere
+   asked. This is the asking. */
+function identifyPrompt(j) {
+  const titles = (j.titles || []).filter(t => t.seconds >= 60);
+  return `
+    <div class="job needs">
+      <div class="job-head">
+        <div class="grow">
+          <div class="job-title">${esc(j.disc_label || "A disc")}</div>
+          <div class="job-phase">${esc(j.question || "Riparr needs a hand with this one.")}</div>
+        </div>
+        <span class="badge warn">Needs you</span>
+      </div>
+      <label class="f wide"><span>What is this film?</span>
+        <input id="ni-name" value="${esc(j.title || "")}" placeholder="e.g. The Matrix (1999)">
+        <span class="help">A year in brackets is used as the year. Without one Riparr
+          won't invent it.</span></label>
+      ${titles.length > 1 ? `
+        <div class="ni-titles">
+          <div class="ni-label">Which title is the film?</div>
+          ${titles.map(t => `
+            <label class="ni-title">
+              <input type="radio" name="ni-title" value="${t.index}"
+                     ${t.index === j.chosen_title ? "checked" : ""}>
+              <span class="ni-dur">${esc(duration(t.seconds))}</span>
+              <span class="ni-name">${esc(t.name || `Title ${t.index}`)}</span>
+              <span class="ni-size muted">${t.bytes ? esc(gb(t.bytes)) : ""}</span>
+            </label>`).join("")}
+        </div>` : ""}
+      <div class="btn-row">
+        <button class="btn primary" data-answer="${j.id}">Rip it</button>
+        <button class="btn" data-skip="${j.id}">Skip this disc</button>
+      </div>
+    </div>`;
+}
+
+const gb = (b) => `${(b / 1073741824).toFixed(1)} GB`;
 
 /* ── the tray ──
    The disc and the drive holding it are one fact, so they are drawn once. Which of
@@ -642,7 +730,7 @@ function driveName(d) {
   return [d.vendor, d.model].filter(Boolean).join(" ") || "Optical drive";
 }
 
-function tray(drives, optical) {
+function tray(drives, optical, canRip) {
   if (!drives.length) {
     // An empty card used to render as nothing at all, so "no drive" was communicated
     // by absence -- the one case where the user most needs to be told something.
@@ -667,8 +755,10 @@ function tray(drives, optical) {
   return `<div class="empty-state tray-loaded">
     <div class="big spinning">${icon("compact-disc")}</div>
     <h2>${esc(d.label || "Disc loaded")}</h2>
-    <p>${d.media ? `${esc(d.media)} \u2014 loaded and ready.` : "Loaded and ready."}
-       Nothing is queued yet.</p>
+    <p>${d.media ? `${esc(d.media)} \u2014 loaded and ready.` : "Loaded and ready."}</p>
+    ${canRip ? `<div class="btn-row tray-go">
+      <button class="btn primary" id="rip-now">${icon("play")} Rip this disc</button>
+    </div>` : ""}
     <p class="tray-drive">${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></p>
   </div>`;
 }
@@ -748,12 +838,15 @@ views.history = async () => {
   const { jobs } = await api.get("/api/history");
   return `${head("History", "Everything Riparr has finished or failed.")}
     ${jobs.length ? `<div class="card"><table>
-      <thead><tr><th>Title</th><th>Finished</th><th>Result</th></tr></thead>
+      <thead><tr><th>Title</th><th>Finished</th><th>Where it went</th><th>Result</th><th class="act"></th></tr></thead>
       <tbody>${jobs.map(j => `<tr>
-        <td>${esc(j.title || j.disc_label)}</td>
+        <td>${esc(j.title || j.disc_label || "Unknown disc")}</td>
         <td class="muted">${ago(j.finished_at)}</td>
-        <td><span class="badge ${j.state === "done" ? "ok" : "bad"}">${esc(j.state)}</span>
+        <td class="path">${j.dest_path ? esc(j.dest_path) : '<span class="muted">\u2014</span>'}</td>
+        <td><span class="badge ${j.state === "done" ? "ok" : j.state === "cancelled" ? "" : "bad"}">${esc(j.state)}</span>
           ${j.error ? `<div class="s muted">${esc(j.error)}</div>` : ""}</td>
+        <td class="act">${j.state !== "done" && j.local_path
+          ? `<button class="btn" data-retry="${j.id}">Retry upload</button>` : ""}</td>
       </tr>`).join("")}</tbody></table></div>`
     : `<div class="card"><div class="empty-state"><div class="big">${icon("clock-rotate-left")}</div>
         <h2>No history yet</h2><p>Finished rips will appear here.</p></div></div>`}`;
@@ -763,16 +856,19 @@ views.discs = async () => {
   const { discs } = await api.get("/api/discs");
   return `${head("Discs", "Every disc Riparr has seen, by fingerprint. This is what makes it ask about a problem disc only once.")}
     ${discs.length ? `<div class="card"><table>
-      <thead><tr><th>Title</th><th>Label</th><th>Ripped</th><th></th></tr></thead>
+      <thead><tr><th>Title</th><th>Label</th><th>Ripped</th><th class="act"></th></tr></thead>
       <tbody>${discs.map(d => `<tr>
         <td>${esc(d.title || "—")}</td><td class="muted">${esc(d.label || "—")}</td>
         <td class="muted">${ago(d.ripped_at)}</td>
-        <td><button class="btn" data-forget="${esc(d.fingerprint)}">Forget</button></td>
+        <td class="act">
+          <button class="btn" data-rerip="${esc(d.fingerprint)}">Re-rip</button>
+          <button class="btn" data-forget="${esc(d.fingerprint)}">Forget</button></td>
       </tr>`).join("")}</tbody></table></div>`
     : `<div class="card"><div class="empty-state"><div class="big">${icon("compact-disc")}</div>
         <h2>No discs recorded</h2>
         <p>Once Riparr rips a disc it remembers it, so reinserting it is refused
-           instead of costing you forty minutes.</p></div></div>`}`;
+           instead of costing you forty minutes \u2014 and <b>Re-rip</b> is here for when
+           you meant it.</p></div></div>`}`;
 };
 
 /* ── settings ── */
@@ -1389,6 +1485,25 @@ async function route() {
   paintIcons(content);
   wireContent(section, sub);
   $("#sidebar").classList.remove("open");
+  scheduleLiveRefresh(section);
+}
+
+/* ── live refresh ──
+   A progress bar that only moves when you press Refresh is not a progress bar. The
+   queue re-renders itself while something is actually moving, and stops the moment
+   nothing is -- an appliance with 512 MB should not be polling itself for no reason.
+
+   `needs_input` deliberately does NOT keep the timer alive: that state has a form in
+   it, and re-rendering underneath somebody halfway through typing a film title is a
+   worse bug than a stale page. */
+let liveTimer = null;
+
+function scheduleLiveRefresh(section) {
+  clearTimeout(liveTimer);
+  if (section !== "queue") return;
+  const moving = $$(".job").length && !$$(".job.needs").length;
+  if (!moving) return;
+  liveTimer = setTimeout(() => { if (!document.hidden) route(); }, 2500);
 }
 
 function collectSettings() {
@@ -1512,6 +1627,66 @@ function wireContent(section, sub) {
     const r = await api.post("/api/drive/eject");
     toast(r.message, r.ok ? "ok" : "bad");
   };
+
+  const ripNow = $("#rip-now");
+  if (ripNow) ripNow.onclick = async () => {
+    ripNow.disabled = true;
+    try {
+      await api.post("/api/rip", {});
+      toast("Started", "ok");
+    } catch (e) {
+      toast(e.message, "bad");
+      ripNow.disabled = false;
+      return;
+    }
+    route();
+  };
+
+  $$("[data-cancel]").forEach(b => b.onclick = async () => {
+    if (!confirm("Cancel this rip?\n\nAnything done so far is discarded.")) return;
+    try { await api.post(`/api/queue/${b.dataset.cancel}/cancel`, {}); }
+    catch (e) { toast(e.message, "bad"); }
+    route();
+  });
+
+  $$("[data-retry]").forEach(b => b.onclick = async () => {
+    try {
+      const r = await api.post(`/api/queue/${b.dataset.retry}/retry`, {});
+      toast(r.message, "ok");
+    } catch (e) { toast(e.message, "bad"); }
+    route();
+  });
+
+  $$("[data-answer]").forEach(b => b.onclick = async () => {
+    const picked = $('input[name="ni-title"]:checked');
+    const body = { name: ($("#ni-name") || {}).value || "" };
+    if (picked) body.title_index = Number(picked.value);
+    if (!body.name.trim() && !picked) {
+      toast("Give it a name, or pick which title is the film.", "bad");
+      return;
+    }
+    b.disabled = true;
+    try { await api.post(`/api/queue/${b.dataset.answer}/answer`, body); }
+    catch (e) { toast(e.message, "bad"); b.disabled = false; return; }
+    route();
+  });
+
+  $$("[data-skip]").forEach(b => b.onclick = async () => {
+    if (!confirm("Skip this disc?\n\nIt will be ejected without being ripped.")) return;
+    try { await api.post(`/api/queue/${b.dataset.skip}/answer`, { skip: true }); }
+    catch (e) { toast(e.message, "bad"); }
+    route();
+  });
+
+  $$("[data-rerip]").forEach(b => b.onclick = async () => {
+    if (!confirm("Re-rip this disc?\n\nPut it back in the tray first. This reads the "
+                 + "whole disc again and overwrites what's in your library.")) return;
+    try {
+      await api.post(`/api/discs/${encodeURIComponent(b.dataset.rerip)}/rerip`, {});
+      toast("Started", "ok");
+      location.hash = "#/queue";
+    } catch (e) { toast(e.message, "bad"); }
+  });
 
   // Fetching is a network round trip to somebody else's forum, so it happens after
   // the page is on screen rather than blocking it.

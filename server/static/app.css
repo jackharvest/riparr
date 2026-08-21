@@ -553,6 +553,60 @@ td.stat .ic { font-size: var(--ic-nav); }
 .badge.bad  { background: rgba(240,80,80,.2);  color: var(--bad); }
 .badge.burst  { background: rgba(var(--accent-rgb),.2); color: var(--accent); }
 
+/* ── a job in flight ──
+   Not a table row: `needs_input` has to hold a question and a form, and every state
+   has to hold a phase line. The phase line is the load-bearing part -- "Reading title
+   0" moving under a bar that is barely moving is what tells somebody the box is
+   working rather than hung, and that is the judgement the whole amber-LED problem
+   comes down to. */
+.job { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.job:last-of-type { border-bottom: 0; }
+.job-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.job-title { color: var(--fg-strong); font-size: 14.5px; }
+.job-phase { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+.job .bar { height: 6px; }
+.job-legs {
+  display: flex; align-items: center; gap: 16px;
+  margin-top: 7px; font-size: 11.5px; color: var(--fg-muted);
+}
+.job-legs .on { color: var(--accent); }
+.job-legs .did { color: var(--ok); }
+.job-eta { color: var(--fg); }
+.job.needs { background: rgba(255,159,26,.06); border-left: 2px solid var(--warn); }
+.job.needs .f { margin-top: 4px; }
+/* The *arr form geometry -- a fixed 150px right-aligned label column -- is right for a
+   settings page and wrong for a focused question, which is the same complaint the
+   backlog already records about the share step. Here the label stacks. */
+.f.wide { max-width: none; display: block; }
+.f.wide > span:first-child {
+  display: block; flex: none; justify-content: flex-start; text-align: start;
+  margin-right: 0; padding-top: 0; min-height: 0; margin-bottom: 5px;
+  font-size: 13px;
+}
+.f.wide > input { max-width: 420px; width: 100%; }
+.f.wide .help { margin-left: 0; display: block; margin-top: 5px; }
+
+.ni-titles { margin: 12px 0 14px; }
+.ni-label { font-size: 12px; color: var(--fg-muted); margin-bottom: 6px; }
+.ni-title {
+  display: grid; grid-template-columns: auto 68px 1fr auto; gap: 10px;
+  align-items: center; padding: 6px 8px; border-radius: var(--radius);
+  cursor: pointer; font-size: 13px;
+}
+.ni-title:hover { background: rgba(255,255,255,.04); }
+.ni-title .ni-dur { color: var(--fg-strong); font-variant-numeric: tabular-nums; }
+.ni-title .ni-size { font-size: 11.5px; }
+.tray-go { justify-content: center; margin-top: 16px; }
+.tray-go .btn { font-size: 14px; padding: 9px 20px; }
+.tray-go .ic { margin-right: 7px; }
+
+/* A path is the one thing on the History page somebody retypes into Plex, so it wraps
+   rather than being clipped, and sets in a face where l/1 and 0/O differ. */
+td.path {
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px; color: var(--fg-muted); word-break: break-all; max-width: 340px;
+}
+
 .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
 .bar > i { display: block; height: 100%; background: var(--queue); border-radius: 3px; }
 .bar.dual > i.sent { background: var(--ok); }
