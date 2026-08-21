@@ -76,21 +76,26 @@ def _watch_discs():
     while not _stop.wait(3):
         try:
             drives = P.optical_drives()
-            sig = _disc_signature(drives)
+            # Auto Rip's own state is part of what "changed" means. Otherwise the
+            # obvious sequence -- put the disc in, notice nothing happens, go and turn
+            # Auto Rip on -- does nothing, because the disc has not changed since the
+            # switch flipped. Somebody doing exactly the right thing would be met with
+            # silence and no way to tell which of the two steps had failed.
+            sig = (_disc_signature(drives), bool(db.get("auto_rip")))
             if sig == seen:
                 continue
             seen = sig
-            if sig is None:
+            if sig[0] is None:
                 continue
-            if not db.get("auto_rip"):
-                log.info("Disc inserted (%s), but Auto Rip is off.", sig)
+            if not sig[1]:
+                log.info("Disc inserted (%s), but Auto Rip is off.", sig[0])
                 continue
             st = _autorip_ready()
             if not st:
                 continue
             job_id, why = enqueue()
             if job_id:
-                log.info("Auto Rip queued job %d for %s", job_id, sig)
+                log.info("Auto Rip queued job %d for %s", job_id, sig[0])
             else:
                 log.info("Auto Rip did not queue this disc: %s", why)
         except Exception as e:
