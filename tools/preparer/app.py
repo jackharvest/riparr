@@ -23,6 +23,7 @@ import objc
 from AppKit import (NSApplication, NSWindow, NSApp, NSScreen, NSColor, NSView,
                     NSAlert, NSTextField, NSAlertFirstButtonReturn,
                     NSBitmapImageRep, NSViewWidthSizable, NSViewMinYMargin,
+                    NSViewHeightSizable,
                     NSApplicationActivationPolicyRegular, NSBackingStoreBuffered,
                     NSWindowStyleMaskTitled, NSWindowStyleMaskClosable,
                     NSWindowStyleMaskMiniaturizable, NSWindowStyleMaskResizable,
@@ -686,9 +687,8 @@ class DragStrip(NSView):
     anybody tries, and failing it makes everything after feel like a web page in a box.
 
     `mouseDownCanMoveWindow` is the supported way to say "this area behaves like
-    titlebar". The strip lives inside the web view, which puts it *below* the traffic
-    lights in the window's own z-order, so close/minimise/zoom keep working even though
-    it spans the full width.
+    titlebar". It has to be reached first, though -- see the note where this is
+    installed in `main()`. It goes over the web view as a sibling, never inside it.
     """
 
     def mouseDownCanMoveWindow(self):
@@ -810,14 +810,34 @@ def main():
     webview.loadFileURL_allowingReadAccessToURL_(
         NSURL.fileURLWithPath_(index), NSURL.fileURLWithPath_(UI))
 
-    win.setContentView_(webview)
+    # The strip has to be a *sibling* of the web view, not a subview of it.
+    #
+    # WKWebView overrides -hitTest: to return itself for every point inside its bounds
+    # -- it routes events to its own internal content view rather than through AppKit's
+    # subview hierarchy. So a DragStrip added with webview.addSubview_() is never the
+    # view AppKit hit-tests: the answer comes back as the WKWebView, whose
+    # -mouseDownCanMoveWindow is NO, and the window does not move. The strip was there,
+    # correct, and unreachable.
+    #
+    # This is why "add an invisible drag view" is written down everywhere as working
+    # while this one did not: the usual recipe puts the view over the web view, and
+    # putting it *inside* looks equivalent and is not. Probed with -hitTest: rather than
+    # reasoned about, because reasoning about it is what produced the broken version.
+    #
+    # A plain container as the content view, web view first, strip second. Added last
+    # means topmost among siblings, and the whole container still sits below
+    # NSThemeFrame -- so the traffic lights keep working even though the strip spans
+    # the full width.
+    root = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
+    webview.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+    root.addSubview_(webview)
 
-    # Above the web view in subview order, so it sees the click first. Pinned to the
-    # top and stretched on resize.
     strip = DragStrip.alloc().initWithFrame_(
         NSMakeRect(0, h - TITLEBAR_H, w, TITLEBAR_H))
     strip.setAutoresizingMask_(NSViewWidthSizable | NSViewMinYMargin)
-    webview.addSubview_(strip)
+    root.addSubview_(strip)
+
+    win.setContentView_(root)
 
     win.setMovableByWindowBackground_(False)   # only the strip; not stray drags on a form
     win.makeKeyAndOrderFront_(None)
