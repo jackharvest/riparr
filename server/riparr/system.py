@@ -335,6 +335,15 @@ def _apply(payload, name):
 def _task_check_health():
     P.system_status()
     P.optical_diagnosis()
+    c = P.clock_status()
+    if not c["plausible"]:
+        component("Clock").error(
+            "The system clock reads %s, which cannot be right. Anything Riparr says "
+            "about dates -- key expiry, when a rip finished, when a task is due -- is "
+            "wrong until the time syncs.",
+            time.strftime("%d %b %Y %H:%M", time.localtime(c["now"])))
+    elif c["synced"] is False:
+        component("Clock").warning("The clock has not synchronised with a time server yet.")
     return "Health checked"
 
 

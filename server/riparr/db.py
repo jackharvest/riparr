@@ -196,6 +196,18 @@ def verify_user(username, password):
         return False
 
 
+def clear_users():
+    """Remove every account, so first-run setup offers to create one again.
+
+    Deliberately not "reset the password to something": there is nowhere safe to
+    display a generated password on a headless box, and the setup flow already knows
+    how to ask for a new one.
+    """
+    c = conn()
+    c.execute("DELETE FROM users")
+    c.commit()
+
+
 def has_users():
     return conn().execute("SELECT COUNT(*) n FROM users").fetchone()["n"] > 0
 

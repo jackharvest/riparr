@@ -194,6 +194,56 @@ def optical_diagnosis():
 # uses: this process is unprivileged with NoNewPrivileges=yes and cannot call
 # systemctl, but it can create a file that a root path unit is watching. The action is
 # decided by which file is created, so there is nothing here the root side has to trust.
+# ─────────────────────────────── the clock ───────────────────────────────
+
+# The Preparer writes riparr.conf to whichever of these exists; the same directory is
+# where a person with the card in a laptop can leave a file for the box to find.
+BOOT_DIRS = ("/boot/firmware", "/boot")
+
+# Nothing this box does can legitimately believe it is earlier than the day the code
+# was written. An unsynchronised Pi comes up in 1970, or at whatever the last written
+# timestamp on the filesystem was.
+CLOCK_FLOOR = 1755000000        # 2025-08-12
+
+
+def boot_dir():
+    for d in BOOT_DIRS:
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def clock_status():
+    """Whether the time can be trusted, on a board with no RTC.
+
+    This matters more here than it looks. The MakeMKV key expiry is "N days left"
+    computed against now; the scheduler's due-ness is computed from a stored `last_end`
+    (D19); every "3 days ago" in the interface is a subtraction. A box that thinks it
+    is 1970 reports all of them confidently and all of them wrong -- and D4 says
+    losing power is the expected operating condition, not an edge case.
+    """
+    now = int(time.time())
+    if MOCK:
+        return {"now": now, "synced": True, "plausible": True, "source": "simulated"}
+
+    synced = None
+    if os.path.exists("/run/systemd/timesync/synchronized"):
+        synced = True
+    else:
+        out = _run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"]) or ""
+        if out.strip():
+            synced = out.strip().lower() in ("yes", "true", "1")
+    plausible = now >= CLOCK_FLOOR
+    return {"now": now, "synced": synced, "plausible": plausible,
+            "source": "ntp" if synced else "unknown"}
+
+
+def trust_dates():
+    """Whether anything derived from the clock is worth showing."""
+    c = clock_status()
+    return bool(c["plausible"] and c["synced"] is not False)
+
+
 POWER_ACTIONS = {"reboot", "poweroff"}
 POWER_REQUEST = "/run/riparr/%s.request"
 

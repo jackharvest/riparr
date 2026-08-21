@@ -88,15 +88,33 @@ For sending finished rips somewhere else — a transcoder, an automation.
 
 | Setting | Notes |
 |---|---|
-| **Webhook on completion** | POSTs the file path and metadata when a rip is verified |
 | **Watch folder mode** | Write to a staging path instead, for Tdarr / Unmanic to pick up |
+
+The completion webhook moved to **Notifications** below, where the rest of the ways
+Riparr can reach you now live.
 
 **Riparr does not transcode.** A Pi Zero 2W would take days and the result would be poor.
 Hand off to a real machine.
 
 ## Notifications
 
-**[unresolved]** Planned: webhook, Discord, ntfy. "Your disc is done" on your phone.
+On **Settings → Connect**. This is how the box reaches you once you have walked away
+from it — the LED only helps if you are in the room.
+
+| Setting | Notes |
+|---|---|
+| **Tell me when** | Which events are worth a notification. Four are on by default |
+| **ntfy** | Least work by far: pick an unguessable topic, install the app, subscribe. No account |
+| **Discord** | Paste a webhook URL from Server Settings → Integrations |
+| **Email** | SMTP. The most configuration, and works everywhere |
+| **Webhook** | POSTs JSON — event, title, body, hostname — for Home Assistant, n8n, anything |
+
+Each has a **Save and send a test** button, which saves what is on screen before it
+sends, so you are testing what you just typed.
+
+**The one worth having on:** *The MakeMKV key is about to expire*. A lapsed key is the
+usual way a working box quietly stops working, and it always happens while you are not
+looking at the web page.
 
 ## Disc history
 
@@ -104,9 +122,8 @@ Every disc Riparr has seen, by fingerprint.
 
 | Action | Effect |
 |---|---|
-| **Forget disc** | Removes it so it can be re-ripped |
-| **Edit correction** | Change the remembered title/episode mapping |
-| **Force re-rip** | Rip again despite the duplicate flag |
+| **Re-rip** | Put the disc back in the tray and rip it again, duplicate flag and all |
+| **Forget** | Drops Riparr's memory of the disc entirely, including any correction you made |
 
 This is what makes Riparr only ask you about a problem disc once, ever.
 
@@ -116,7 +133,7 @@ This is what makes Riparr only ask you about a problem disc once, ever.
 |---|---|
 | **Export settings** | Downloads a JSON file. **Do this once you're set up.** Rebuilding a card becomes a 30-second job. |
 | **Import settings** | Restore from that file |
-| **Change password** | Web interface login |
+| **Change password** | Web interface login. Forgotten it? Put an empty file called `riparr-reset` on the card's boot partition — no re-flash, and nothing else is lost |
 | **Update** | Check for and install a new Riparr version |
 | **Logs** | Download a log bundle for bug reports |
 | **Restart / shut down** | In the account menu (the person icon, top right), not on a page. Rarely needed — the box is built to survive losing power, but shutting down here is the safe way to stop it before unplugging |

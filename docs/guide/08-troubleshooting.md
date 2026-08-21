@@ -156,6 +156,34 @@ Riparr detects the interruption on boot and either resumes or cleanly fails that
 library won't have a partial file and your card won't be corrupt — the system is built
 assuming this will happen.
 
+## I forgot my password
+
+**You don't need to re-flash.** Riparr accepts a reset from the card itself, which is
+proof you own the box in the same way re-flashing it would be — and keeps your settings,
+shares and disc history.
+
+1. Shut the box down (account menu → **Shut down**), then unplug it and take the card out
+2. Put the card in a computer. The small **boot** partition mounts on its own
+3. Create an empty file there called **`riparr-reset`** — no extension needed, and the
+   contents are ignored
+4. Card back in the box, plug it in, wait a minute
+5. `riparr.local` asks you to create an account again
+
+Riparr deletes the file as it acts on it, so the card goes back to normal on its own.
+Nothing else is touched: your share, your naming templates and every disc it remembers
+are all still there.
+
+## Dates and "days left" look wrong
+
+The box has no battery-backed clock. It learns the time from the internet at every boot,
+and until it does, it believes whatever the last thing written to the card said.
+
+If **System → Status** says the clock can't be right, Riparr stops making claims that
+depend on it — including how long your MakeMKV key has left — rather than stating a
+confident wrong number. It sorts itself out within a minute of the box reaching the
+internet. If it doesn't, the box can't get out to a time server: see
+[`riparr.local` doesn't load](#riparrlocal-doesnt-load) for the network side.
+
 ## Starting over
 
 **Settings → System → Export settings** first, if you can reach the box. Then re-flash the

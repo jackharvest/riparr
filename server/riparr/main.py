@@ -30,11 +30,49 @@ def _secret():
     return s
 
 
+# ─────────────────────────────── password recovery ───────────────────────────────
+
+RESET_FILENAMES = ("riparr-reset", "riparr-reset.txt")
+
+
+def _check_password_reset():
+    """Honour a reset file left on the boot partition.
+
+    A forgotten password used to cost a re-flash of a perfectly healthy box: there is
+    no console, no email, and opening the reset to the network would be a hole in the
+    one thing standing between this appliance and everyone else on the Wi-Fi.
+
+    A file on the boot partition is the right key for this lock. It requires the card
+    in your hand, which is the same proof of ownership as re-flashing it and vastly
+    less destructive -- settings, shares and disc history all survive. The file is
+    deleted as it is honoured, so a card that is put back keeps working normally.
+    """
+    d = P.boot_dir()
+    if not d:
+        return
+    for name in RESET_FILENAMES:
+        path = os.path.join(d, name)
+        if not os.path.exists(path):
+            continue
+        try:
+            os.unlink(path)               # consumed first: never loop on a failure
+        except OSError as e:
+            SY.component("Setup").error("Found %s but couldn't remove it: %s", path, e)
+            return
+        db.clear_users()
+        db.set("setup_complete", False)
+        SY.component("Setup").warning(
+            "Password reset requested from %s. The account has been cleared; the next "
+            "person to open the web interface will be asked to create one.", path)
+        return
+
+
 @app.on_event("startup")
 def _startup():
     db.init()
     _secret()
     SY.init()
+    _check_password_reset()
     SY.start_scheduler()
     RIP.start()
 
@@ -209,6 +247,7 @@ def status(user=Depends(require_user)):
         "system": P.system_status(),
         "storage": dict(storage, **_capacity(storage["free_bytes"])),
         "optical": P.optical_diagnosis(),
+        "clock": P.clock_status(),
         "wifi": P.wifi_status(),
         "makemkv": P.makemkv_status(),
         "drives": P.optical_drives(),
@@ -264,6 +303,8 @@ def _autorip_state():
     #    lapsed last week is a working install and a dead appliance, and those two
     #    facts want separate lines.
     days = mk.get("days_left")
+    if days is not None and not P.trust_dates():
+        days = None                       # a day count computed against a wrong clock
     if not mk.get("installed"):
         check("The MakeMKV key is current", "fail", "Nothing installed to key yet",
               "Install MakeMKV first.", "#/settings/general")

@@ -1284,10 +1284,30 @@ systemPages.status = async () => {
    the screen that fixes it, and only the client knows the routes. */
 function healthMessages(st) {
   const out = [];
+
+  /* The clock goes first, because it invalidates several of the messages below it.
+     This board has no RTC and D4 says the power gets pulled, so an unsynchronised
+     boot is routine rather than exotic -- and every "N days left" and "3 hours ago"
+     in the interface is a subtraction against it. */
+  const clk = st.clock;
+  if (clk && !clk.plausible)
+    out.push({ level: "bad", message: `The system clock reads ${
+      new Date(clk.now * 1000).toLocaleString()}, which can't be right. Dates and key
+      expiry are meaningless until it syncs — check this box can reach the internet.`,
+      href: "#/settings/network", action: "Network settings" });
+  else if (clk && clk.synced === false)
+    out.push({ level: "warn", message: "The clock hasn't synchronised with a time "
+      + "server yet, so dates may be slightly out.",
+      href: "#/system/status", action: "Details" });
+
   const m = st.makemkv;
   if (!m.installed)
     out.push({ level: "bad", message: "MakeMKV is not installed, so no disc can be read.",
                href: "#/settings/makemkv", action: "Install MakeMKV" });
+  else if (m.days_left != null && st.clock && !st.clock.plausible)
+    out.push({ level: "warn", message: "Riparr can't tell whether the MakeMKV key is "
+      + "still valid, because the clock is wrong.",
+      href: "#/settings/makemkv", action: "Update the key" });
   else if (m.days_left != null && m.days_left <= 0)
     out.push({ level: "bad", message: "The MakeMKV key has expired. Rips will fail until it is replaced.",
                href: "#/settings/makemkv", action: "Update the key" });
