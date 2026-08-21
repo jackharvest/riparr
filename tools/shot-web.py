@@ -19,6 +19,12 @@ Two traps this exists to avoid, both of which make a working page look broken:
     invisible. --still (on by default) injects a stylesheet disabling animation, which
     also makes repeated shots comparable.
 
+Each run gets an empty, non-persistent website data store, so a stylesheet edited a
+second ago is the one that renders. The default store is shared and persistent, and
+Riparr serves its static files with no Cache-Control, which together mean a run made
+right after a change will happily photograph the old page. --cached opts out, for when
+you want a signed-in session to survive between shots.
+
 Needs the PyObjC in the Preparer's virtualenv:
     ~/riparr-build/.venv/bin/python tools/shot-web.py …
 """
@@ -30,7 +36,8 @@ from AppKit import (NSApplication, NSWindow, NSApp, NSBitmapImageRep,
                     NSApplicationActivationPolicyAccessory, NSBackingStoreBuffered,
                     NSWindowStyleMaskTitled, NSMakeRect)
 from Foundation import NSObject, NSURL, NSURLRequest, NSTimer
-from WebKit import WKWebView, WKWebViewConfiguration, WKSnapshotConfiguration
+from WebKit import (WKWebView, WKWebViewConfiguration, WKSnapshotConfiguration,
+                    WKWebsiteDataStore)
 
 STILL = ("var s=document.createElement('style');"
          "s.textContent='*{animation:none !important;transition:none !important}';"
@@ -93,6 +100,8 @@ def main():
     ap.add_argument("--settle", type=float, default=0.8, help="seconds after --js")
     ap.add_argument("--no-still", dest="still", action="store_false",
                     help="keep CSS animations (they will not run; see the docstring)")
+    ap.add_argument("--cached", action="store_true",
+                    help="reuse the shared, persistent cache and cookies")
     a = ap.parse_args()
 
     app = NSApplication.sharedApplication()
@@ -102,8 +111,10 @@ def main():
     frame = NSMakeRect(0, 0, a.width, a.height)
     win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
         frame, NSWindowStyleMaskTitled, NSBackingStoreBuffered, False)
-    web = WKWebView.alloc().initWithFrame_configuration_(
-        frame, WKWebViewConfiguration.alloc().init())
+    cfg = WKWebViewConfiguration.alloc().init()
+    if not a.cached:
+        cfg.setWebsiteDataStore_(WKWebsiteDataStore.nonPersistentDataStore())
+    web = WKWebView.alloc().initWithFrame_configuration_(frame, cfg)
     win.setContentView_(web)
     win.makeKeyAndOrderFront_(None)
 

@@ -75,12 +75,12 @@ async function offerBetaKey(intoSel, inputSel, opts = {}) {
 
 /* Poll until the box answers again after a restart, then reload. The service is gone
    for most of this, so every failure here is expected and silent. */
-async function waitForBoxBack(msg) {
+async function waitForBoxBack() {
   const started = Date.now();
   const tick = async () => {
     if (Date.now() - started > 5 * 60 * 1000) {
-      msg.innerHTML = `<div class="result bad"><b>Still not back.</b>
-        Check the box has power, then reload this page.</div>`;
+      showWaiting("Still not back. Check the box has power, then reload this page.",
+                  { retry: true, spin: false });
       return;
     }
     try {
@@ -600,46 +600,93 @@ function pollMakeMKV(into = "#mk-progress") {
 /* ════════════════════ views ════════════════════ */
 const views = {};
 
+/* One page, one thing. The toolbar row of icon-over-label buttons that used to sit
+   between Auto Rip and the table is now two actions in the page header: Options and
+   Status were links to pages already one click away in the sidebar, and Refresh and
+   Eject are the only two verbs this page actually owns.
+
+   The queue and the tray are also one card rather than two sections. "Drive" repeated
+   the disc name the empty state had just said, which is the kind of duplication that
+   reads as an interface describing its own data model. */
 views.queue = async () => {
   const { jobs } = await api.get("/api/queue");
   const drives = state.status.drives || [];
   const ar = await api.get("/api/autorip");
   return `
-    ${head("Queue", "Ripping and uploading happen as one overlapping operation.")}
+    ${head("Queue", "Ripping and uploading happen as one overlapping operation.",
+           `<button class="tool" id="t-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
+            <button class="tool" id="t-eject" ${drives.length ? "" : "disabled"}>
+              <span class="ti">${icon("eject")}</span>Eject</button>`)}
     ${autoRipPanel(ar)}
-    <div class="toolbar">
-      <button class="tool" id="t-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
-      <button class="tool" id="t-eject"><span class="ti">${icon("eject")}</span>Eject</button>
-      <a class="tool sep" href="#/settings/library"><span class="ti">${icon("gears")}</span>Options</a>
-      <a class="tool" href="#/system/status"><span class="ti">${icon("laptop")}</span>Status</a>
-    </div>
-    ${jobs.length ? `<div class="card"><table>
-      <thead><tr><th>Title</th><th>Mode</th><th>Rip</th><th>Upload</th><th>State</th></tr></thead>
-      <tbody>${jobs.map(j => `<tr>
-        <td>${esc(j.title || j.disc_label || "Unknown disc")}</td>
-        <td><span class="badge ${j.mode === "burst" ? "burst" : ""}">${esc(j.mode || "—")}</span></td>
-        <td style="width:150px"><div class="bar"><i style="width:${pct(j.bytes_ripped, j.bytes_total)}%"></i></div></td>
-        <td style="width:150px"><div class="bar dual"><i class="sent" style="width:${pct(j.bytes_sent, j.bytes_total)}%"></i></div></td>
-        <td><span class="badge">${esc(j.state)}</span></td>
-      </tr>`).join("")}</tbody></table></div>`
-    : `<div class="card"><div class="empty-state">
-        <div class="big">${icon("compact-disc")}</div>
-        <h2>Nothing in the queue</h2>
-        <p>${drives.length && drives[0].present
-             ? `A disc is loaded: <b>${esc(drives[0].label || "unknown")}</b>`
-             : "Insert a disc and close the tray. Riparr takes it from there."}</p>
-      </div></div>`}
-    ${driveCard(drives, state.status.optical)}
-    <div class="section"><h2>Power</h2><div>
-      <p class="muted">There is no button on the box. Pulling the cable on a running
-        system is how a card gets corrupted — stop it here first.</p>
-      <div class="btn-row" style="margin-top:12px">
-        <button class="btn" id="sys-reboot">Restart</button>
-        <button class="btn danger" id="sys-poweroff">Shut down</button>
-      </div>
-      <div id="power-msg"></div>
-    </div></div>`;
+    <div class="card">
+      ${jobs.length ? `<table>
+        <thead><tr><th>Title</th><th>Mode</th><th>Rip</th><th>Upload</th><th>State</th></tr></thead>
+        <tbody>${jobs.map(j => `<tr>
+          <td>${esc(j.title || j.disc_label || "Unknown disc")}</td>
+          <td><span class="badge ${j.mode === "burst" ? "burst" : ""}">${esc(j.mode || "\u2014")}</span></td>
+          <td style="width:150px"><div class="bar"><i style="width:${pct(j.bytes_ripped, j.bytes_total)}%"></i></div></td>
+          <td style="width:150px"><div class="bar dual"><i class="sent" style="width:${pct(j.bytes_sent, j.bytes_total)}%"></i></div></td>
+          <td><span class="badge">${esc(j.state)}</span></td>
+        </tr>`).join("")}</tbody></table>
+        ${trayStrip(drives, state.status.optical)}`
+      : tray(drives, state.status.optical)}
+    </div>`;
 };
+
+/* ── the tray ──
+   The disc and the drive holding it are one fact, so they are drawn once. Which of
+   the three shapes below applies depends only on how far up the chain something is
+   missing: no drive at all, a drive with an open tray, or a disc sitting in one. */
+
+function driveName(d) {
+  return [d.vendor, d.model].filter(Boolean).join(" ") || "Optical drive";
+}
+
+function tray(drives, optical) {
+  if (!drives.length) {
+    // An empty card used to render as nothing at all, so "no drive" was communicated
+    // by absence -- the one case where the user most needs to be told something.
+    const hint = optical && optical.hint;
+    return `<div class="empty-state tray-none">
+      <div class="big">${icon("triangle-exclamation")}</div>
+      <h2>No optical drive detected</h2>
+      <p>Riparr has nothing to read a disc with, so nothing else on this page can
+         happen yet.</p>
+      ${hint ? `<p class="why">${esc(hint)}</p>` : ""}
+    </div>`;
+  }
+  const d = drives.find(x => x.present) || drives[0];
+  if (!d.present) {
+    return `<div class="empty-state">
+      <div class="big">${icon("compact-disc")}</div>
+      <h2>Nothing in the queue</h2>
+      <p>Insert a disc and close the tray. Riparr takes it from there.</p>
+      <p class="tray-drive">${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></p>
+    </div>`;
+  }
+  return `<div class="empty-state tray-loaded">
+    <div class="big spinning">${icon("compact-disc")}</div>
+    <h2>${esc(d.label || "Disc loaded")}</h2>
+    <p>${d.media ? `${esc(d.media)} \u2014 loaded and ready.` : "Loaded and ready."}
+       Nothing is queued yet.</p>
+    <p class="tray-drive">${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></p>
+  </div>`;
+}
+
+/* When there are rips to look at, the tray is a footer on the same card rather than
+   the hero -- present, but not competing with the thing that is actually moving. */
+function trayStrip(drives, optical) {
+  if (!drives.length) {
+    return `<div class="tray-strip bad">${icon("triangle-exclamation")}
+      <span>No optical drive detected</span></div>`;
+  }
+  const d = drives.find(x => x.present) || drives[0];
+  return `<div class="tray-strip">${icon("compact-disc")}
+    <span>${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></span>
+    <span class="grow"></span>
+    <span class="${d.present ? "loaded" : "muted"}">${
+      d.present ? esc(d.label || "disc loaded") : "tray empty"}</span></div>`;
+}
 
 const pct = (a, b) => (b ? Math.min(100, (a / b) * 100).toFixed(1) : 0);
 
@@ -662,24 +709,6 @@ function autoRipPanel(ar) {
           <li><a href="${esc(b.where)}"><b>${esc(b.what)}</b></a> — ${esc(b.why)}</li>`).join("")}</ul>`}
       </div>
     </div>`;
-}
-
-function driveCard(drives, optical) {
-  // An empty card used to render as nothing at all, so "no drive" was communicated by
-  // absence — the one case where the user most needs to be told something.
-  if (!drives.length) {
-    const hint = optical && optical.hint;
-    return `<div class="section"><h2>Drive</h2><div>
-      <div class="result bad"><b>No optical drive detected</b>
-      ${hint ? `<div class="why">${esc(hint)}</div>` : ""}</div>
-    </div></div>`;
-  }
-  return `<div class="section"><h2>Drive</h2><div><div class="kv">
-      ${drives.map(d => `
-        <div class="k">${esc(d.device)}</div>
-        <div class="v">${esc([d.vendor, d.model].filter(Boolean).join(" ") || "Optical drive")}
-          ${d.present ? `— <b>${esc(d.label || "disc loaded")}</b>` : "— empty"}</div>`).join("")}
-    </div></div></div>`;
 }
 
 views.history = async () => {
@@ -1244,9 +1273,12 @@ systemPages.logs = async () => {
 };
 
 /* ── shared fragments ── */
-function head(title, sub) {
+/* `acts` is raw markup for the right-hand side -- the *arr page toolbar, moved into
+   the header row rather than given a band of its own under it. */
+function head(title, sub, acts) {
   return `<div class="page-head"><div><h1>${esc(title)}</h1>
-    ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div></div>`;
+    ${sub ? `<div class="sub">${esc(sub)}</div>` : ""}</div>
+    ${acts ? `<div class="head-acts">${acts}</div>` : ""}</div>`;
 }
 function opt(v, label, cur) {
   return `<option value="${v}" ${cur === v ? "selected" : ""}>${esc(label)}</option>`;
@@ -1452,34 +1484,6 @@ function wireContent(section, sub) {
   // the page is on screen rather than blocking it.
   if ($("#mk-key-offer")) offerBetaKey("#mk-key-offer", "#mk-key-input");
 
-  const power = async (action, label, after) => {
-    const msg = $("#power-msg");
-    msg.innerHTML = `<div class="result busy"><span class="spin"></span>${esc(label)}…</div>`;
-    try { await api.post("/api/system/power", { action }); }
-    catch (e) {
-      msg.innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
-      return;
-    }
-    msg.innerHTML = `<div class="result">${after}</div>`;
-    $("#sys-reboot").disabled = $("#sys-poweroff").disabled = true;
-    if (action === "reboot") waitForBoxBack(msg);
-  };
-
-  const rb = $("#sys-reboot");
-  if (rb) rb.onclick = () => {
-    if (!confirm("Restart Riparr?\n\nAny rip in progress will be lost.")) return;
-    power("reboot", "Restarting",
-          "<b>Restarting.</b> This page will come back on its own in a minute or two.");
-  };
-  const po = $("#sys-poweroff");
-  if (po) po.onclick = () => {
-    if (!confirm("Shut down Riparr?\n\nThere is no power button — you will have to "
-                 + "unplug the cable and plug it back in to start it again.")) return;
-    power("poweroff", "Shutting down",
-          "<b>Shutting down.</b> Wait for the light to settle, then it is safe to "
-          + "unplug. To start it again, plug the cable back in.");
-  };
-
   const mkAccept = $("#mk-accept");
   if (mkAccept) {
     mkAccept.onchange = () => { $("#mk-install").disabled = !mkAccept.checked; };
@@ -1643,6 +1647,38 @@ $("#logout").onclick = async (e) => {
   await api.post("/api/auth/logout");
   location.reload();
 };
+
+/* ── power ──
+   Restarting and shutting down live in the account menu, not on a page: they are
+   things you do to the appliance, not to the queue. Progress goes on the same
+   full-screen overlay that covers a cold start, because the service is about to stop
+   answering and any in-page element saying so is about to be unreachable anyway. */
+async function powerAction(action, label, after) {
+  showWaiting(`${label}\u2026`);
+  try {
+    await api.post("/api/system/power", { action });
+  } catch (e) {
+    showWaiting(e.message, { retry: true, spin: false });
+    return;
+  }
+  showWaiting(after, { spin: action === "reboot" });
+  if (action === "reboot") waitForBoxBack();
+}
+
+$("#sys-reboot").onclick = (e) => {
+  e.preventDefault();
+  if (!confirm("Restart Riparr?\n\nAny rip in progress will be lost.")) return;
+  powerAction("reboot", "Restarting",
+              "Restarting. This page will come back on its own in a minute or two.");
+};
+$("#sys-poweroff").onclick = (e) => {
+  e.preventDefault();
+  if (!confirm("Shut down Riparr?\n\nThere is no power button \u2014 you will have to "
+               + "unplug the cable and plug it back in to start it again.")) return;
+  powerAction("poweroff", "Shutting down",
+              "Shutting down. Wait for the light to settle, then it is safe to unplug. "
+              + "To start it again, plug the cable back in.");
+};
 window.addEventListener("hashchange", route);
 $("#gate-retry").onclick = () => location.reload();
 
@@ -1697,6 +1733,7 @@ async function boot() {
   let me;
   try { me = await api.get("/api/auth/me"); } catch (e) { showGate(); return; }
   if (!me.username) { showGate(); return; }
+  $("#menu-who").textContent = me.username;
 
   if (!setup.complete) {
     wizard.step = 1;                       // account exists; resume at MakeMKV

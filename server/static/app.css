@@ -170,6 +170,22 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
 }
 .menu a { display: block; padding: 8px 11px; border-radius: 3px; color: var(--fg); font-size: 13px; }
 .menu a:hover { background: rgba(255,255,255,.08); color: var(--fg-strong); }
+.menu-head {
+  padding: 7px 11px 8px; margin-bottom: 4px; font-size: 13px;
+  color: var(--fg-strong); border-bottom: 1px solid var(--line-2);
+}
+.menu-sep { height: 1px; background: var(--line-2); margin: 5px 0; }
+.menu-label {
+  padding: 6px 11px 3px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--fg-muted);
+}
+.menu a.danger { color: var(--bad); }
+.menu a.danger:hover { background: rgba(240,80,80,.14); color: var(--bad); }
+
+/* The only ask in the whole interface, so it gets a nudge of warmth on hover and
+   nothing else -- no badge, no colour at rest, no competing with the health pills. */
+.coffee { display: inline-flex; align-items: center; }
+.coffee:hover { color: #ffdd00; background: rgba(255,221,0,.12); }
 
 .sidebar {
   position: fixed; top: var(--topbar-h); bottom: 0; left: 0; width: var(--side-w);
@@ -220,6 +236,9 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
   padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--line);
 }
 .page-head .sub { font-size: 12.5px; color: var(--fg-muted); margin-top: 3px; }
+/* The page toolbar, moved into the header row. Same 60px PageToolbarButton geometry
+   as `.toolbar` below, just right-aligned instead of banded across its own row. */
+.head-acts { margin-left: auto; display: flex; align-items: stretch; gap: 4px; }
 
 .tabs { display: flex; gap: 2px; flex-wrap: wrap; margin-bottom: 20px; }
 .tabs a {
@@ -476,6 +495,41 @@ th.stat, td.stat { width: 1%; padding-left: 12px; padding-right: 4px; }
 td.stat .ic { font-size: var(--ic-nav); }
 
 .empty-state { text-align: center; padding: 46px 20px; color: var(--fg-muted); }
+
+/* ── the tray ──
+   The disc-loaded state is the one moment this appliance has something to show off,
+   so it is allowed to be the largest thing on the page: the mark turns, the label is
+   set at heading size, and the drive that holds it is a quiet line underneath rather
+   than a section of its own. */
+.tray-loaded .big { opacity: .75; color: var(--accent); }
+.tray-loaded h2 { font-size: 20px; letter-spacing: .01em; }
+.tray-none .big { color: var(--bad); opacity: .5; }
+.tray-none .why {
+  max-width: 60ch; margin: 12px auto 0; font-size: 12.5px; line-height: 1.6;
+  text-align: left; color: var(--fg-muted);
+}
+.tray-drive {
+  margin-top: 14px; font-size: 12px; color: var(--fg-muted);
+}
+.tray-drive .dev { opacity: .65; margin-left: 6px; }
+
+/* 8 seconds, not 2: at reading speed a fast spin reads as a busy indicator, and this
+   is not one -- it says "there is a disc in there", which is a resting state. */
+.spinning .ic { animation: disc-spin 8s linear infinite; }
+@keyframes disc-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinning .ic { animation: none; } }
+
+/* The same fact as `.tray-*`, demoted to a footer once the table above it is the
+   thing worth watching. */
+.tray-strip {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 14px; border-top: 1px solid var(--line);
+  background: rgba(0,0,0,.14);
+  font-size: 12px; color: var(--fg-muted);
+}
+.tray-strip .dev { opacity: .65; margin-left: 5px; }
+.tray-strip .loaded { color: var(--fg-strong); }
+.tray-strip.bad { color: var(--bad); }
 .empty-state .big { font-size: var(--ic-empty); opacity: .3; margin-bottom: 16px;
                     display: block; line-height: 1; }
 .empty-state h2 { margin-bottom: 6px; }
@@ -630,7 +684,13 @@ td.stat .ic { font-size: var(--ic-nav); }
   .content { margin-left: 0; padding: 18px 16px 50px; }
   .kv { grid-template-columns: 1fr; gap: 2px 0; }
   .kv .k { margin-top: 9px; text-align: left; }
+  /* The search box has a 260px minimum, which on a narrow screen pushed the account
+     and coffee buttons off the right edge -- reachable only by scrolling a fixed
+     header sideways, which is to say not reachable. Let it collapse instead. */
+  .search { margin-left: 8px; min-width: 0; flex: 1 1 auto; }
+  .head-acts { gap: 0; }
 }
+@media (max-width: 520px) { .search { display: none; } }
 
 /* Shown while the service is still coming up. A login form is the wrong answer to
    "cannot reach the server" — it implies an account exists and invites the user to

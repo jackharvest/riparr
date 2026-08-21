@@ -52,12 +52,24 @@
       <input id="search" placeholder="Search" autocomplete="off"></label>
     <div class="grow"></div>
     <div class="pills" id="health-pills"></div>
+    <!-- Riparr is free and forkable; this is the only ask on the page, and it sits
+         next to the account menu rather than inside the interface proper. -->
+    <a class="icon-btn coffee" href="https://buymeacoffee.com/jackharvest"
+       target="_blank" rel="noopener noreferrer"
+       title="Buy me a coffee" aria-label="Buy me a coffee" data-ic="mug-hot"></a>
     <div class="menu-wrap">
       <button class="icon-btn" id="user-btn" title="Account" data-ic="user"></button>
       <div class="menu hidden" id="user-menu">
+        <div class="menu-head" id="menu-who">Signed in</div>
         <a href="#/system/status">System</a>
         <a href="#/settings/general">Change password</a>
         <a href="#" id="logout">Sign out</a>
+        <!-- The box has no power button, so this is the only way to stop it safely.
+             It belongs with the account, not on the Queue page beside a rip. -->
+        <div class="menu-sep"></div>
+        <div class="menu-label">Power</div>
+        <a href="#" id="sys-reboot">Restart</a>
+        <a href="#" id="sys-poweroff" class="danger">Shut down</a>
       </div>
     </div>
   </header>

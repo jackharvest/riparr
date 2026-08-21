@@ -138,6 +138,15 @@ Installing from a local checkout works today.
 
 ---
 
+## Support
+
+Riparr is free and GPL-3.0. If it saved you a shelf of discs and you feel like it:
+[**buy me a coffee**](https://buymeacoffee.com/jackharvest). That link is also the mug
+icon in the top right of the web interface — the one and only ask anywhere in the
+product.
+
+---
+
 ## Licence
 
 **Riparr is [GPL-3.0](LICENSE)** — the same licence as Sonarr, Radarr, Lidarr, Prowlarr,

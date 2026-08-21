@@ -119,7 +119,7 @@ This is what makes Riparr only ask you about a problem disc once, ever.
 | **Change password** | Web interface login |
 | **Update** | Check for and install a new Riparr version |
 | **Logs** | Download a log bundle for bug reports |
-| **Reboot / shut down** | Rarely needed — the box is built to survive losing power |
+| **Restart / shut down** | In the account menu (the person icon, top right), not on a page. Rarely needed — the box is built to survive losing power, but shutting down here is the safe way to stop it before unplugging |
 
 ---
 

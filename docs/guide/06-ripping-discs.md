@@ -69,6 +69,10 @@ Print the [LED reference card](led-reference.md) and tape it inside the lid.
 `riparr.local` shows what's in progress, what's queued, what's waiting on you, and how
 much room is left — in **discs**, not gigabytes.
 
+The Queue page is the landing page and it is one screen: the **Auto Rip** switch, then
+either the queue or the tray. The tray is the disc currently loaded, the drive holding
+it, and — if there is no drive — why not. **Refresh** and **Eject** are top right.
+
 You don't need to watch it. It's there for when the LED says something went wrong and you
 want to know what.
 
@@ -88,10 +92,13 @@ The rip is safe and paused. Fix the share and it picks up where it stopped.
 
 ## Yanking the cable
 
-Fine. Riparr expects it — there's no shutdown button on purpose.
+Fine. Riparr expects it. An interrupted rip is detected on the next boot and either
+resumes or is failed cleanly. You won't get a corrupt file in your library, and you
+won't get a corrupt SD card.
 
-An interrupted rip is detected on the next boot and either resumes or is failed cleanly.
-You won't get a corrupt file in your library, and you won't get a corrupt SD card.
+If the web page is in front of you anyway, **Shut down** is in the account menu — the
+person icon, top right. There is no button on the enclosure, so that menu is the only
+place it lives. It is the tidier way to stop the box; it is not the required one.
 
 ---
 
