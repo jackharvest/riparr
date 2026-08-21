@@ -213,8 +213,11 @@ def saved_network_password(ssid):
     """
     if not ssid:
         return "", "no network chosen"
+    # Same reasoning as the macOS keychain: polkit raises a dialog and waits on a
+    # person, and macOS's 60-second version of this timed out on a real user who had
+    # stepped away. See KEYCHAIN_TIMEOUT in hostos/darwin.py.
     out = _run(["nmcli", "-s", "-g", "802-11-wireless-security.psk",
-                "connection", "show", ssid], timeout=60).strip()
+                "connection", "show", ssid], timeout=900).strip()
     if out:
         return out, ""
     return "", "This machine hasn't saved a password for that network."

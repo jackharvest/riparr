@@ -182,10 +182,24 @@ MBR through `lzma` — no external tool, so the check works on the machine being
 
 ## Status
 
-Verified end to end on macOS 26.6.1, Apple Silicon: all screens render, the live scan
-returns real networks with correct band classification, and the write guards reject
-malformed device identifiers. **It has not yet written a physical card** — see
-[`JOURNAL.md`](../../JOURNAL.md).
+**It has written a physical card**, on 2026-08-21 — a 32 GB card in a Samsung USB
+reader, on macOS 26.6.1, Apple Silicon, and the first time this tool has ever touched
+real media. 150 seconds end to end:
+
+```
+unmount → write 1.54 GB @ 14 MB/s → read back and compare @ 93 MB/s
+        → provision (debugfs) → 15 checks read back → MakeMKV → eject
+```
+
+The read-back is the part worth trusting: `armbian.verify()` reads **fifteen** things out
+of the ext4 root and compares them — hostname, the SSID, the 64-hex PSK (asserting no
+passphrase reached the card), `wpa_supplicant` conf at mode 0600, the networkd unit, mDNS
+at both levels, ramlog off, the capped persistent journal, the wpa retry drop-in, the
+enabled-unit symlink, the root SSH key and its mode, the port in `/boot/riparr.conf`, and
+`/root/.not_logged_in_yet` removed. The write only reports `done` if all fifteen pass.
+
+Not yet exercised: the second half — find, connect, install — because the board is
+unplugged waiting on a USB-to-SATA adapter. See [`JOURNAL.md`](../../JOURNAL.md).
 
 ---
 

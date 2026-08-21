@@ -15,6 +15,11 @@ import subprocess
 
 NAME = "macOS"
 
+# The keychain prompt is answered by a human, and macOS never dismisses it on its own.
+# Long enough that walking away and coming back still works; finite so a wedged
+# `security` cannot hang the interface forever.
+KEYCHAIN_TIMEOUT = 900
+
 
 # ───────────────────────────────── Wi-Fi ─────────────────────────────────
 
@@ -146,9 +151,19 @@ def keychain_wifi_password(ssid):
         p = subprocess.run(
             ["security", "find-generic-password",
              "-D", "AirPort network password", "-a", ssid, "-w"],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=KEYCHAIN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # This waits on a *person*, not on a computer. The old 60 seconds was a guess
+        # at how long a dialog takes to answer, and it is wrong for anybody who walked
+        # away from the machine -- which, given this tool then spends ten unattended
+        # minutes writing a card, is most of them.
+        return "", ("The macOS password dialog wasn't answered, so nothing was read. "
+                    "Press the button again when you're ready to approve it.")
     except Exception as e:
-        return "", str(e)
+        # Never surface a raw exception here. This is the most consequential dialog in
+        # the tool, and `Command '[...]' timed out after 60 seconds` is the least
+        # actionable sentence it could possibly end with.
+        return "", "macOS wouldn't hand over the saved password (%s)." % type(e).__name__
     if p.returncode == 0:
         return p.stdout.rstrip("\n"), ""
     err = (p.stderr or "").strip()
