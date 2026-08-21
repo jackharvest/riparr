@@ -222,11 +222,10 @@ class Bridge:
         script = os.path.join(RUNDIR, "write.sh")
         with open(script, "w") as f:
             f.write("#!/bin/sh\nexec %s %s --image %s --dev %s --toml %s "
-                    "--progress %s --total %d --sha256 %s --xz %s%s\n" % (
+                    "--progress %s --total %d --sha256 %s%s\n" % (
                         _q(sys.executable), _q(os.path.join(HERE, "writer.py")),
                         _q(image), _q(dev), _q(toml_path),
                         _q(self.progress_path), total, _q(sha),
-                        _q(core.find_xz() or "xz"),
                         (" --verify" if verify else "")
                         + ((" --makemkv " + _q(mkv)) if mkv else "")
                         + ((" --conf " + _q(conf)) if conf else "")))

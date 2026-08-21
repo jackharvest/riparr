@@ -133,33 +133,42 @@ between a non-Mac owner and a working Riparr.
 | **Python** | 3.9, which is what macOS ships. Every module compiles under it, so no user-installed Python is needed. |
 | **Verified on** | macOS 26.6.1, Apple Silicon |
 
-### Two tools macOS does not ship
+### One tool macOS does not ship
 
-`xz` and `debugfs` (e2fsprogs) are both **Homebrew-only**, and e2fsprogs is keg-only so it
-is not even linked onto `PATH`.
+`debugfs` (e2fsprogs) is **Homebrew-only**, and keg-only, so it is not even linked onto
+`PATH`. It is needed because the Armbian image is a single ext4 partition and macOS
+cannot mount ext4 — see `armbian.py`.
 
-They worked for a year because the app is launched from a shell and inherits a
+`xz` used to be here too, and is gone: both uses moved to the **stdlib `lzma` module**,
+which links the same liblzma macOS already ships inside libarchive.
+
+| | |
+|---|---|
+| `xz -dc` in the write pipeline | `lzma.open()`. Verified byte-identical on the real image — same SHA-256, same length. |
+| `xz --robot --list` for the progress total | `core.uncompressed_size()` parses the `.xz` stream footer and index directly. Cross-checked against `xz --robot --list`: exact match. |
+
+> **It is five times slower and that does not matter.** Measured on the real image:
+> `xz -dc` 2.1 s, `lzma.open()` 10.5 s — 735 vs 147 MB/s. The SD card takes ~20 MB/s, so
+> the decompressor keeps seven times the headroom it needs and the write stays gated on
+> the card exactly as before.
+
+`debugfs` worked for a year because the app is launched from a shell and inherits a
 developer's `PATH`. `launchctl getenv PATH` is empty, so a Finder-launched `.app` gets the
-launchd default — `/usr/bin:/bin:/usr/sbin:/sbin` — and **both disappear.** Bundling this
-as an `.app`, which is the largest item on the backlog, would have broken card writing on
-the machine it was developed on.
+launchd default — `/usr/bin:/bin:/usr/sbin:/sbin` — and it **disappears.** Bundling this
+as an `.app`, the largest item on the backlog, would have broken card writing on the
+machine it was developed on.
 
-Both are now resolved by absolute path (`core.find_xz`, `armbian.find_debugfs`) with
-`PATH` as a fallback rather than the mechanism, and `core.missing_tools()` refuses the
-write **before** the authorization dialog with the reason and the command that fixes it.
-Previously a missing `xz` surfaced as *"The write stopped unexpectedly"* plus an errno,
-after the user had typed an admin password and the card had been unmounted.
+It resolves by absolute path now (`armbian.find_debugfs`) with `PATH` as a fallback
+rather than the mechanism, and `core.missing_tools()` refuses the write **before** the
+authorization dialog, with the reason and the command that fixes it.
 
 `core.image_layout()` decides whether a given image needs `debugfs` at all by reading its
-MBR through the **stdlib `lzma` module** — deliberately not through `xz(1)`, because the
-machine being diagnosed is the one that does not have it.
+MBR through `lzma` — no external tool, so the check works on the machine being diagnosed.
 
-> **`xz(1)` is removable.** Python's `lzma` is in the standard library and links the same
-> liblzma that macOS already ships in libarchive. Both uses — `xz -dc` in the write
-> pipeline and `xz --robot --list` for the progress total — have stdlib equivalents. That
-> would delete one of the two Homebrew dependencies outright. Not done here: it is
-> surgery on the one code path that erases somebody's card, and it deserves its own
-> change with its own testing.
+> **`debugfs` has no stdlib equivalent**, and it is the hardest thing to carry to Windows.
+> [`docs/design/cross-platform.md`](../../docs/design/cross-platform.md) sets out the
+> three ways out, of which giving the image a FAT boot partition is the one that deletes
+> the problem rather than porting it.
 
 ## Status
 

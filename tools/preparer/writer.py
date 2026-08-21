@@ -9,6 +9,7 @@ launched through osascript has no usable pipe back to the parent.
 import argparse
 import errno
 import hashlib
+import lzma
 import json
 import os
 import subprocess
@@ -231,11 +232,31 @@ def run(args):
     publish(st, phase="write", written=0, total=total, rate=0, eta=0,
             message="Writing the operating system")
 
-    # Absolute path, handed down by app.py. `xz` is Homebrew-only and this process
-    # is root under sudo -- neither of which is guaranteed to have /opt/homebrew on
-    # PATH. app.py refuses the write before elevating if it cannot find one at all.
-    xz = subprocess.Popen([args.xz, "-dc", args.image], stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE)
+    # Decompression is the standard library's, not xz(1).
+    #
+    # xz is Homebrew-only on macOS and does not exist on Windows at all, and Python has
+    # linked liblzma -- the same library macOS already ships inside libarchive -- since
+    # forever. Dropping the subprocess removes a dependency here and removes the
+    # question entirely from the Windows and Linux ports.
+    #
+    # dd stays: it handles the block alignment the raw device demands, and it is the
+    # half that was never the portability problem.
+    #
+    # Measured on the real image, 1.54 GB expanded, hashing as it goes:
+    #   xz -dc      2.1s   (~735 MB/s)
+    #   lzma.open  10.5s   (~147 MB/s)
+    # Five times slower and it does not matter: the SD card takes ~20 MB/s, so the
+    # decompressor still has seven times the headroom it needs and the write stays
+    # gated on the card exactly as before. Worth writing down so the number is not
+    # rediscovered as a regression.
+    try:
+        src = lzma.open(args.image, "rb")
+    except Exception as e:
+        publish(st, phase="error",
+                message="The operating system image could not be opened.",
+                detail="%s\n\nThe download may be incomplete or corrupt." % e)
+        return 1
+
     dd = subprocess.Popen(["dd", "of=%s" % rdev, "ibs=1m", "obs=4m"],
                           stdin=subprocess.PIPE,
                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -252,16 +273,23 @@ def run(args):
             errs[name] = ""
 
     threads = [threading.Thread(target=drain, args=(n, f), daemon=True)
-               for n, f in (("dd", dd.stderr), ("xz", xz.stderr))]
+               for n, f in (("dd", dd.stderr),)]
     for t in threads:
         t.start()
 
     written, t0, last = 0, time.time(), 0.0
     digest = hashlib.sha256()
     broke = False
+    lzma_err = ""
     try:
         while True:
-            chunk = xz.stdout.read(4 << 20)
+            try:
+                chunk = src.read(4 << 20)
+            except Exception as e:
+                # A truncated or corrupt .xz raises here rather than at open time.
+                lzma_err = str(e)
+                broke = True
+                break
             if not chunk:
                 break
             try:
@@ -282,8 +310,8 @@ def run(args):
                         message="Writing the operating system")
                 last = now
     finally:
-        # Order matters. Closing dd's stdin lets it finish; closing xz's stdout stops it
-        # blocking on a pipe nobody is draining, which is what used to hang forever.
+        # Closing dd's stdin is what lets it finish and flush. There is no second
+        # process to unblock any more -- the decompressor is in this one.
         try:
             dd.stdin.close()
         except Exception:
@@ -294,34 +322,24 @@ def run(args):
             dd.kill()
             dd_rc = -1
         try:
-            xz.stdout.close()
+            src.close()
         except Exception:
             pass
-        try:
-            xz_rc = xz.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            xz.terminate()
-            try:
-                xz_rc = xz.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                xz.kill()
-                xz_rc = -1
         for t in threads:
             t.join(timeout=5)
 
     err = (errs.get("dd") or "").strip()
-    xerr = (errs.get("xz") or "").strip()
+    xerr = lzma_err
 
     if broke or written == 0:
         publish(st, phase="error",
                 message="The card could not be written to.",
                 detail=_explain(err, xerr, dd_rc, rdev))
         return 1
-    if dd_rc != 0 or xz_rc != 0:
+    if dd_rc != 0:
         publish(st, phase="error",
                 message="The write failed before it finished.",
-                detail=(err or xerr
-                        or "dd exited %s, xz exited %s" % (dd_rc, xz_rc)))
+                detail=(err or xerr or "dd exited %s." % dd_rc))
         return 1
     if total and written < total:
         publish(st, phase="error",
@@ -532,8 +550,6 @@ def main():
     ap.add_argument("--progress", required=True)
     ap.add_argument("--total", type=int, default=0)
     ap.add_argument("--sha256", default="", help="expected image checksum")
-    ap.add_argument("--xz", default="xz",
-                    help="absolute path to xz(1); see core.find_xz")
     ap.add_argument("--conf", default="", help="riparr.conf to place on the boot partition")
     ap.add_argument("--makemkv", default="",
                     help="directory of MakeMKV tarballs to copy onto the boot partition")

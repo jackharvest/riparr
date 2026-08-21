@@ -683,25 +683,21 @@ def find_images(assets):
 
 # ─────────────────────── External tools we shell out to ───────────────────────
 #
-# Two of them do not ship with macOS, and neither is on a stock PATH:
+# One of them does not ship with macOS and is not on a stock PATH:
 #
-#   xz        Homebrew only. macOS has liblzma (bsdtar links it) but no xz(1).
 #   debugfs   e2fsprogs, Homebrew only, and keg-only so it is not linked onto PATH.
 #             Needed only for single-partition ext4 images -- Armbian, which is what
 #             this project actually writes -- because macOS cannot mount ext4.
 #
-# These worked for a year purely because the app is launched from a shell and inherits
+# `xz` used to be here too. It is gone: both uses moved to the stdlib `lzma` module,
+# which links the same liblzma macOS already ships inside libarchive. That was optional
+# while this was a Mac tool and became mandatory the moment Windows entered scope --
+# see docs/design/cross-platform.md.
+#
+# debugfs worked for a year purely because the app is launched from a shell and inherits
 # a developer's PATH. `launchctl getenv PATH` is empty, so a Finder-launched .app gets
-# the launchd default -- /usr/bin:/bin:/usr/sbin:/sbin -- and both disappear. That is
-# the very next thing on the backlog (scenario A1), so resolve by absolute path now.
-
-XZ_CANDIDATES = [
-    "/opt/homebrew/bin/xz",          # Homebrew, Apple Silicon
-    "/usr/local/bin/xz",             # Homebrew, Intel
-    "/opt/local/bin/xz",             # MacPorts
-    "/usr/bin/xz",                   # if a future macOS ever ships it
-]
-
+# the launchd default -- /usr/bin:/bin:/usr/sbin:/sbin -- and it disappears. That is the
+# very next thing on the backlog (scenario A1), so resolve by absolute path.
 
 def find_tool(name, candidates):
     """Absolute path first, PATH second. PATH is not there under launchd."""
@@ -709,10 +705,6 @@ def find_tool(name, candidates):
         if os.path.exists(p) and os.access(p, os.X_OK):
             return p
     return shutil.which(name)
-
-
-def find_xz():
-    return find_tool("xz", XZ_CANDIDATES)
 
 
 def image_layout(path):
@@ -748,12 +740,6 @@ def missing_tools(image=None):
     errno -- which names neither the cause nor the fix.
     """
     out = []
-    if not find_xz():
-        out.append({
-            "tool": "xz",
-            "why": "needed to expand the operating system image",
-            "fix": "brew install xz",
-        })
     # Only ask for debugfs when the image actually needs it. Warning about a tool this
     # particular write will never run is its own kind of wrong.
     if image and image_layout(image) in ("ext4-root", "unknown"):
@@ -772,21 +758,56 @@ def missing_tools(image=None):
     return out
 
 
+def _xz_varint(buf, pos):
+    """The .xz multibyte integer: 7 bits per byte, high bit continues. (value, pos)."""
+    value, shift = 0, 0
+    while True:
+        if pos >= len(buf) or shift > 63:
+            raise ValueError("bad multibyte integer")
+        b = buf[pos]
+        pos += 1
+        value |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return value, pos
+        shift += 7
+
+
 def uncompressed_size(path):
-    """Read the real expanded size out of the xz index, for an honest progress bar."""
+    """Read the real expanded size out of the xz index, for an honest progress bar.
+
+    Parses the container rather than shelling out to `xz --robot --list`. xz(1) is
+    Homebrew-only on macOS and absent on Windows, and this is a fixed, documented
+    layout: the last 12 bytes are the stream footer, whose Backward Size field says how
+    far back the index starts, and the index carries one uncompressed size per block.
+
+    Reading the footer means this stays O(1) rather than decompressing 1.4 GiB to find
+    out how big it is. Cross-checked against `xz --robot --list` on the real image.
+    """
     try:
-        xz = find_xz()
-        if not xz:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(-12, os.SEEK_END)
+            footer = f.read(12)
+            if footer[10:12] != b"YZ":
+                return 0
+            backward = (int.from_bytes(footer[4:8], "little") + 1) * 4
+            index_at = size - 12 - backward
+            if index_at < 0:
+                return 0
+            f.seek(index_at)
+            index = f.read(backward)
+
+        if not index or index[0] != 0x00:      # Index Indicator
             return 0
-        out = subprocess.run([xz, "--robot", "--list", path],
-                             capture_output=True, text=True).stdout
-        for line in out.splitlines():
-            f = line.split("\t")
-            if f[0] == "file":
-                return int(f[4])
+        count, pos = _xz_varint(index, 1)
+        total = 0
+        for _ in range(count):
+            _unpadded, pos = _xz_varint(index, pos)     # compressed, not wanted
+            uncompressed, pos = _xz_varint(index, pos)
+            total += uncompressed
+        return total
     except Exception:
-        pass
-    return 0
+        return 0
 
 
 def ensure_password(assets):
