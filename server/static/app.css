@@ -799,8 +799,67 @@ code {
 .ar-text { min-width: 0; }
 .ar-title { font-size: 16px; color: var(--fg-strong); margin-bottom: 2px; }
 .ar-sub { font-size: 13px; color: var(--fg-muted); }
-.ar-blockers {
-  margin: 8px 0 0 18px; padding: 0; display: grid; gap: 5px;
-  font-size: 13px; color: var(--fg);
+.ar-text { flex: 1; }
+
+/* ── the Auto Rip checklist ──
+   A three-column grid so the marks, the names and the values line up down the page.
+   A checklist whose columns do not line up has to be read row by row; one that does
+   can be scanned for the row that is not green, which is the entire point of it. */
+.ar-checks { margin-top: 10px; }
+.ar-checks > summary {
+  cursor: pointer; font-size: 12.5px; color: var(--fg-muted);
+  list-style: none; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 0; user-select: none;
 }
-.ar-blockers li { padding-left: 3px; }
+.ar-checks > summary::-webkit-details-marker { display: none; }
+.ar-checks > summary::after {
+  content: ""; width: 5px; height: 5px; margin-left: 2px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform .15s;
+}
+.ar-checks[open] > summary::after { transform: rotate(-135deg) translate(-1px, -1px); }
+.ar-checks > summary:hover { color: var(--fg-strong); }
+.cl-sum { display: inline-flex; align-items: center; gap: 7px; }
+.cl-sum.ok   { color: var(--ok); }
+.cl-sum.warn { color: var(--warn); }
+.cl-sum.fail { color: var(--bad); }
+
+.ar-checks ul {
+  margin: 9px 0 2px; padding: 0; list-style: none;
+  display: grid; grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr);
+  gap: 1px 12px; font-size: 12.5px;
+}
+.ar-checks li { display: contents; }
+.cl-mark { line-height: 1.7; }
+li.ok   .cl-mark { color: var(--ok); }
+li.warn .cl-mark { color: var(--warn); }
+li.fail .cl-mark { color: var(--bad); }
+.cl-what { color: var(--fg); line-height: 1.7; }
+.cl-detail { color: var(--fg-muted); line-height: 1.7; min-width: 0; }
+li.warn .cl-detail, li.fail .cl-detail { color: var(--fg-strong); }
+/* The reason sits under the row it belongs to, spanning the two right-hand columns so
+   it hangs off the name rather than restarting at the left edge. */
+.cl-why {
+  grid-column: 2 / -1; color: var(--fg-muted);
+  font-size: 11.5px; line-height: 1.5; padding-bottom: 6px;
+}
+
+/* Three columns on a phone leaves the value column about ten characters wide, so
+   "Pioneer BDR-XD08U · /dev/sr0" wraps to four lines. Stack instead -- each row
+   becomes its own little grid, the mark keeps a column, and the value and the reason
+   hang under the name. `display: contents` has to go with it: a row that stacks
+   cannot also be a participant in one grid shared with every other row.
+
+   This has to live *below* the rules it overrides rather than in the shell's
+   media query up the file, which is earlier in source order and therefore loses. */
+@media (max-width: 820px) {
+  .ar-checks ul { display: block; }
+  .ar-checks li {
+    display: grid; grid-template-columns: auto minmax(0, 1fr);
+    gap: 0 10px; padding-bottom: 9px;
+  }
+  .cl-what, .cl-detail { line-height: 1.5; }
+  .cl-detail, .cl-why { grid-column: 2; }
+  .cl-why { padding-bottom: 0; padding-top: 3px; }
+}

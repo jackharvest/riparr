@@ -43,6 +43,25 @@ usually works.
 - **VLANs:** mDNS doesn't cross subnets. Your computer must be on the same network segment
   as the box.
 
+## It isn't auto ripping
+
+**Open `riparr.local` and read the checklist under the Auto Rip switch.** It lists every
+prerequisite whether or not it's met, so the row that isn't green is your answer:
+
+| Row | Means |
+|---|---|
+| **Riparr can read discs** | MakeMKV is installed |
+| **The MakeMKV key is current** | There's a key and it hasn't lapsed. Amber means it lapses within a week — rips fail the day it does |
+| **A drive to read them in** | An optical drive is on the USB bus. A working adapter shows up here even with no disc in the tray |
+| **Somewhere to put the files** | A library share is configured *and* has been tested |
+| **Room to work** | Amber only if the card is too full to rip safely, in which case discs are refused before they start |
+
+A red row disables the switch entirely and links to the page that fixes it. An amber row
+leaves Auto Rip on but explains why a disc you just put in might not get ripped.
+
+**All green and still nothing?** Check the switch is actually on — the checklist tells you
+Riparr *could* rip, not that you've asked it to. Then read the next section.
+
 ## Nothing happens when I insert a disc
 
 **LED stays solid green:** the disc wasn't detected.

@@ -224,43 +224,106 @@ def drive_eject(user=Depends(require_user)):
 # ─────────────────────────────── auto rip ───────────────────────────────
 
 def _autorip_state():
-    """Auto Rip is only offered once it could actually succeed.
+    """Auto Rip's prerequisites, every one of them, whether or not it is met.
 
-    Every blocker names the thing to fix and where to fix it, because a switch that
-    silently does nothing is worse than one that is honestly unavailable.
+    This used to return only the things that were wrong. That is the right shape for
+    refusing to enable the switch and the wrong shape for the question people actually
+    arrive with, which is "it isn't auto ripping, why not" — asked most often when the
+    switch is ON and something downstream of it has since broken. A list that is empty
+    when things are fine cannot answer that; a checklist can.
+
+    Three states, and only `fail` blocks:
+
+      ok    met, with `detail` naming what met it
+      warn  Auto Rip still runs, but a disc put in right now may not get ripped --
+            the card is full, or the key dies this week
+      fail  Auto Rip cannot work at all and the switch stays unavailable
     """
     mk = P.makemkv_status()
     share = db.default_share()
-    blockers = []
+    drives = P.optical_drives()
+    cap = _capacity(P.storage_status()["free_bytes"])
+    warn_days = int(db.get("warn_key_days") or 7)
+    checks = []
+
+    def check(what, state, detail, why=None, where=None):
+        checks.append({"what": what, "state": state, "detail": detail,
+                       "why": why, "where": where})
+
+    # 1. Something to read discs with, in software...
+    if mk.get("installed"):
+        check("Riparr can read discs", "ok",
+              "MakeMKV %s" % (mk.get("version") or "installed"))
+    else:
+        check("Riparr can read discs", "fail", "MakeMKV isn't installed",
+              "Riparr has no way to read a disc without it.", "#/settings/general")
+
+    # 2. ...and a licence for it. Kept separate from the install because a key that
+    #    lapsed last week is a working install and a dead appliance, and those two
+    #    facts want separate lines.
+    days = mk.get("days_left")
     if not mk.get("installed"):
-        blockers.append({"what": "MakeMKV isn't installed",
-                         "why": "Riparr needs it to read discs.",
-                         "where": "#/settings/general"})
+        check("The MakeMKV key is current", "fail", "Nothing installed to key yet",
+              "Install MakeMKV first.", "#/settings/general")
     elif not db.get("makemkv_key"):
-        blockers.append({"what": "No MakeMKV key",
-                         "why": "Encrypted discs won't decode without one.",
-                         "where": "#/settings/general"})
-    elif mk.get("days_left") is not None and mk["days_left"] <= 0:
-        blockers.append({"what": "The MakeMKV key has expired",
-                         "why": "Rips will fail until it's replaced.",
-                         "where": "#/settings/general"})
+        check("The MakeMKV key is current", "fail", "No key entered",
+              "Encrypted discs won't decode without one.", "#/settings/general")
+    elif days is not None and days <= 0:
+        check("The MakeMKV key is current", "fail", "Expired",
+              "Every rip will fail until it's replaced.", "#/settings/general")
+    elif days is not None and days <= warn_days:
+        check("The MakeMKV key is current", "warn",
+              "%s key, %d day%s left" % ((mk.get("key_type") or "Beta").capitalize(),
+                                         days, "" if days == 1 else "s"),
+              "Rips start failing the day it lapses.", "#/settings/general")
+    else:
+        check("The MakeMKV key is current", "ok",
+              "%s key%s" % ((mk.get("key_type") or "Licence").capitalize(),
+                            ", %d days left" % days if days is not None else ""))
+
+    # 3. Something to read discs with, in hardware.
+    if drives:
+        d = drives[0]
+        name = " ".join(x for x in (d.get("vendor"), d.get("model")) if x)
+        check("A drive to read them in", "ok",
+              "%s · %s" % (name or "Optical drive", d["device"]))
+    else:
+        check("A drive to read them in", "fail", "No optical drive detected",
+              "A working USB bridge appears here even with no disc in the tray.",
+              "#/system/status")
+
+    # 4. Somewhere for the finished file to go. Configured and *tested* are one row:
+    #    an untested share is not a second problem, it is the same problem earlier.
     if not share:
-        blockers.append({"what": "No library share",
-                         "why": "Finished rips would have nowhere to go.",
-                         "where": "#/settings/library"})
+        check("Somewhere to put the files", "fail", "No library share",
+              "Finished rips would have nowhere to go.", "#/settings/library")
     elif not share.get("verified_at"):
-        blockers.append({"what": "The share hasn't been tested",
-                         "why": "Riparr writes a test file before trusting it.",
-                         "where": "#/settings/library"})
-    if not P.optical_drives():
-        blockers.append({"what": "No optical drive detected",
-                         "why": "Nothing to read discs with.",
-                         "where": "#/system/status"})
+        check("Somewhere to put the files", "fail", "Share hasn't been tested",
+              "Riparr writes a test file before it will trust a share with a rip.",
+              "#/settings/library")
+    else:
+        check("Somewhere to put the files", "ok",
+              "//%s/%s" % (share["host"], share["path"]))
+
+    # 5. Room to work. Not a blocker: under D11 a small buffer means stream mode, not
+    #    a refused disc. "degraded" is the one case where a disc really is turned away,
+    #    which is a switch that looks on and a box that looks broken.
+    if cap["mode"] == "degraded":
+        check("Room to work", "warn", cap["phrase"],
+              "Discs are refused before they start rather than failing at 90%.",
+              "#/system/status")
+    else:
+        check("Room to work", "ok", cap["phrase"])
+
+    # Kept in the shape the enable endpoint and older API callers expect: the headline
+    # of a failing check is its `detail`, which is the specific thing that is wrong.
+    blockers = [{"what": c["detail"], "why": c["why"], "where": c["where"]}
+                for c in checks if c["state"] == "fail"]
 
     ready = not blockers
     enabled = bool(db.get("auto_rip")) and ready
     return {"enabled": enabled, "ready": ready, "blockers": blockers,
-            "requested": bool(db.get("auto_rip"))}
+            "checks": checks, "requested": bool(db.get("auto_rip"))}
 
 
 class AutoRip(BaseModel):

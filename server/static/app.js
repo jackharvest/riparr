@@ -690,8 +690,21 @@ function trayStrip(drives, optical) {
 
 const pct = (a, b) => (b ? Math.min(100, (a / b) * 100).toFixed(1) : 0);
 
+/* The checklist is the answer to "it isn't auto ripping" -- a question asked most
+   often with the switch already ON, when something downstream broke afterwards. So
+   every prerequisite is listed whether or not it is met, and each row says what
+   currently satisfies it rather than only complaining when it doesn't.
+
+   Closed by default once everything passes: five green rows on the landing page are
+   noise until the day they aren't. `<details>` rather than a JS disclosure, so the
+   open/closed state survives the poll that re-renders this page. */
+const CHECK_ICON = { ok: "circle-check", warn: "triangle-exclamation", fail: "circle-exclamation" };
+
 function autoRipPanel(ar) {
   const on = ar.enabled;
+  const checks = ar.checks || [];
+  const fails = checks.filter(c => c.state === "fail").length;
+  const warns = checks.filter(c => c.state === "warn").length;
   return `
     <div class="autorip ${on ? "on" : ar.ready ? "" : "blocked"}">
       <label class="ar-switch ${ar.ready ? "" : "off"}">
@@ -704,11 +717,31 @@ function autoRipPanel(ar) {
         <div class="ar-sub">${
           on ? "Insert a disc and walk away. Riparr does the rest and ejects when it's done."
           : ar.ready ? "Turn this on and Riparr starts ripping the moment a disc is inserted."
-          : "Not available yet:"}</div>
-        ${ar.ready ? "" : `<ul class="ar-blockers">${ar.blockers.map(b => `
-          <li><a href="${esc(b.where)}"><b>${esc(b.what)}</b></a> — ${esc(b.why)}</li>`).join("")}</ul>`}
+          : "Not available yet \u2014 see below."}</div>
+        ${checkList(checks, fails, warns)}
       </div>
     </div>`;
+}
+
+function checkList(checks, fails, warns) {
+  if (!checks.length) return "";
+  const summary =
+    fails && warns ? `${fails} to fix, ${warns} to watch`
+    : fails ? `${fails} thing${fails === 1 ? "" : "s"} to fix first`
+    : warns ? `${warns} thing${warns === 1 ? "" : "s"} worth knowing about`
+    : `All ${checks.length} checks pass`;
+  const worst = fails ? "fail" : warns ? "warn" : "ok";
+  return `<details class="ar-checks" ${fails || warns ? "open" : ""}>
+    <summary><span class="cl-sum ${worst}">${icon(CHECK_ICON[worst])} ${esc(summary)}</span></summary>
+    <ul>${checks.map(c => `
+      <li class="${esc(c.state)}">
+        <span class="cl-mark">${icon(CHECK_ICON[c.state] || "circle-info")}</span>
+        <span class="cl-what">${esc(c.what)}</span>
+        <span class="cl-detail">${c.where && c.state !== "ok"
+          ? `<a href="${esc(c.where)}">${esc(c.detail)}</a>` : esc(c.detail)}</span>
+        ${c.state !== "ok" && c.why ? `<span class="cl-why">${esc(c.why)}</span>` : ""}
+      </li>`).join("")}</ul>
+  </details>`;
 }
 
 views.history = async () => {
