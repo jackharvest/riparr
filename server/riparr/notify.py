@@ -77,7 +77,28 @@ def _fanout(event, title, body, payload):
             log.warning("%s notification failed: %s", name, e)
 
 
+class BadWebhookURL(ValueError):
+    """A notification target that is not a plain http(s) URL."""
+
+
+def _check_url(url):
+    """Reject anything that is not an http(s) URL with a host.
+
+    These URLs come from settings, so a signed-in user chooses them -- and pointing the
+    box at a service on the same LAN (a self-hosted ntfy, a webhook on the NAS) is the
+    normal, intended case, so private addresses are deliberately allowed. What is not
+    allowed is a non-network scheme: `file://`, `gopher://` and friends turn a webhook
+    field into a way to make the box read local files or speak odd protocols, and no
+    legitimate notification target needs them.
+    """
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise BadWebhookURL("Notification URLs must start with http:// or https://")
+    return url
+
+
 def _post(url, data, headers=None, content_type="application/json"):
+    _check_url(url)
     body = data if isinstance(data, bytes) else json.dumps(data).encode()
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", content_type)

@@ -4,6 +4,7 @@ which is what makes Homepage widgets and multi-unit setups nearly free later.
 """
 import json
 import os
+import threading
 import time
 
 from fastapi import (FastAPI, File, HTTPException, Request, Response, Depends,
@@ -11,16 +12,24 @@ from fastapi import (FastAPI, File, HTTPException, Request, Response, Depends,
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from itsdangerous import URLSafeSerializer, BadSignature
+from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 from . import (__version__, db, makemkv as MK, notify as NT, platform as P,
                rip as RIP, shares as SH, system as SY, updater)
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
+SESSION_MAX_AGE = 60 * 60 * 24 * 30       # 30 days, matched to the cookie's Max-Age
 
-app = FastAPI(title="Riparr", version=__version__, docs_url="/api/docs",
-              openapi_url="/api/openapi.json")
+# The interactive API docs and the schema they read describe every endpoint, so on the
+# shipped box — which sits on an untrusted LAN behind one login — they are turned off
+# rather than handed to anyone who asks before signing in. They stay on in development
+# (MOCK mode) where they are useful and the box is a laptop, not an appliance.
+_DOCS = None if P.IS_APPLIANCE else "/api/docs"
+_OPENAPI = None if P.IS_APPLIANCE else "/api/openapi.json"
+
+app = FastAPI(title="Riparr", version=__version__, docs_url=_DOCS,
+              openapi_url=_OPENAPI)
 
 
 def _secret():
@@ -28,6 +37,14 @@ def _secret():
     if not s:
         s = db.set("session_secret", os.urandom(32).hex())
     return s
+
+
+def _rotate_secret():
+    """Mint a fresh session secret, which invalidates every cookie signed with the old
+    one. This is how a password change logs out other devices: the sessions are
+    stateless (nothing to delete), so revocation is done by changing the key they were
+    signed under."""
+    return db.set("session_secret", os.urandom(32).hex())
 
 
 # ─────────────────────────────── password recovery ───────────────────────────────
@@ -80,7 +97,7 @@ def _startup():
 # ─────────────────────────────── auth ───────────────────────────────
 
 def _serializer():
-    return URLSafeSerializer(_secret(), salt="riparr-session")
+    return URLSafeTimedSerializer(_secret(), salt="riparr-session")
 
 
 def current_user(request: Request):
@@ -88,7 +105,11 @@ def current_user(request: Request):
     if not raw:
         return None
     try:
-        return _serializer().loads(raw).get("u")
+        # max_age turns the timestamp the token already carried — and never checked —
+        # into a real expiry: a cookie older than the window is refused as a bad
+        # signature, so a leaked one does not stay valid forever. SignatureExpired is a
+        # subclass of BadSignature, so both land here.
+        return _serializer().loads(raw, max_age=SESSION_MAX_AGE).get("u")
     except BadSignature:
         return None
 
@@ -112,12 +133,56 @@ class Login(BaseModel):
     password: str
 
 
+# ── login throttle ──
+# The box is single-user and sits on a LAN, so a wrong password is either a typo or a
+# guessing run. This slows the second case without punishing the first: the delay is
+# applied *before* the response and grows with the run of recent failures, so a few
+# fat-fingered tries cost nothing perceptible while a script hits an escalating wall.
+#
+# It is a delay, not a lockout, and on purpose. A hard lockout on the only account of a
+# headless appliance is a denial-of-service an attacker can trigger against the owner;
+# making them wait a few seconds cannot lock anyone out of their own box.
+_LOGIN_LOCK = threading.Lock()
+_login_fails = 0            # consecutive failures across the box; reset on any success
+_LOGIN_DELAY_CAP = 5.0      # seconds; the longest anyone ever waits
+_LOGIN_ALERT_AT = 5         # failures before it becomes a logged security event
+
+
+def _login_delay():
+    with _LOGIN_LOCK:
+        n = _login_fails
+    if n <= 0:
+        return 0.0
+    return min(_LOGIN_DELAY_CAP, 0.5 * (2 ** (n - 1)))
+
+
+def _login_failed(username):
+    global _login_fails
+    with _LOGIN_LOCK:
+        _login_fails += 1
+        n = _login_fails
+    if n == _LOGIN_ALERT_AT:
+        SY.component("Auth").warning(
+            "%d failed sign-ins in a row (most recent for '%s'). If this wasn't you, "
+            "someone on the network may be guessing the password.", n, username)
+
+
+def _login_succeeded():
+    global _login_fails
+    with _LOGIN_LOCK:
+        _login_fails = 0
+
+
 @app.post("/api/auth/login")
 def login(body: Login, response: Response):
+    time.sleep(_login_delay())            # pay the accumulated cost before answering
     if not db.verify_user(body.username, body.password):
+        _login_failed(body.username)
         raise HTTPException(status_code=401, detail="Wrong username or password")
+    _login_succeeded()
     token = _serializer().dumps({"u": body.username, "t": int(time.time())})
-    response.set_cookie(COOKIE, token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    response.set_cookie(COOKIE, token, httponly=True, samesite="lax",
+                        max_age=SESSION_MAX_AGE)
     return {"ok": True, "username": body.username}
 
 
@@ -138,12 +203,20 @@ class PasswordChange(BaseModel):
 
 
 @app.post("/api/auth/password")
-def change_password(body: PasswordChange, request: Request, user=Depends(require_user)):
+def change_password(body: PasswordChange, request: Request, response: Response,
+                    user=Depends(require_user)):
     if not db.verify_user(user, body.current_password):
         raise HTTPException(status_code=400, detail="Current password is wrong")
     if len(body.new_password) < 8:
         raise HTTPException(status_code=400, detail="Use at least 8 characters")
     db.set_password(user, body.new_password)
+    # Changing the password logs out everywhere else. Rotating the signing secret
+    # invalidates every existing cookie; re-issuing this one keeps the person who just
+    # changed it signed in on this device, which is the expected behaviour.
+    _rotate_secret()
+    token = _serializer().dumps({"u": user, "t": int(time.time())})
+    response.set_cookie(COOKIE, token, httponly=True, samesite="lax",
+                        max_age=SESSION_MAX_AGE)
     return {"ok": True}
 
 
@@ -177,7 +250,7 @@ def setup_user(body: SetupUser, response: Response):
     db.create_user(body.username, body.password)
     token = _serializer().dumps({"u": body.username, "t": int(time.time())})
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax",
-                        max_age=60 * 60 * 24 * 30)
+                        max_age=SESSION_MAX_AGE)
     return {"ok": True}
 
 
@@ -845,10 +918,23 @@ def index():
 
 @app.get("/{path:path}")
 def spa(path: str):
-    """Client-side routing: unknown paths return the shell, not a 404."""
+    """Client-side routing: unknown paths return the shell, not a 404.
+
+    The file lookup is contained to STATIC. `os.path.join` on an attacker path with
+    `../` in it happily walks out of the static directory, and FileResponse would then
+    serve any file the service account can read — the database (session secret, password
+    hashes, the share password) included, with no login. So resolve the real path and
+    refuse anything that is not inside STATIC, the same guard system.py already uses for
+    log and backup downloads. Falling through to the shell is the right refusal here:
+    a traversal attempt is not a route, so it gets the same answer any other non-file
+    path does rather than a 403 that confirms the file exists.
+    """
     if path.startswith("api/"):
         raise HTTPException(status_code=404, detail="No such endpoint")
-    candidate = os.path.join(STATIC, path)
-    if path and os.path.isfile(candidate):
-        return FileResponse(candidate)
+    if path:
+        candidate = os.path.realpath(os.path.join(STATIC, path))
+        root = os.path.realpath(STATIC)
+        if (candidate == root or candidate.startswith(root + os.sep)) \
+                and os.path.isfile(candidate):
+            return FileResponse(candidate)
     return FileResponse(os.path.join(STATIC, "index.html"))

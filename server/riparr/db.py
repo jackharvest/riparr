@@ -128,6 +128,29 @@ DEFAULTS = {
 }
 
 
+def _lock_down(path):
+    """Keep the database readable only by the account that owns it.
+
+    The file holds the account password hashes, the session signing secret and the SMB
+    share password in the clear -- it is the one file on the box that must not be read
+    by anyone but the service. SQLite creates it under the process umask, which on a
+    stock image leaves it world-readable, so any local account could open it. Tighten
+    the directory to 0700 and every database file (the DB plus its WAL/SHM sidecars) to
+    0600. Best-effort: a filesystem that cannot represent these modes is not a reason to
+    refuse to start.
+    """
+    try:
+        os.chmod(os.path.dirname(path), 0o700)
+    except OSError:
+        pass
+    for p in (path, path + "-wal", path + "-shm"):
+        try:
+            if os.path.exists(p):
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
+
+
 def conn():
     c = getattr(_local, "c", None)
     if c is None:
@@ -136,6 +159,7 @@ def conn():
         c.row_factory = sqlite3.Row
         c.execute("PRAGMA journal_mode=WAL")      # survives the yanked cable (D4)
         c.execute("PRAGMA synchronous=NORMAL")
+        _lock_down(DB_PATH)                        # WAL/SHM now exist; lock them too
         _local.c = c
     return c
 
@@ -184,11 +208,27 @@ def create_user(username, password):
     c.commit()
 
 
+# A real pbkdf2 hash of nothing in particular, used only to burn the same time a genuine
+# verify would when the username does not exist -- see verify_user.
+_DUMMY_HASH = None
+
+
 def verify_user(username, password):
     from passlib.hash import pbkdf2_sha256
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = pbkdf2_sha256.hash("riparr-timing-equaliser")
     row = conn().execute("SELECT password_hash FROM users WHERE username=?",
                          (username,)).fetchone()
+    # An unknown username used to return before hashing anything, so a wrong username
+    # answered in microseconds and a real one took a pbkdf2 verify -- the gap told an
+    # attacker which usernames exist. Verify against a dummy hash instead, so both paths
+    # cost the same, then return False.
     if not row:
+        try:
+            pbkdf2_sha256.verify(password, _DUMMY_HASH)
+        except Exception:
+            pass
         return False
     try:
         return pbkdf2_sha256.verify(password, row["password_hash"])
