@@ -13,6 +13,8 @@ import socket
 import subprocess
 import time
 
+from . import drives as DRV, optical as OPT
+
 def _is_appliance():
     """Are we running on the box, or on a development machine?
 
@@ -122,19 +124,151 @@ STAGING = "/srv/staging" if IS_APPLIANCE else "/tmp/riparr-staging"
 
 # ─────────────────────────────── optical ───────────────────────────────
 
+# A drive's own capabilities never change while it is plugged in, and asking costs a
+# SCSI command that spins an idle drive up. Asked once per device identity and kept.
+_caps_cache = {}
+
+
+def _capabilities(device, vendor, model):
+    key = (device, vendor, model)
+    if key not in _caps_cache:
+        _caps_cache[key] = OPT.capabilities(device)
+    return _caps_cache[key]
+
+
 def optical_drives():
+    """Every optical drive, what it can read, and what is in it right now.
+
+    `present`, `media` and `label` used to be hardcoded to False/None/None on real
+    hardware -- nothing ever filled them in, and the mock branch was the only place a
+    disc was ever reported as loaded. Everything that starts a rip keys off `present`,
+    so on the appliance there was no way to start one: the watcher never fired, Auto
+    Rip was inert, and the "Rip this disc" button never rendered. `optical.py` is what
+    makes these fields answer from the hardware.
+
+    Kept cheap on purpose. The disc watcher calls this every three seconds forever, so
+    what happens per call is one ioctl the kernel answers from state it already has,
+    plus -- only when a disc is actually loaded -- the media and label lookups. The
+    drive's own capability list is cached, and MakeMKV is not consulted at all; that is
+    `libredrive_status()`, which is far too expensive to sit in a poll loop.
+    """
     if MOCK:
-        return [{"device": "/dev/sr0", "vendor": "Pioneer", "model": "BDR-XD08U",
-                 "media": "BD-ROM", "label": "THE_MATRIX", "present": True}]
+        return _mock_drives()
     out = []
     for dev in sorted(_glob("/dev/sr*")):
         name = os.path.basename(dev)
         # The names are in sysfs; reading them saves showing a nameless drive.
         vendor = _read("/sys/block/%s/device/vendor" % name).strip()
         model = _read("/sys/block/%s/device/model" % name).strip()
-        out.append({"device": dev, "vendor": vendor, "model": model,
-                    "media": None, "label": None, "present": False})
+
+        caps = _capabilities(dev, vendor, model)
+        present, tray = OPT.tray_status(dev)
+        uhd, known = DRV.expectation(vendor, model, can_read_bluray=caps.get("bluray"))
+
+        d = {"device": dev, "vendor": vendor, "model": model,
+             "present": present, "tray": tray,
+             "media": None, "label": None, "size_bytes": 0,
+             "reads_dvd": bool(caps.get("dvd")), "reads_bluray": bool(caps.get("bluray")),
+             "uhd": uhd, "known_as": known["name"] if known else None,
+             "form": known["form"] if known else None}
+
+        if present:
+            profile, _ = OPT.get_configuration(dev)
+            d["media"] = OPT.PROFILES.get(profile) if profile else None
+            d["media_kind"] = OPT.profile_kind(profile) if profile else None
+            d["label"] = OPT.volume_label(dev) or None
+            d["size_bytes"] = OPT.disc_size_bytes(dev)
+        out.append(d)
     return out
+
+
+# The mock drive and the mock disc are separate knobs because the interesting cases
+# are the mismatches -- a UHD disc in a Blu-ray drive is the whole reason `drives.py`
+# exists, and it has to be reachable without owning either.
+#
+#   RIPARR_MOCK_DRIVE = uhd | bluray | dvd | none
+#   RIPARR_MOCK_DISC  = uhd | bluray | dvd | none
+_MOCK_DRIVES = {
+    "uhd": {"vendor": "HL-DT-ST", "model": "BD-RE BU40N",
+            "reads_dvd": True, "reads_bluray": True},
+    "bluray": {"vendor": "Pioneer", "model": "BDR-XD08U",
+               "reads_dvd": True, "reads_bluray": True},
+    "dvd": {"vendor": "HL-DT-ST", "model": "DVDRAM GP65NB60",
+            "reads_dvd": True, "reads_bluray": False},
+}
+
+_MOCK_DISCS = {
+    "uhd": {"media": "BD-ROM", "media_kind": "bluray", "label": "DUNE_UHD",
+            "size_bytes": 62 * 2 ** 30},
+    "bluray": {"media": "BD-ROM", "media_kind": "bluray", "label": "THE_MATRIX",
+               "size_bytes": 24 * 2 ** 30},
+    "dvd": {"media": "DVD-ROM", "media_kind": "dvd", "label": "THE_MATRIX",
+            "size_bytes": 7 * 2 ** 30},
+}
+
+
+def _mock_drives():
+    which = os.environ.get("RIPARR_MOCK_DRIVE", "bluray")
+    if which == "none":
+        return []
+    spec = _MOCK_DRIVES.get(which, _MOCK_DRIVES["bluray"])
+    caps = {"dvd": spec["reads_dvd"], "bluray": spec["reads_bluray"]}
+    uhd, known = DRV.expectation(spec["vendor"], spec["model"],
+                                 can_read_bluray=caps["bluray"])
+    d = {"device": "/dev/sr0", "vendor": spec["vendor"], "model": spec["model"],
+         "present": False, "tray": "empty",
+         "media": None, "media_kind": None, "label": None, "size_bytes": 0,
+         "reads_dvd": caps["dvd"], "reads_bluray": caps["bluray"],
+         "uhd": uhd, "known_as": known["name"] if known else None,
+         "form": known["form"] if known else None}
+
+    disc = os.environ.get("RIPARR_MOCK_DISC", "bluray")
+    if disc != "none" and disc in _MOCK_DISCS:
+        # A drive that cannot read the medium still reports the tray as loaded -- that
+        # is what the hardware does, and pretending otherwise would hide the exact
+        # mismatch this knob exists to exercise.
+        d.update(_MOCK_DISCS[disc], present=True, tray="loaded")
+    return [d]
+
+
+# ─────────────────────── UHD: the question only MakeMKV can answer ───────────────────────
+
+# Probing costs a makemkvcon run, so the answer is kept for the life of the process
+# per drive identity. A drive does not gain LibreDrive support while plugged in, and
+# the one thing that would change the answer -- installing MakeMKV -- restarts nothing
+# but is caught by the `installed` guard below returning `None` until it is there.
+_libredrive_cache = {}
+
+
+def libredrive_status(drive):
+    """Whether MakeMKV can get underneath this drive's firmware -- the UHD question.
+
+    `drives.py` explains why nothing else can answer it: there is no MMC profile for
+    UHD, so neither the drive nor the disc will say. MakeMKV's LibreDrive is the only
+    route to a UHD disc on this hardware, and MakeMKV is the only thing that knows
+    whether it has one.
+
+    Returns "enabled", "possible", "no", or None for "not asked / cannot tell".
+    """
+    if MOCK:
+        return {"uhd": "enabled", "bluray": "no", "dvd": None}.get(
+            os.environ.get("RIPARR_MOCK_DRIVE", "bluray"))
+    if not drive or not drive.get("reads_bluray"):
+        return None                      # a DVD drive has no UHD question to ask
+    if not makemkv_status().get("installed"):
+        return None
+
+    key = (drive.get("vendor"), drive.get("model"))
+    if key in _libredrive_cache:
+        return _libredrive_cache[key]
+
+    binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
+    m = re.search(r"sr(\d+)$", drive.get("device") or "")
+    out = _run([binary, "-r", "--cache=1", "info", "disc:%s" % (m.group(1) if m else "0")],
+               timeout=120) or ""
+    verdict = DRV.parse_libredrive(out)
+    _libredrive_cache[key] = verdict
+    return verdict
 
 
 def _usb_devices():

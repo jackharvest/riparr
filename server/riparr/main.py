@@ -14,8 +14,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
-from . import (__version__, db, makemkv as MK, notify as NT, platform as P,
-               rip as RIP, shares as SH, system as SY, updater)
+from . import (__version__, db, drives as DRV, led as LED, makemkv as MK,
+               notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
+               updater)
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
@@ -92,6 +93,7 @@ def _startup():
     _check_password_reset()
     SY.start_scheduler()
     RIP.start()
+    LED.start()
 
 
 # ─────────────────────────────── auth ───────────────────────────────
@@ -264,7 +266,7 @@ def setup_complete(user=Depends(require_user)):
 
 # Typical payload of the largest disc of each kind, for expressing capacity in discs.
 DISC_BYTES = {"dvd": 8 * 2**30, "bluray": 25 * 2**30, "uhd": 66 * 2**30}
-WINDOW_BYTES = 4 * 2**30          # the streaming window (D11)
+WINDOW_BYTES = RIP.WINDOW_BYTES   # the streaming window (D11) — one definition, not two
 
 
 DISC_NAMES = {"uhd": ("4K UHD disc", "4K UHD discs"),
@@ -274,18 +276,29 @@ DISC_ORDER = ("uhd", "bluray", "dvd")
 
 
 def _capacity(free_bytes):
-    """Capacity, in the terms D11 actually operates in.
+    """Capacity, in the terms the engine actually operates in.
 
-    Under adaptive streaming, a buffer too small for the next disc does NOT mean the
-    disc is refused — it means the rip runs in stream mode instead of burst. Reporting
-    "no room" here would contradict the whole design and push people toward buying a
-    larger card for a benefit that does not exist.
+    This used to describe D11 as designed rather than as built, and the two disagree.
+    D11 says a buffer too small for the next disc means stream mode, not refusal — but
+    follow-copy is not built (D22), so `rip._plan_transfer()` **refuses**. This
+    function was reporting `mode: "stream"` and the sentence "discs are never refused
+    for space" in precisely the case where the engine would refuse the next disc put
+    in the tray. A status page that contradicts the engine is worse than one that says
+    something disappointing.
+
+    So the mode is now read off the same seam `_plan_transfer` branches on, and the
+    two cannot drift: when `supports_follow_copy` goes True, both switch together.
+
+    The window is also subtracted before counting discs, which it never was. On a card
+    with 16 GB free the old arithmetic promised two DVDs and the engine allowed one.
 
     "Room for 1 more disc" was true and useless: a disc is anywhere from 8 to 66 GB,
     so the number silently meant Blu-ray and was wrong by a factor of eight for a DVD.
     Count each kind and say which is which.
     """
-    by_kind = {k: max(0, int(free_bytes // v)) for k, v in DISC_BYTES.items()}
+    streaming = SH.Transport.supports_follow_copy
+    usable = max(0, free_bytes - WINDOW_BYTES)
+    by_kind = {k: int(usable // v) for k, v in DISC_BYTES.items()}
     discs = by_kind["bluray"]
 
     if free_bytes < WINDOW_BYTES:
@@ -302,10 +315,15 @@ def _capacity(free_bytes):
         phrase = "Room for " + parts[0]
         if len(parts) > 1:
             phrase += " — or " + ", or ".join(parts[1:])
-    else:
+    elif streaming:
         mode, phrase = "stream", "Streaming — discs are never refused for space"
+    else:
+        # Room to work in, but not room for a whole disc of any kind, and no
+        # follow-copy to rescue it. Say what will happen, because it is about to.
+        mode, phrase = "full", "Not enough room for another disc — let the queue drain"
 
     return {"discs_free": discs, "by_kind": by_kind, "mode": mode, "phrase": phrase,
+            "streaming": streaming,
             "disc_names": {k: list(v) for k, v in DISC_NAMES.items()},
             "window_bytes": WINDOW_BYTES}
 
@@ -323,10 +341,12 @@ def status(user=Depends(require_user)):
         "clock": P.clock_status(),
         "wifi": P.wifi_status(),
         "makemkv": P.makemkv_status(),
-        "drives": P.optical_drives(),
+        "drives": _drive_report(),
         "share": db.default_share(),
         "setup_complete": bool(db.get("setup_complete")),
         "autorip": _autorip_state(),
+        "led": {"detected": LED.available(), "state": LED.current_state(),
+                "device": LED.SPI_DEV},
     }
 
 
@@ -335,7 +355,101 @@ def drive_eject(user=Depends(require_user)):
     return P.eject()
 
 
+@app.post("/api/system/led/test")
+def led_test(user=Depends(require_user)):
+    """Walk the LED through its primaries so a fresh build can be proved in ten seconds.
+
+    Reports `detected: false` rather than a cheerful success when there is nothing
+    wired up — "I ran the test and the box said OK and the LED stayed dark" is the
+    least debuggable outcome this feature could offer.
+    """
+    return LED.self_test()
+
+
+@app.get("/api/drives/guide")
+def drives_guide(user=Depends(require_user)):
+    """Which drive to buy — the list `docs/guide/01-what-you-need.md` has promised.
+
+    Served from the same registry the running box identifies its own drive against,
+    so the advice and the diagnosis can never disagree.
+    """
+    return {"drives": DRV.buying_guide(), "libredrive_list": DRV.LIBREDRIVE_LIST}
+
+
 # ─────────────────────────────── auto rip ───────────────────────────────
+
+def _reads_phrase(drive):
+    """What this drive reads, in the words a person shopping for one would use.
+
+    4K is named separately from Blu-ray on purpose. They are one checkbox on a
+    retail listing and two entirely different pieces of hardware (`drives.py`), and
+    collapsing them here would reproduce the exact confusion the drive registry
+    exists to prevent.
+    """
+    parts = []
+    if drive.get("reads_dvd"):
+        parts.append("DVD")
+    if drive.get("reads_bluray"):
+        parts.append("Blu-ray")
+    if not parts:
+        return "capability unknown"
+    if drive.get("uhd") == "yes" or drive.get("libredrive") == "enabled":
+        parts.append("4K UHD")
+    return ", ".join(parts)
+
+
+def _drive_report():
+    """The drives, plus the two things that are too expensive for the disc watcher.
+
+    `optical_drives()` runs every three seconds and stays cheap. LibreDrive costs a
+    `makemkvcon` run and the UHD label is derived from it, so both are attached here,
+    on the status request a human made.
+    """
+    out = []
+    for d in P.optical_drives():
+        d = dict(d)
+        d["libredrive"] = P.libredrive_status(d)
+        # MakeMKV outranks the registry in both directions. The registry is what to
+        # expect of a drive you have not bought; MakeMKV is what this drive does.
+        verdict = {"enabled": "yes", "no": "no"}.get(d["libredrive"]) or d.get("uhd")
+        d["uhd_label"] = DRV.UHD_LABEL.get(verdict)
+        d["reads"] = _reads_phrase(d)
+        # Family and refusal come from the engine rather than being re-derived in the
+        # browser. "Is this a UHD disc" has a subtle answer (rip.disc_family) and the
+        # frontend having its own copy of it is how two screens start disagreeing.
+        family = RIP.disc_family(d)
+        d["disc_family"] = family
+        d["disc_word"] = RIP.DISC_WORD.get(family)
+        d["cannot_read"] = (RIP.unreadable_reason(d, d["libredrive"])
+                            if d.get("present") else None)
+        d["space_warning"] = _space_warning(d) if d.get("present") else None
+        out.append(d)
+    return out
+
+
+def _space_warning(drive):
+    """"This disc is bigger than the room you have", said before the button is pressed.
+
+    Preflight already refuses a title that does not fit (`rip._plan_transfer`), but it
+    can only do that *after* reading the disc, which is a minute in and past the point
+    the user committed. The disc's own size is known the moment it spins up, so the
+    tray can say it up front.
+
+    Hedged on purpose: this compares the whole **disc**, and what actually gets written
+    is the main title, which is smaller by an unknown amount. So it is a caution and
+    never a refusal — the certainty stays where the real number is.
+    """
+    if SH.Transport.supports_follow_copy:
+        return None                      # streaming, so size stopped mattering
+    size = drive.get("size_bytes") or 0
+    free = P.storage_status().get("free_bytes") or 0
+    if not size or size + WINDOW_BYTES <= free:
+        return None
+    return ("This is a %d GB disc and there's %d GB free on the card. The film itself "
+            "is smaller than the whole disc, so it may still fit — Riparr will say "
+            "for certain once it has read it."
+            % (size // 2 ** 30, free // 2 ** 30))
+
 
 def _autorip_state():
     """Auto Rip's prerequisites, every one of them, whether or not it is met.
@@ -397,12 +511,15 @@ def _autorip_state():
               "%s key%s" % ((mk.get("key_type") or "Licence").capitalize(),
                             ", %d days left" % days if days is not None else ""))
 
-    # 3. Something to read discs with, in hardware.
+    # 3. Something to read discs with, in hardware. What it *reads* belongs on this
+    #    row too: "a drive is attached" and "that drive can read the discs on your
+    #    shelf" are the same prerequisite asked one level deeper, and the second is
+    #    the one that ruins an evening.
     if drives:
         d = drives[0]
         name = " ".join(x for x in (d.get("vendor"), d.get("model")) if x)
         check("A drive to read them in", "ok",
-              "%s · %s" % (name or "Optical drive", d["device"]))
+              "%s · %s" % (name or "Optical drive", _reads_phrase(d)))
     else:
         check("A drive to read them in", "fail", "No optical drive detected",
               "A working USB bridge appears here even with no disc in the tray.",

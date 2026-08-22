@@ -12,10 +12,10 @@
 | 🔵 **Breathing blue** | Ripping | ❌ |
 | 🟠 **Pulsing amber** | Uploading to your library | ❌ **Still working** |
 | 🟢 **Green flash → idle** | Done and verified | ✅ |
-| 🔴 **Solid red** | Disc failed — check `riparr.local` | ✅ |
+| 🔴 **Solid red** | Disc failed, or this drive can't read it — check `riparr.local` | ✅ |
 | 🟣 **Purple** | Already ripped this disc | ✅ |
-| 🟠 **Blinking amber** | Paused — can't reach your library | ✅ |
-| 🟠 **Blinking amber (at boot)** | Couldn't join WiFi — connect to `Riparr-Setup` | ✅ |
+| 🟠 **Blinking amber** | Waiting for you to answer something, or can't reach your library | ✅ |
+| 🟠 **Blinking amber (at boot)** | Couldn't join WiFi — the box is not on your network | ✅ |
 
 ---
 
@@ -27,3 +27,11 @@ web page tells you *what*.
 
 **Rough timings:** DVD ~30 min · Blu-ray ~3 hr · 4K most of a day. Limited by WiFi, not
 the drive.
+
+**Wiring one up:** the LED hangs off SPI, which has to be turned on first —
+`sudo armbian-config` → System → Hardware → tick `spi-spidev`, then reboot. Riparr picks
+it up without being restarted.
+
+**No LED?** Riparr works fine without one — the web page is then the only place status
+appears. **System → Status** says whether one is detected and has a **Test the LED**
+button that walks it through red, green, blue, white.

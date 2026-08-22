@@ -77,6 +77,8 @@ ADDED_COLUMNS = {
         ("question", "TEXT"),          # what Riparr needs a human to answer
         ("local_path", "TEXT"),        # staging file, so a resumed job can find it
         ("bytes_verified", "INTEGER DEFAULT 0"),
+        ("warning", "TEXT"),           # non-fatal: the rip proceeds, the user is told
+        ("disc_family", "TEXT"),       # dvd | bluray | uhd -- what was actually in the tray
     ],
     "discs": [
         ("title_index", "INTEGER"),    # the remembered title choice (R5: fix once, ever)

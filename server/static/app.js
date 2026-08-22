@@ -111,6 +111,7 @@ function capacityPhrase(st) {
     return m ? `Room for <b>${m[1]}</b> ${esc(m[2])}` : esc(st.phrase);
   }
   if (st.mode === "stream") return `<b>Streaming</b> — discs are never refused for space`;
+  if (st.mode === "full") return `<b>Not enough room</b> for another disc`;
   return `<b>Not enough room</b> to rip safely`;
 }
 /* ── formatting for the System tables ─────────────────────
@@ -657,6 +658,8 @@ function jobRow(j) {
         <span class="badge">${esc(STATE_LABEL[j.state] || j.state)}</span>
         <button class="icon-btn" data-cancel="${j.id}" title="Cancel">${icon("xmark")}</button>
       </div>
+      ${j.warning ? `<div class="job-warn">${icon("triangle-exclamation")}
+        <span>${esc(j.warning)}</span></div>` : ""}
       <div class="bar"><i style="width:${active}%"></i></div>
       <div class="job-legs">
         <span class="${j.state === "ripping" ? "on" : ripPct >= 100 ? "did" : ""}">Rip ${leg(ripPct)}</span>
@@ -727,7 +730,35 @@ const gb = (b) => `${(b / 1073741824).toFixed(1)} GB`;
    missing: no drive at all, a drive with an open tray, or a disc sitting in one. */
 
 function driveName(d) {
-  return [d.vendor, d.model].filter(Boolean).join(" ") || "Optical drive";
+  return d.known_as || [d.vendor, d.model].filter(Boolean).join(" ") || "Optical drive";
+}
+
+/* ── what the drive can read ──
+   Three chips, always all three, lit or not. Showing only what a drive *can* do would
+   answer the question people ask ("what have I got?") and not the one that costs them
+   money ("can it do the discs on my shelf?") — and 4K is the one that costs money, so
+   it is never folded into Blu-ray however tempting the width saving is.
+
+   The server decides the 4K chip. It is the one of the three that hardware cannot
+   self-report: there is no MMC profile for UHD, so the answer comes from the drive
+   registry and from MakeMKV, and neither of those is in the browser. */
+function driveTags(d) {
+  const uhdOn = d.uhd === "yes" || d.libredrive === "enabled";
+  const chips = [
+    ["DVD", !!d.reads_dvd, null],
+    ["Blu-ray", !!d.reads_bluray, null],
+    ["4K UHD", uhdOn, d.reads_bluray ? d.uhd_label : null],
+  ];
+  return `<span class="drive-tags">${chips.map(([label, on, title]) =>
+    `<span class="tag ${on ? "on" : ""}"${title ? ` title="${esc(title)}"` : ""}>${label}</span>`
+  ).join("")}</span>`;
+}
+
+/* The drive, its device node and what it reads — one line, used by every tray shape
+   so the three cannot drift apart. */
+function driveLine(d) {
+  return `<p class="tray-drive">${esc(driveName(d))}
+    <span class="dev">${esc(d.device)}</span>${driveTags(d)}</p>`;
 }
 
 function tray(drives, optical, canRip) {
@@ -749,17 +780,31 @@ function tray(drives, optical, canRip) {
       <div class="big">${icon("compact-disc")}</div>
       <h2>Nothing in the queue</h2>
       <p>Insert a disc and close the tray. Riparr takes it from there.</p>
-      <p class="tray-drive">${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></p>
+      ${driveLine(d)}
     </div>`;
   }
+  /* A disc this drive cannot read is not an error state to be discovered three
+     minutes into a rip. It is the tray, described accurately, with the reason. */
+  if (d.cannot_read) {
+    return `<div class="empty-state tray-loaded bad">
+      <div class="big">${icon("triangle-exclamation")}</div>
+      <h2>${esc(d.label || d.disc_word || "Disc loaded")}</h2>
+      <p class="why">${esc(d.cannot_read)}</p>
+      ${driveLine(d)}
+    </div>`;
+  }
+  /* "BD-ROM" is what the drive calls it. "4K UHD disc" is what is printed on the box
+     the user is holding, and the server works out which of the two this is. */
+  const what = d.disc_word || d.media;
   return `<div class="empty-state tray-loaded">
     <div class="big spinning">${icon("compact-disc")}</div>
     <h2>${esc(d.label || "Disc loaded")}</h2>
-    <p>${d.media ? `${esc(d.media)} \u2014 loaded and ready.` : "Loaded and ready."}</p>
+    <p>${what ? `${esc(what)} \u2014 loaded and ready.` : "Loaded and ready."}</p>
+    ${d.space_warning ? `<p class="why warn-text">${esc(d.space_warning)}</p>` : ""}
     ${canRip ? `<div class="btn-row tray-go">
       <button class="btn primary" id="rip-now">${icon("play")} Rip this disc</button>
     </div>` : ""}
-    <p class="tray-drive">${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></p>
+    ${driveLine(d)}
   </div>`;
 }
 
@@ -773,9 +818,10 @@ function trayStrip(drives, optical) {
   const d = drives.find(x => x.present) || drives[0];
   return `<div class="tray-strip">${icon("compact-disc")}
     <span>${esc(driveName(d))} <span class="dev">${esc(d.device)}</span></span>
+    ${driveTags(d)}
     <span class="grow"></span>
     <span class="${d.present ? "loaded" : "muted"}">${
-      d.present ? esc(d.label || "disc loaded") : "tray empty"}</span></div>`;
+      d.present ? esc(d.label || d.disc_word || "disc loaded") : "tray empty"}</span></div>`;
 }
 
 const pct = (a, b) => (b ? Math.min(100, (a / b) * 100).toFixed(1) : 0);
@@ -1163,6 +1209,23 @@ settingsPages.general = async (s) => {
    sections stacked down the page, a 21px heading with a rule under it, a toolbar of
    icon-over-label buttons where a page has actions, and tables at 14px with bold
    sentence-case headers. The *arrs put nothing side by side here and neither do we. */
+/* Mirrors `led.STATES` and docs/guide/led-reference.md. A printed card cannot import
+   a constant, so the next best thing is that all three use the same names. */
+const LED_WORDS = {
+  booting: "White, pulsing slowly — booting or waiting for setup",
+  joining: "Blue, blinking — joining Wi-Fi",
+  ready: "Solid green — ready for a disc",
+  ripping: "Blue, breathing — ripping",
+  uploading: "Amber, pulsing — uploading to your library",
+  verifying: "Amber, pulsing — verifying",
+  done: "Green flash — done and verified",
+  failed: "Solid red — the disc failed",
+  duplicate: "Purple — already ripped this one",
+  needs_you: "Amber, blinking — waiting for you",
+  no_share: "Amber, blinking — can't reach your library",
+  no_wifi: "Amber, blinking — no Wi-Fi",
+};
+
 const SYSTEM_TABS = [
   ["status",  "Status"],
   ["tasks",   "Tasks"],
@@ -1250,9 +1313,34 @@ systemPages.status = async () => {
           ? `expires ${esc(m.key_expires)} — ${m.days_left} days`
           : "none"}</div>
         <div class="k">Drive</div><div class="v">${(st.drives && st.drives.length)
-          ? st.drives.map(d => esc(d.name || d.device)).join(", ")
+          ? st.drives.map(d => `${esc(driveName(d))} <span class="muted">· ${esc(d.reads || "capability unknown")}</span>`).join("<br>")
           : `<span class="muted">${esc((st.optical && st.optical.summary) || "no drive detected")}</span>`}</div>
+        <div class="k">4K UHD</div><div class="v">${(() => {
+          const d = (st.drives || [])[0];
+          if (!d) return `<span class="muted">—</span>`;
+          if (!d.reads_bluray) return `<span class="muted">Not applicable — this is a DVD drive</span>`;
+          if (d.libredrive === "enabled") return `Yes — MakeMKV reports LibreDrive is active`;
+          if (d.libredrive === "no") return `<span class="muted">No — MakeMKV can't get underneath this drive's firmware</span>`;
+          if (d.uhd === "yes") return `Expected to work — this drive is on Riparr's list`;
+          if (d.uhd === "firmware") return `<span class="muted">Depends on firmware — check MakeMKV's LibreDrive list</span>`;
+          return `<span class="muted">Unconfirmed — 4K needs a specific drive, and this one isn't on Riparr's list</span>`;
+        })()}</div>
       </div>
+    </div>
+
+    <div class="section"><h2>Status LED<span class="grow"></span>
+      <button class="btn sm" id="led-test">Test the LED</button></h2>
+      <div class="kv">
+        <div class="k">Wiring</div><div class="v">${st.led && st.led.detected
+          ? `Detected on <span class="muted">${esc(st.led.device)}</span>`
+          : `<span class="muted">Not detected. Riparr works without one — the web
+             interface is then the only place status appears. SPI has to be enabled in
+             the device tree before ${esc((st.led && st.led.device) || "the device node")}
+             exists.</span>`}</div>
+        <div class="k">Showing</div><div class="v">${st.led
+          ? `${esc(LED_WORDS[st.led.state] || st.led.state)}` : "—"}</div>
+      </div>
+      <div class="test-out" id="led-out"></div>
     </div>
 
     <div class="section"><h2>Network</h2>
@@ -1669,6 +1757,26 @@ function wireContent(section, sub) {
     } catch (e) { toast(e.message, "bad"); }
     route();
   });
+
+  const ledTest = $("#led-test");
+  if (ledTest) ledTest.onclick = async () => {
+    const out = $("#led-out");
+    ledTest.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Walking red, green, blue, white…";
+    try {
+      const r = await api.post("/api/system/led/test");
+      // `detected: false` is not an error and must not be dressed as a success. A
+      // box that says "OK" at an LED that never lit is the least debuggable result
+      // this button could produce.
+      out.className = `test-out ${r.detected ? "ok" : "warn"}`;
+      out.textContent = r.message;
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    ledTest.disabled = false;
+  };
 
   const bkNow = $("#bk-now");
   if (bkNow) bkNow.onclick = async () => {

@@ -13,7 +13,7 @@ credentials, run a short first-run wizard — and then never touch the settings 
 
 After that the loop is: **insert disc → close tray → walk away → disc ejects when done.**
 No keyboard, no screen, no clicking. The finished MKV lands on your network share,
-correctly named — **streamed out as it rips, so a 32GB card is all you ever need.**
+correctly named, and a status LED says what the box is doing when you are not at a browser.
 
 ---
 
@@ -30,10 +30,11 @@ that cost time to discover. Those two reload context fastest.
 
 ## Status
 
-**Early implementation.** The SD preparer and the Riparr service both exist and run.
-**The board boots.** On 2026-08-20 the Orange Pi Zero 2W came up on Armbian, joined Wi-Fi,
-took a DHCP lease and synced its clock over the internet — about four minutes from
-power-on. That is the first-boot path, end to end.
+**Feature-complete for a first real rip, and waiting on one part.** The SD preparer, the
+Riparr service, the rip engine and the status LED all exist and run. **The board boots.**
+On 2026-08-20 the Orange Pi Zero 2W came up on Armbian, joined Wi-Fi, took a DHCP lease
+and synced its clock over the internet — about four minutes from power-on. That is the
+first-boot path, end to end.
 
 Getting there took discovering that **the board is an Orange Pi Zero 2W (Allwinner H618),
 not a Raspberry Pi** — a different company's product with a nearly identical name, on
@@ -42,7 +43,7 @@ been working the whole time: `riparr.local` never resolved because the image shi
 avahi and mDNS was off on the link, and `armbian-ramlog` kept every log in a ramdisk that
 a power pull erased. Both are fixed. [`JOURNAL.md`](JOURNAL.md) has the full account.
 
-Last working session: **2026-08-20**
+Last working session: **2026-08-22**
 
 | | |
 |---|---|
@@ -65,17 +66,28 @@ dead for a year. Nothing in the software or the board is outstanding. The bridge
 BOM decision, not a cable: it must **name** optical/ATAPI support
 ([why](docs/design/hardware.md)).
 
-**After that, the last open design risk** in
-[`docs/design/risks.md`](docs/design/risks.md):
+**What is built and has never met a disc.** The rip engine exists end to end — identify,
+fingerprint, refuse duplicates, drive `makemkvcon`, transfer, verify, purge, and resume
+an interrupted job on boot. So does drive and disc detection: Riparr asks the drive what
+it can read (`DVD` / `Blu-ray` / `4K UHD`), asks MakeMKV whether 4K will work on it, and
+refuses a disc the drive cannot read instead of failing forty minutes in. The status LED
+is written too. **None of it has been exercised against real hardware**, because that
+needs the adapter.
+
+**The two things still designed and not built**, both [core] on the backlog:
+
+1. **Adaptive streaming (D11).** Follow-copy is not implemented, so a rip is transferred
+   after it completes and preflight refuses a title that does not fit the card. Gated on
+   R8 below.
+2. **AP-mode fallback** (`Riparr-Setup`). A mistyped Wi-Fi password still means writing
+   the card again.
+
+**The last open design risk** in [`docs/design/risks.md`](docs/design/risks.md):
 
 1. ~~**Does MakeMKV run on an Allwinner H618 with 1 GB?** (R1)~~ — **retired
    2026-08-20.** It builds and runs: 307 MB peak RSS, 3:57 wall clock, no swap touched.
-2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design below,
-   and is now the only unanswered design risk. Needs a disc and a working drive.
-
-**What is not built:** the rip engine. Queue, history and disc history read real tables
-that nothing populates yet — so **Auto Rip has nothing behind it**, even though the switch
-and its readiness checks are real.
+2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design, and is
+   the only unanswered design risk. Needs a disc and a working drive.
 
 **The GitHub repo is not published yet**, so the install one-liner has nothing to fetch.
 Installing from a local checkout works today.
@@ -87,6 +99,7 @@ Installing from a local checkout works today.
 |---|---|
 | [`docs/guide/`](docs/guide/README.md) | The full setup-to-first-rip path, in order |
 | [`docs/guide/led-reference.md`](docs/guide/led-reference.md) | Printable LED card |
+| [`docs/guide/01-what-you-need.md`](docs/guide/01-what-you-need.md#which-drive) | **Which drive to buy** — and why 4K is a different drive, not a setting |
 | [`docs/guide/08-troubleshooting.md`](docs/guide/08-troubleshooting.md) | Organized by symptom, not by subsystem |
 | [`tools/preparer/`](tools/preparer/README.md) | **SD preparer** — native macOS window. One authorization prompt, band-aware Wi-Fi scan, PSK derivation, disk guards, and headless provisioning for both Raspberry Pi and Allwinner card layouts |
 | [`tools/flasher/`](tools/flasher/README.md) | The same thing for scripts and CI. Needs a TTY. |
@@ -100,6 +113,7 @@ Installing from a local checkout works today.
 | [`docs/design/architecture.md`](docs/design/architecture.md) | Stack, partitions, the streaming rip pipeline, image build |
 | [`docs/design/hardware.md`](docs/design/hardware.md) | BOM, power design, form-factor variants, thermal |
 | [`docs/design/board-support.md`](docs/design/board-support.md) | Every board in the Zero 2W footprint, tiered by effort to support |
+| [`server/riparr/drives.py`](server/riparr/drives.py) | The drive registry — capability, form factor, and the 4K question (D26) |
 | [`docs/design/storage-sizing.md`](docs/design/storage-sizing.md) | What card size actually buys, all math shown |
 | [`docs/design/risks.md`](docs/design/risks.md) | Known risks + the validation plan that retires them |
 | [`docs/design/security.md`](docs/design/security.md) | Pen-test findings + threat model. **First pass remediated; re-review on real hardware pending.** |
@@ -118,27 +132,32 @@ Installing from a local checkout works today.
 - **Stack:** Python / FastAPI + SQLite, single process, static frontend
 - **Storage:** 3 partitions. Staging is isolated from rootfs so a stalled upload queue can
   never brick the box
-- **Adaptive streaming (D11):** the uploader follows the file as MakeMKV writes it.
-  **Any card size works — 32GB handles UHD.** A bigger card buys early eject and batch
-  feeding, not throughput
+- **Adaptive streaming (D11):** *designed, not built* (D22). The uploader is meant to
+  follow the file as MakeMKV writes it, which would make any card size work for any disc.
+  Until R8 is answered a rip is transferred once complete, so **buy the card for the
+  biggest disc you own** — 32GB for DVDs, 128GB for Blu-ray, 256GB for 4K
 - **No on-device transcoding.** Hand off to external workers
 - **The bottleneck is WiFi, not the drive.** ~4 MB/s upload sets every throughput ceiling
   in the design — which is exactly why streaming is free
 
 ## Open questions carried into next session
 
-1. Does `makemkvcon` actually run on aarch64? (R1) The board has **1 GB, not 512 MB**,
-   and the arm64 binary is officially supported — so this is now a formality, not a blocker
+1. ~~Does `makemkvcon` run on aarch64?~~ — **retired 2026-08-20** (R1). Peak RSS during a
+   *real rip* on 1 GB is still unmeasured; that needs a disc
 2. Does MakeMKV write MKV linearly, or does it seek back to finalize headers? (**gates
    D11** — R8). If it rewrites, byte-level follow-copy dies and streaming falls back to
    title-level
-3. Slim 5V-only drive vs. full-size 12V drive — this may fork the product into
-   "Riparr Slim" and "Riparr Full" rather than "DVD" and "Blu-ray"
+3. Slim 5V-only drive vs. full-size 12V drive — this forks the product into
+   "Riparr Slim" and "Riparr Full" rather than "DVD" and "Blu-ray" (D26)
 4. Verification read-back over WiFi costs as long as the upload — default-on or opt-in?
 5. ~~Repo not yet `git init`'d~~ — done 2026-08-19
 6. **D12 licensing** — the UI derives from Sonarr's GPL-3.0 theme tokens. Accept GPL-3.0,
    re-derive the palette, or drop to theme.park only? Exposure is deliberately confined to
    one file plus a handful of constants
+7. **The LED's SPI path is written from the datasheet and never met an LED.** Ten seconds
+   to check once one is wired: **System → Status → Test the LED**
+8. **MakeMKV's LibreDrive wording is unconfirmed** — `drives.parse_libredrive()` reads
+   free text out of `makemkvcon` output. First Blu-ray drive that appears settles it
 
 ---
 

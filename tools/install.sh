@@ -122,8 +122,11 @@ if ! id -u "$RIPARR_USER" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir /var/lib/"$RIPARR_USER" \
           --shell /usr/sbin/nologin "$RIPARR_USER"
 fi
-# The optical drive is root:cdrom, and vcgencmd (temperature, throttling) needs video.
-for g in cdrom video; do
+# The optical drive is root:cdrom, vcgencmd (temperature, throttling) needs video, and
+# the status LED writes to /dev/spidev* which is root:spi. Each group is added only if
+# it exists: `spi` is absent until SPI is enabled in the device tree, and a box with no
+# LED must still install cleanly.
+for g in cdrom video spi gpio; do
   getent group "$g" >/dev/null && usermod -aG "$g" "$RIPARR_USER"
 done
 install -d -o "$RIPARR_USER" -g "$RIPARR_USER" "$DATA_DIR"

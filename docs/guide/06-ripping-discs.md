@@ -23,32 +23,48 @@ That's it. No button, no clicking, no app.
 | Blu-ray | ~3 hours |
 | 4K UHD | most of a day |
 
-**This is your WiFi, not your drive.** Riparr sends the movie to your library as it rips,
-and the board's WiFi moves about 4 MB/s. A faster drive or a bigger SD card won't
-change these numbers. Nothing is wrong.
+**This is your WiFi, not your drive.** Riparr rips the disc, then sends the movie to your
+library, and the board's WiFi moves about 4 MB/s. A faster drive won't change these
+numbers. Nothing is wrong.
 
 ## What the eject actually means
 
-Depends on your card, and the LED tells you which:
+**The disc ejects when the file has landed in your library and been checked.** Eject means
+done. You can unplug the box the moment the tray opens.
 
-**On a 32GB-class card** — the disc ejects when the file has finished landing in your
-library. **Eject means done.**
+That is the whole rule, and it is the same on every card size.
 
-**On a larger card** — Riparr rips at full speed and ejects early so you can load the next
-disc, then finishes uploading in the background. **Eject means "ready for the next disc,"
-not "finished."**
+> **[unresolved] — this is meant to become two rules.** The design (D11) has Riparr
+> uploading as it rips and ejecting early on a large card, so you can load the next disc
+> while the last one is still travelling. That part is not built yet, so today the tray
+> stays shut until the job is completely finished. When it lands, this section grows a
+> second case and the amber LED starts meaning "out of the drive but still uploading".
 
-> ⚠️ **If the LED is amber, it's still uploading.** Don't unplug the box. The disc is out
-> and the drive is quiet, but hours of transfer may remain. Amber means working.
+## What it does when a disc won't fit
+
+A rip is written to the SD card first, so a title has to fit on the card with room to
+spare. If it doesn't, **Riparr says so before it starts** rather than failing partway
+through. A 4K title is ~66 GB, which is why 4K wants a 256 GB card.
+
+`riparr.local` shows how much room is left in **discs** — "Room for 2 Blu-rays, or 7
+DVDs" — not gigabytes.
+
+## What it does with a disc this drive can't read
+
+Puts it straight back out, with the reason on the web page.
+
+A DVD drive cannot read a Blu-ray, and **most Blu-ray drives cannot read a 4K UHD disc** —
+4K needs one of a small number of specific drives, which is covered in
+[what you need](01-what-you-need.md#which-drive). Riparr checks before it starts, so this
+costs you ten seconds rather than forty minutes.
+
+The Queue page tags your drive with what it reads — `DVD` `Blu-ray` `4K UHD` — and
+**System → Status** says whether 4K will work on it, asking MakeMKV directly.
 
 ## Feeding it a stack
 
-On a larger card you can load discs back to back — rip, eject, next — and let the queue
-drain overnight. `riparr.local` shows how many more discs fit before it has to slow down.
-
-On a 32GB card, one at a time. Each disc takes as long as it takes, and you can't get
-ahead of it. This is the tradeoff you took for never running out of space, and it doesn't
-cost you any discs per day — the network was always the limit.
+Load discs back to back — rip, eject, next — as long as there is room on the card for the
+one you're putting in. `riparr.local` shows how many more fit.
 
 ## Reading the box at a glance
 

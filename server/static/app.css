@@ -513,6 +513,27 @@ td.stat .ic { font-size: var(--ic-nav); }
 }
 .tray-drive .dev { opacity: .65; margin-left: 6px; }
 
+/* ── what the drive reads ──
+   Three chips, always all three, so the unlit one is as legible as the lit ones. A
+   drive that cannot do 4K has to *say* it cannot do 4K -- an absent chip reads as an
+   interface that ran out of room, and this is the one capability that costs money to
+   get wrong. Unlit is a visible outline, not a dimmed label. */
+.drive-tags { display: inline-flex; gap: 5px; margin-left: 9px; vertical-align: middle; }
+.drive-tags .tag {
+  font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px;
+  border: 1px solid var(--line); color: var(--fg-muted); opacity: .7;
+}
+.drive-tags .tag.on {
+  border-color: transparent; opacity: 1;
+  background: rgba(var(--accent-rgb), .18); color: var(--accent);
+}
+.tray-loaded.bad .big { color: var(--warn); opacity: .6; }
+.tray-loaded.bad .why {
+  max-width: 56ch; margin: 10px auto 0; font-size: 12.5px; line-height: 1.6;
+  color: var(--warn);
+}
+
 /* 8 seconds, not 2: at reading speed a fast spin reads as a busy indicator, and this
    is not one -- it says "there is a disc in there", which is a resting state. */
 .spinning .ic { animation: disc-spin 8s linear infinite; }
@@ -573,6 +594,16 @@ td.stat .ic { font-size: var(--ic-nav); }
 .job-legs .did { color: var(--ok); }
 .job-eta { color: var(--fg); }
 .job.needs { background: rgba(255,159,26,.06); border-left: 2px solid var(--warn); }
+
+/* Non-fatal, and it must not look fatal: the rip is running and the user is being
+   told something about it, which is a different sentence from "this failed". */
+.job-warn {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 0 10px; padding: 8px 10px; border-radius: 3px;
+  background: rgba(255,159,26,.09); color: var(--warn);
+  font-size: 12px; line-height: 1.5;
+}
+.job-warn .ic { flex: none; margin-top: 1px; }
 .job.needs .f { margin-top: 4px; }
 /* The *arr form geometry -- a fixed 150px right-aligned label column -- is right for a
    settings page and wrong for a focused question, which is the same complaint the
@@ -600,6 +631,10 @@ td.stat .ic { font-size: var(--ic-nav); }
 .test-out { font-size: 12.5px; color: var(--fg-muted); }
 .test-out.ok { color: var(--ok); }
 .test-out.bad { color: var(--bad); }
+/* "There is no LED wired up" is neither success nor failure — it is the answer. */
+.test-out.warn { color: var(--warn); }
+.warn-text { color: var(--warn); }
+.btn.sm { font-size: 11.5px; padding: 4px 10px; }
 
 .tray-go { justify-content: center; margin-top: 16px; }
 .tray-go .btn { font-size: 14px; padding: 9px 20px; }

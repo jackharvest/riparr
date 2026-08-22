@@ -37,7 +37,7 @@ import subprocess
 import threading
 import time
 
-from . import db, notify, platform as P, shares as SH, system as SY
+from . import db, led as LED, notify, platform as P, shares as SH, system as SY
 
 log = SY.component("Rip")
 
@@ -129,6 +129,22 @@ def enqueue(force=False):
     if db.active_job():
         return None, "Riparr is already working on a disc."
 
+    # Before anything expensive: can this drive read this disc at all? Refused here
+    # rather than three minutes later inside MakeMKV, and the disc comes back out --
+    # a job that exists only to fail is a worse answer than never taking the disc.
+    #
+    # LibreDrive is asked only for a 4K disc. It costs a `makemkvcon` run, it is
+    # irrelevant to DVD and to 1080p Blu-ray, and paying for it on every disc would
+    # put a minute of dead time in front of the common case to serve the rare one.
+    libredrive = P.libredrive_status(d) if disc_family(d) == "uhd" else None
+    refusal = unreadable_reason(d, libredrive)
+    if refusal:
+        log.info("Refused a disc this drive cannot read: %s", refusal)
+        notify.send("failed", title=d.get("label") or "A disc", body=refusal)
+        LED.announce("failed")
+        P.eject()
+        return None, refusal
+
     label = d.get("label") or ""
     fp = fingerprint(d)
 
@@ -139,6 +155,7 @@ def enqueue(force=False):
             notify.send("duplicate", title=known.get("title") or label,
                         body="Already ripped on %s. Ejected without re-reading it."
                              % time.strftime("%d %b %Y", time.localtime(known["ripped_at"])))
+            LED.announce("duplicate")
             P.eject()
             return None, "You've already ripped %s." % (known.get("title") or label)
         existing = db.job_for_fingerprint(fp, states=db.ACTIVE_STATES)
@@ -196,6 +213,91 @@ def answer(job_id, title_index=None, name=None, skip=False):
                           if v is not None})
     _wake.set()
     return True, "Thanks — starting the rip."
+
+
+# ────────────────────────── what this drive can do with this disc ──────────────────────────
+
+# A BD-ROM dual layer tops out at 50 GB. UHD Blu-ray uses 66 GB and 100 GB media, so
+# anything above 50 GB is certainly UHD -- but the converse does not hold: 50 GB UHD
+# discs exist and are indistinguishable by size. This constant therefore proves UHD
+# and never disproves it, which is exactly how `disc_family()` uses it.
+BD_DL_BYTES = 50 * 2 ** 30
+
+# What to call each family when talking to a person. "BD-ROM" is what the drive says;
+# it is not what is printed on the box the disc came in.
+DISC_WORD = {"dvd": "DVD", "bluray": "Blu-ray", "uhd": "4K UHD disc"}
+
+
+def disc_family(drive):
+    """Riparr's three families -- "dvd", "bluray", "uhd" -- or None.
+
+    Not the same question as the MMC profile, and the gap is the point: **there is no
+    UHD profile**. A UHD disc reports BD-ROM exactly like a 1080p one (`optical.py`),
+    so the only thing that separates them without decrypting anything is capacity, and
+    capacity only separates them in one direction. A disc reported as "bluray" here may
+    still be UHD; a disc reported as "uhd" certainly is.
+    """
+    kind = drive.get("media_kind")
+    if kind == "bluray" and (drive.get("size_bytes") or 0) > BD_DL_BYTES:
+        return "uhd"
+    return kind
+
+
+def unreadable_reason(drive, libredrive=None):
+    """Why this drive cannot rip the disc that is in it, or None if it can try.
+
+    Only certainties refuse. "This drive has no Blu-ray support and there is a Blu-ray
+    in it" is a certainty, and so is MakeMKV itself reporting that LibreDrive is
+    unavailable on a 4K disc -- that one is worth forty minutes, which is why it is
+    asked for here despite costing a `makemkvcon` run.
+
+    "This drive is not on Riparr's UHD list" is **not** a certainty. The list is finite
+    and the world is not, so that case warns through `uhd_warning()` and lets MakeMKV
+    have its say: being told no by software that was guessing is the one failure mode
+    worse than a slow failure.
+
+    Note that LibreDrive says nothing about 1080p Blu-ray, which is AACS 1.0 and needs
+    none of this. Only the UHD branch may consult it.
+    """
+    family = disc_family(drive)
+    if family == "dvd" and not drive.get("reads_dvd"):
+        return "There's a DVD in the tray and this drive can't read DVDs."
+    if family in ("bluray", "uhd") and not drive.get("reads_bluray"):
+        return ("There's a %s in the tray and this drive only reads DVDs — "
+                "ripping it needs a Blu-ray drive. See the drive list in the setup "
+                "guide." % DISC_WORD[family])
+    if family == "uhd" and drive.get("uhd") == "no":
+        return ("This is a 4K UHD disc and this drive can't read UHD media. 4K needs "
+                "one of a small number of specific drives — see the drive list "
+                "in the setup guide.")
+    if family == "uhd" and libredrive == "no":
+        return ("This is a 4K UHD disc, and MakeMKV reports it can't get underneath "
+                "this drive's firmware — which is the only way to read 4K on this "
+                "hardware. The disc won't decode in this drive. See the drive list "
+                "in the setup guide.")
+    return None
+
+
+def uhd_warning(drive, libredrive=None):
+    """The honest hedge for a UHD disc in a drive nobody has confirmed, or None.
+
+    Surfaced rather than acted on. Riparr starts the rip anyway: MakeMKV is the only
+    thing that truly knows, and its answer arrives in about a minute.
+    """
+    if disc_family(drive) != "uhd":
+        return None
+    if libredrive == "enabled":
+        return None
+    if libredrive == "no":
+        return ("MakeMKV reports it can't get underneath this drive's firmware, so a "
+                "4K disc will almost certainly fail to decode. It's being tried "
+                "anyway, because MakeMKV is the only thing that can say for certain.")
+    if drive.get("uhd") in ("unknown", "firmware"):
+        return ("This is a 4K UHD disc. 4K needs a drive on MakeMKV's LibreDrive "
+                "list, often on particular firmware, and this one hasn't been "
+                "confirmed. Riparr is trying it — if it fails to decode, "
+                "that is why.")
+    return None
 
 
 # ─────────────────────────────── identification ───────────────────────────────
@@ -504,8 +606,14 @@ def _identify(job, s):
             return None
 
     title_name, year = _split_year(name)
+    # The UHD hedge is recorded, not acted on: MakeMKV is the only thing that can say
+    # for certain whether this drive will decode the disc, and it answers in a minute.
+    warning = uhd_warning(d, P.libredrive_status(d))
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
     db.update_job(job["id"], title=title_name, chosen_title=chosen["index"],
                   titles=titles, bytes_total=chosen.get("bytes") or 0,
+                  warning=warning, disc_family=disc_family(d),
                   disc_label=d.get("label") or job.get("disc_label"))
     job = db.get_job(job["id"])
     job["_title"] = chosen
@@ -702,6 +810,7 @@ def _finish(job, s, transport, name, local_path):
     db.update_job(job["id"], state="done", phase=None, finished_at=now,
                   eta_seconds=None, error=None,
                   dest_path=transport.describe(name))
+    LED.announce("done")
     P.eject()
     log.info("Job %d finished: %s", job["id"], transport.describe(name))
     notify.send("done", title=job.get("title") or job.get("disc_label") or "A disc",
@@ -748,6 +857,7 @@ def _run_job(job):
         row = db.get_job(job_id) or {}
         db.update_job(job_id, state="failed", phase=None,
                       finished_at=int(time.time()), error=str(e))
+        LED.announce("failed")
         P.eject()
         notify.send("failed",
                     title=row.get("title") or row.get("disc_label") or "A disc",

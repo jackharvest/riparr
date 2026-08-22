@@ -21,8 +21,12 @@ Organized by **what you actually observed**, since there's no screen to read.
 
 ### Couldn't join WiFi (blinking amber)
 
-Riparr creates its own network called **`Riparr-Setup`**. Connect a phone to it, and a
-setup page opens. Choose your network and enter the password.
+**Write the card again in the Preparer with the credentials corrected.** The box has no
+screen and no Ethernet, so there is no other way in yet — and nothing is lost, because a
+box that never joined has no settings on it.
+
+*(An AP-mode fallback — the box putting up its own `Riparr-Setup` network so you can fix
+this from a phone — is designed and [core] on the backlog, and is not built.)*
 
 Most common causes, in order:
 

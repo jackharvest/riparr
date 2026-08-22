@@ -9,6 +9,13 @@ Type=simple
 User=riparr
 Group=riparr
 # The optical drive is owned by root:cdrom, and the service has to read it.
+#
+# `spi` is deliberately NOT listed here, even though the status LED needs it. A group
+# named in SupplementaryGroups= that does not exist makes systemd refuse to start the
+# unit, and `spi` does not exist until SPI has been enabled in the device tree — which
+# on most boards it never is. install.sh adds the account to `spi` when the group is
+# there, and systemd picks up the account's own groups anyway; that path costs nothing
+# when it is absent.
 SupplementaryGroups=cdrom
 WorkingDirectory=/opt/riparr/server
 

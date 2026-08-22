@@ -6,9 +6,10 @@ This guide takes you from a blank SD card to a working appliance in about five m
 actual effort. **Read it in order the first time.** After that, you should never need it
 again — that's the whole point of the product.
 
-> ⚠️ **Pre-release.** Riparr is not built yet. This guide describes the target product and
-> is written first on purpose, so the experience is designed before the code is. Anything
-> still unresolved is marked **[unresolved]** inline.
+> ⚠️ **Pre-release.** Most of Riparr is built and running — the SD preparer, the web
+> interface, setup, the rip engine and the status LED all exist. What has never been done
+> is a **real rip on real hardware**, because the optical drive is not connected yet.
+> Anything designed but not built is marked **[unresolved]** inline.
 
 ---
 

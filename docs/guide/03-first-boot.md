@@ -40,25 +40,33 @@ unprotected.
 | **Slow white pulse** | Booting, or waiting for you to finish setup |
 | **Blinking blue** | Joining WiFi |
 | **Solid green** | Ready. Feed it a disc. |
-| **Blinking orange** | Couldn't join WiFi — see below |
+| **Blinking amber** | Couldn't join WiFi — see below |
 
 Full list: [LED reference card](led-reference.md).
 
 ## If WiFi didn't work
 
-A mistyped WiFi password is the most common setup failure, and re-flashing the card over a
-typo would be miserable. So Riparr doesn't make you.
+A mistyped WiFi password is the most common setup failure. The box has no screen and no
+Ethernet, so if it can't join your network there is nothing to see and nowhere to log in.
 
-**If the box can't join your network, it creates its own** — a WiFi network named
-`Riparr-Setup`. Connect any phone or laptop to it and a setup page opens automatically.
-Pick your network, enter the password, and the box reboots onto it.
+**Today the fix is to write the card again** in the Preparer, with the password corrected.
+It takes a couple of minutes and nothing else is lost — the box has no state on it yet.
 
-**[unresolved]** Whether the fallback network is open or uses a printed default password
-isn't decided yet.
+Before you do, rule out the cheaper causes:
+
+- **The password.** Retype it rather than trusting the one that was remembered.
+- **The band.** Check the network you picked actually exists on a band your board has.
+  Every supported board does 2.4 GHz; only some do 5 GHz.
+- **The name.** A network whose name differs by a space or a case is a different network.
+
+> **[unresolved] — this is meant to be better.** The design has the box putting up its own
+> `Riparr-Setup` network when it can't join yours, so you fix it from a phone instead of
+> re-writing the card. It is [core] on the backlog and **not built.** Until it is, the
+> re-write above is the whole answer.
 
 ## Building more than one?
 
-They coexist fine. Give each a different hostname in Imager and reach them at
+They coexist fine. Give each a different hostname in the Preparer and reach them at
 `riparr-office.local`, `riparr-den.local`, and so on.
 
 ---
