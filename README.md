@@ -99,8 +99,10 @@ Installing from a local checkout works today.
 | [`docs/design/concept.md`](docs/design/concept.md) | Product vision, target UX, prior art, differentiator |
 | [`docs/design/architecture.md`](docs/design/architecture.md) | Stack, partitions, the streaming rip pipeline, image build |
 | [`docs/design/hardware.md`](docs/design/hardware.md) | BOM, power design, form-factor variants, thermal |
+| [`docs/design/board-support.md`](docs/design/board-support.md) | Every board in the Zero 2W footprint, tiered by effort to support |
 | [`docs/design/storage-sizing.md`](docs/design/storage-sizing.md) | What card size actually buys, all math shown |
 | [`docs/design/risks.md`](docs/design/risks.md) | Known risks + the validation plan that retires them |
+| [`docs/design/security.md`](docs/design/security.md) | Pen-test findings + threat model. **First pass remediated; re-review on real hardware pending.** |
 | [`docs/design/backlog.md`](docs/design/backlog.md) | Feature ideas, roughly prioritized |
 | [`docs/design/scenarios.md`](docs/design/scenarios.md) | Twenty-three layman scenarios walked against the code, and what they surfaced |
 | [`docs/design/scenarios-preparer.md`](docs/design/scenarios-preparer.md) | The same walk for the Mac Preparer app |

@@ -66,6 +66,21 @@ SHOTS = {
       ]);
       document.querySelector('#other-disks').open = true;
     """ % json.dumps(core.size_guide()),
+    # The hardware dropdown on a *beta* board -- the badge, the "you'd be helping
+    # confirm it" line, and a board that also carries a RAM warning, all at once. This is
+    # the state that says out loud what the multi-board support does and does not promise.
+    "card-beta": """
+      setRail('card'); show('card');
+      renderGuide(%s);
+      renderDisks([
+        {id:'disk4', name:'SDXC Card', protocol:'Secure Digital', size_gb:128,
+         kind:'sd', kind_label:'SD card', is_card:true,
+         why:"in this Mac's card slot",
+         advice:{headline:'A comfortable Blu-ray evening'}}
+      ]);
+      selectBoard('raspberrypizero2w');
+      document.querySelector('#board-select').value = 'raspberrypizero2w';
+    """ % json.dumps(core.size_guide()),
     "connect": """
       state.boot = state.boot || {};
       state.boot.can_setup = true;

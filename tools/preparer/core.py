@@ -17,10 +17,13 @@ import secrets
 import shutil
 import string
 import subprocess
+import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import hostos
+import boards
 
 # The official repository. The updater and the image manifest both hang off this.
 RIPARR_REPO = "jackharvest/riparr"
@@ -95,7 +98,12 @@ def build_conf(cfg):
         "RIPARR_PORT=%d" % int(cfg.get("port", DEFAULT_PORT)),
         "RIPARR_HOSTNAME=%s" % _conf_value(cfg.get("hostname", "riparr")),
     ]
-    for key, value in (("RIPARR_COUNTRY", cfg.get("country")),
+    # Record which board this card was prepared for. Nothing on the box needs it to boot
+    # -- provisioning is the same across Armbian boards -- but it makes a support question
+    # answerable ("what hardware is this?") without a guessing game, and gives any future
+    # board-specific behaviour something to key off.
+    for key, value in (("RIPARR_BOARD", cfg.get("board")),
+                       ("RIPARR_COUNTRY", cfg.get("country")),
                        ("RIPARR_TIMEZONE", cfg.get("timezone")),
                        ("RIPARR_WIFI_SSID", cfg.get("ssid")),
                        ("RIPARR_WIFI_PSK", cfg.get("psk") or cfg.get("wifi_psk")),
@@ -590,6 +598,145 @@ def find_images(assets):
     return out
 
 
+# ───────────────────────── OS images, by board ─────────────────────────
+#
+# The hardware dropdown picks a board; this fetches the right OS image for it. Provisioning
+# does not need to know which board it is -- writer.py branches on the *written card's*
+# partition layout, not on a board id -- so choosing the board is really choosing the image.
+
+
+def _parse_sha_file(text):
+    """Pull the 64-hex digest out of a `<hex>  <filename>` checksum file."""
+    for tok in (text or "").split():
+        t = tok.strip().lower()
+        if len(t) == 64 and all(c in "0123456789abcdef" for c in t):
+            return t
+    return None
+
+
+def _filename_from_headers(resp, fallback):
+    """The real image filename, from the Content-Disposition of the resolved download.
+
+    Armbian's durable URL is a redirect whose target names the versioned file; using that
+    name means a re-download is recognised as the same image rather than piling up.
+    """
+    cd = resp.headers.get("Content-Disposition", "") if resp.headers else ""
+    m = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^\";]+)', cd)
+    if m:
+        return os.path.basename(m.group(1).strip())
+    # Or the last path segment of the URL we were actually redirected to.
+    tail = os.path.basename(urllib.parse.urlparse(resp.geturl()).path)
+    return tail if tail.endswith(".img.xz") else fallback
+
+
+def image_for_board(assets, board_id):
+    """A already-downloaded image for this board, or None.
+
+    Matches on the board name embedded in Armbian/Raspberry Pi filenames (e.g.
+    `..._Orangepizero2w_...`, `...-raspios-...`), so a folder holding several boards'
+    images hands back the right one.
+    """
+    b = boards.get(board_id)
+    if not b:
+        return None
+    if b["os"] == "raspios":
+        needles = ["raspios"]
+    else:
+        needles = [b["armbian_slug"].replace("-", ""), b["id"].replace("-", "")]
+    for img in find_images(assets):
+        stem = img["name"].lower().replace("-", "").replace("_", "")
+        if any(n in stem for n in needles):
+            return img
+    return None
+
+
+def download_image(board_id, assets, progress=None, timeout=60):
+    """Fetch a board's OS image into the assets dir and verify it against its checksum.
+
+    Returns {"ok": True, "path", "name", "sha256"} or {"ok": False, "error"}. Never
+    raises -- a machine with no internet must fail with a sentence, not a traceback.
+
+    `progress(done_bytes, total_bytes)` is called as the download streams. The checksum
+    is fetched first (it is tiny and its absence is a reason not to bother downloading a
+    gigabyte), the image is streamed to a temp file, verified, then moved into place with
+    a `.sha256` sidecar so the existing write-time verify (writer.py --sha256) covers it
+    too. An image already present and matching is returned without re-downloading.
+    """
+    src = boards.image_source(board_id)
+    if not src:
+        return {"ok": False, "error": "Unknown board: %s" % board_id}
+
+    existing = image_for_board(assets, board_id)
+    if existing and existing.get("sha256"):
+        return {"ok": True, "path": existing["path"], "name": existing["name"],
+                "sha256": existing["sha256"], "cached": True}
+
+    # 1. The expected checksum. No checksum, no download -- guessing is how a corrupt
+    #    image becomes a card that fails later, mysteriously, on the board.
+    try:
+        req = urllib.request.Request(src["sha_url"], headers={"User-Agent": "riparr-preparer"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            expected = _parse_sha_file(r.read().decode("utf-8", "ignore"))
+    except Exception as e:
+        return {"ok": False,
+                "error": "Couldn't fetch the image checksum for this board: %s" % e}
+    if not expected:
+        return {"ok": False,
+                "error": "The image checksum for this board could not be read."}
+
+    # 2. Stream the image to a temp file, hashing as it lands.
+    os.makedirs(assets, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix=".img.xz.part", dir=assets)
+    os.close(fd)
+    h = hashlib.sha256()
+    try:
+        req = urllib.request.Request(src["url"], headers={"User-Agent": "riparr-preparer"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            name = _filename_from_headers(r, "%s.img.xz" % board_id)
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            with open(tmp, "wb") as f:
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    h.update(chunk)
+                    done += len(chunk)
+                    if progress:
+                        progress(done, total)
+    except Exception as e:
+        _rm(tmp)
+        return {"ok": False, "error": "The image download failed: %s" % e}
+
+    got = h.hexdigest()
+    if got != expected:
+        _rm(tmp)
+        return {"ok": False,
+                "error": "The downloaded image did not match its published checksum. "
+                         "Nothing was kept.",
+                "detail": "expected %s\ngot      %s" % (expected[:32], got[:32])}
+
+    # 3. Move into place under its real name, with the .sha256 sidecar find_images reads.
+    dest = os.path.join(assets, name)
+    try:
+        _rm(dest)
+        os.replace(tmp, dest)
+        with open(dest + ".sha256", "w") as f:
+            f.write("%s  %s\n" % (expected, name))
+    except OSError as e:
+        _rm(tmp)
+        return {"ok": False, "error": "Could not save the image: %s" % e}
+    return {"ok": True, "path": dest, "name": name, "sha256": expected}
+
+
+def _rm(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 # ─────────────────────── External tools we shell out to ───────────────────────
 #
 # One of them does not ship with macOS and is not on a stock PATH:
@@ -735,6 +882,47 @@ def ensure_password(assets):
 def public_key(assets):
     p = os.path.join(assets, "riparr_key.pub")
     return open(p).read().strip() if os.path.exists(p) else None
+
+
+def ensure_key(assets):
+    """Return the public half of the box's SSH key, generating the pair on first run.
+
+    The passwordless-SSH setup path depends on a key at `<assets>/riparr_key`, and until
+    now nothing created it -- the code and the guides both assumed the user had made one,
+    so `start_setup` simply failed with "the SSH key is missing" on a fresh build folder.
+    Generate it here instead, the same way `ensure_password` handles the account
+    password: create it once, keep it, reuse it.
+
+    ed25519, no passphrase (this is an unattended appliance key), and the private half is
+    written 0600 -- ssh-keygen does that itself, but it is asserted here so a future
+    change cannot quietly loosen it. A per-build key means one compromised build folder
+    cannot reach anyone else's box.
+
+    Returns the public key string, or None if ssh-keygen is not on this host (Windows
+    without the OpenSSH client). The caller degrades to password SSH, exactly as it did
+    when the key was simply absent.
+    """
+    priv = os.path.join(assets, "riparr_key")
+    pub = priv + ".pub"
+    if os.path.exists(pub):
+        return open(pub).read().strip()
+
+    keygen = shutil.which("ssh-keygen")
+    if not keygen:
+        return None
+    # A stale private key with no public half would make ssh-keygen refuse; clear it.
+    if os.path.exists(priv):
+        os.remove(priv)
+    r = subprocess.run(
+        [keygen, "-t", "ed25519", "-N", "", "-C", "riparr", "-f", priv],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not os.path.exists(pub):
+        return None
+    try:
+        os.chmod(priv, 0o600)
+    except OSError:
+        pass
+    return open(pub).read().strip()
 
 
 # ────────────────────────────── Updates ──────────────────────────────

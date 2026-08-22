@@ -79,6 +79,19 @@
          does the same thing (Alt+F) and for the same reason: hiding a device outright
          creates a person who is certain they inserted a card and cannot see it. -->
     <div class="screen-body">
+
+    <!-- Which board this card is for. The board decides the OS image; provisioning is
+         the same across them, so this is really "which operating system to download".
+         See docs/design/board-support.md. -->
+    <div class="hardware" id="hardware">
+      <label class="hw-field">
+        <span>Board</span>
+        <select id="board-select"></select>
+      </label>
+      <div class="hw-info" id="board-info"></div>
+      <div class="hw-image" id="board-image"></div>
+    </div>
+
     <div id="disk-list" class="list"></div>
     <div id="other-disks-wrap" class="hidden">
       <details class="reveal" id="other-disks">

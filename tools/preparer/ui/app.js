@@ -8,6 +8,8 @@ const state = {
   boot: null,
   verify: true,
   disk: null,
+  board: null,        // selected board id
+  boardImage: null,   // the downloaded OS image for that board, or null
   net: null,          // {ssid, secure, hidden, bands}
   wifiPw: "",
   hostname: "riparr",
@@ -186,6 +188,113 @@ async function loadDisks() {
   renderDisks(r.disks);
 }
 
+/* ── the hardware picker ─────────────────────────────────
+   The board decides which OS image gets written; provisioning is the same across the
+   supported boards (writer.py branches on the card's layout, not on the board). So this
+   dropdown is really "which operating system", and its job is to make sure the right one
+   is downloaded before the write. See docs/design/board-support.md. */
+function renderBoards() {
+  const boards = state.boot.boards || [];
+  if (!boards.length) { $("#hardware").classList.add("hidden"); return; }
+  const sel = $("#board-select");
+  sel.innerHTML = boards.map(b =>
+    `<option value="${esc(b.id)}">${esc(b.name)} — ${esc(b.soc)}</option>`).join("");
+  state.board = state.boot.default_board || boards[0].id;
+  sel.value = state.board;
+  sel.onchange = () => selectBoard(sel.value);
+  selectBoard(state.board);
+}
+
+function boardById(id) {
+  return (state.boot.boards || []).find(b => b.id === id);
+}
+
+function selectBoard(id) {
+  state.board = id;
+  const b = boardById(id);
+  if (!b) return;
+  const badge = b.tier === "verified"
+    ? `<span class="tag good">tested</span>`
+    : `<span class="tag warn">beta</span>`;
+  $("#board-info").innerHTML =
+    `${badge} <b>${esc(b.ram)} RAM</b> · ${esc(b.note || "")}`
+    + (b.ram_warn ? `<div class="micro warn">${esc(b.ram_warn)}</div>` : "")
+    + (b.tier !== "verified"
+        ? `<div class="micro">Beta: this board should work but hasn't been confirmed on
+           real hardware yet — you'd be helping confirm it.</div>` : "");
+  refreshBoardImage();
+}
+
+async function refreshBoardImage() {
+  const box = $("#board-image");
+  box.innerHTML = `<div class="micro">Checking for the OS image…</div>`;
+  let img = null;
+  try { img = (await riparr.board_image(state.board)).image; } catch (e) { /* offline */ }
+  state.boardImage = img;
+  const b = boardById(state.board);
+  if (img) {
+    box.innerHTML =
+      `<div class="hw-ready"><b>OS image ready</b>
+        <span class="micro">${esc(img.name)}</span></div>`;
+    return;
+  }
+  box.innerHTML =
+    `<button class="ghost" id="os-download">Download the ${esc(b ? b.name : "board")} OS</button>
+     <span class="micro">Fetched from ${b && b.os === "raspios"
+        ? "raspberrypi.com" : "armbian.com"} and checked against its published checksum.</span>
+     <div id="os-progress"></div>`;
+  $("#os-download").onclick = downloadOS;
+}
+
+async function downloadOS() {
+  const b = boardById(state.board);
+  $("#os-download").disabled = true;
+  const prog = $("#os-progress");
+  prog.innerHTML =
+    `<div class="track slim"><div class="fill indet" id="os-fill"></div></div>
+     <div class="micro" id="os-detail">Starting…</div>`;
+  const started = state.board;
+  let r;
+  try { r = await riparr.download_image(state.board); }
+  catch (e) { prog.innerHTML = `<div class="micro warn">${esc(e.message)}</div>`; return; }
+  if (!r.ok) {
+    $("#os-download").disabled = false;
+    prog.innerHTML = `<div class="micro warn">${esc(r.error || "Couldn't start.")}</div>`;
+    return;
+  }
+  clearInterval(state.poll);
+  state.poll = setInterval(async () => {
+    // A board change mid-download abandons this poller; the download itself keeps going.
+    if (state.board !== started) { clearInterval(state.poll); return; }
+    let st;
+    try { st = await riparr.image_status(); } catch (e) { return; }
+    const phase = st.phase || "idle";
+    if (phase === "done") {
+      clearInterval(state.poll);
+      refreshBoardImage();
+      return;
+    }
+    if (phase === "error") {
+      clearInterval(state.poll);
+      $("#os-download").disabled = false;
+      prog.innerHTML = `<div class="micro warn">${esc(st.message || "The download failed.")}</div>`
+        + (st.detail ? `<div class="micro">${esc(st.detail)}</div>` : "");
+      return;
+    }
+    const fill = $("#os-fill");
+    const detail = $("#os-detail");
+    if (st.total && fill) {
+      const pct = Math.min(100, (st.done / st.total) * 100);
+      fill.classList.remove("indet");
+      fill.style.width = pct.toFixed(1) + "%";
+      if (detail) detail.textContent =
+        `${fmtBytes(st.done)} of ${fmtBytes(st.total)} · ${pct.toFixed(0)}%`;
+    } else if (detail) {
+      detail.textContent = `${fmtBytes(st.done || 0)} downloaded…`;
+    }
+  }, 500);
+}
+
 /* ── step 2: wi-fi ──────────────────────────────────────── */
 function renderNets(nets, method) {
   const el = $("#wifi-list");
@@ -268,7 +377,10 @@ function validHost(v) { return /^[a-z0-9][a-z0-9-]{0,62}$/.test(v); }
 function cfg() {
   return {
     disk: state.disk ? state.disk.id : null,
-    image: state.boot.images.length ? state.boot.images[0].path : null,
+    // The image is the one downloaded for the selected board, not just whatever is newest
+    // in the folder — with several boards supported, "newest .img.xz" is the wrong one.
+    image: state.boardImage ? state.boardImage.path : null,
+    board: state.board,
     hostname: state.hostname,
     port: state.port,
     user: "riparr",
@@ -288,7 +400,7 @@ function cfg() {
 
 async function buildReview() {
   const c = cfg();
-  const img = state.boot.images[0];
+  const img = state.boardImage;
   const rows = [
     [state.allowOther ? "Disk" : "Card", state.disk
       ? `${esc(state.disk.name)} · /dev/${esc(state.disk.id)} · ${capLabel(state.disk.size_gb)}`
@@ -323,9 +435,9 @@ async function buildReview() {
   const haveImage = !!img;
   $("#do-write").disabled = !haveImage;
   $("#review-warn").innerHTML = haveImage ? "" :
-    "There's no <b>.img.xz</b> in your build folder, so there is nothing to write. "
-    + "You can still save the settings file and copy it onto a card that is already "
-    + "flashed.";
+    "The OS image for this board hasn't been downloaded yet, so there is nothing to "
+    + "write. Go back to the <b>SD card</b> step and choose <b>Download the OS</b>. You "
+    + "can still save the settings file and copy it onto a card that is already flashed.";
 
   // Named here as well as refused in start_write, because the useful moment is before
   // somebody commits to the red button -- and it is a two-minute fix they can go and do.
@@ -622,11 +734,8 @@ async function init() {
   $("#port").value = state.port;
   $("#connect-port").value = state.port;
   renderDisks(state.boot.disks);
+  renderBoards();
   renderGuide(state.boot.size_guide);
-  if (state.boot.image_missing) {
-    $("#card-hint").textContent =
-      "No .img.xz found in the build folder — you can still save settings only.";
-  }
 
   // The second route can only work with the private key in the build folder. Offer it
   // greyed with the reason rather than letting someone walk into a dead end.

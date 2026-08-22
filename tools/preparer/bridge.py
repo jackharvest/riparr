@@ -22,6 +22,7 @@ import tempfile
 import threading
 import traceback
 
+import boards
 import core
 import finish
 import hostos
@@ -98,6 +99,9 @@ class Bridge:
         self.progress_path = os.path.join(RUNDIR, "progress.json")
         self.write_thread = None
         self.write_error = None
+        # ── OS image download ──
+        self.image_path = os.path.join(RUNDIR, "image.json")
+        self.image_thread = None
         # ── the second half ──
         self.setup_path = os.path.join(RUNDIR, "setup.json")
         self.finisher = None
@@ -107,17 +111,27 @@ class Bridge:
     # ── initial state ──
     def boot(self):
         pw, generated = core.ensure_password(self.assets)
+        # Generate the box's SSH keypair now if it does not exist, so both the card
+        # write (which embeds the public half) and the setup-over-SSH path (which needs
+        # the private half) just work on a fresh build folder. Returns None only when
+        # ssh-keygen is absent, in which case the UI falls back to password SSH.
+        pubkey = core.ensure_key(self.assets)
         images = core.find_images(self.assets)
+        default_board = boards.default_id()
         return {
             "version": VERSION,
             "repo": core.RIPARR_REPO,
             "assets": self.assets,
             "images": images,
             "image_missing": not images,
+            # The hardware dropdown and which board it starts on. The image is chosen per
+            # board (core.image_for_board / download_image), so the board picks the OS.
+            "boards": boards.all_boards(),
+            "default_board": default_board,
             "disks": core.list_disks(),
             "password": pw,
             "password_generated": generated,
-            "has_key": core.public_key(self.assets) is not None,
+            "has_key": pubkey is not None,
             "makemkv": os.path.isdir(os.path.join(self.assets, "makemkv")),
             "ssh_config": (os.path.join(self.assets, "ssh_config")
                            if os.path.exists(os.path.join(self.assets, "ssh_config"))
@@ -132,6 +146,59 @@ class Bridge:
             "timezone": core.host_timezone(),
             "country": os.environ.get("RIPARR_COUNTRY", "US"),
         }
+
+    # ── OS image, per board ──
+    def board_image(self, board_id):
+        """The already-downloaded image for this board, or null.
+
+        Lets the UI decide, per selected board, whether to offer 'Download the OS' or go
+        straight to writing.
+        """
+        return {"image": core.image_for_board(self.assets, board_id)}
+
+    def download_image(self, board_id):
+        """Fetch this board's OS image in the background. Poll image_status().
+
+        Returns immediately. A download already running is left alone rather than started
+        twice -- the image file is large and two writers to the assets dir is a mess.
+        """
+        if self.image_thread and self.image_thread.is_alive():
+            return {"ok": False, "error": "A download is already running."}
+        b = boards.get(board_id)
+        if not b:
+            return {"ok": False, "error": "Unknown board."}
+        core_publish(self.image_path, phase="starting", board=board_id,
+                     name=b["name"], done=0, total=0)
+        self.nosleep.hold("downloading the OS image")
+
+        def run():
+            def progress(done, total):
+                core_publish(self.image_path, phase="downloading", board=board_id,
+                             name=b["name"], done=done, total=total)
+            try:
+                r = core.download_image(board_id, self.assets, progress=progress)
+            except Exception as e:                     # never let the thread die silently
+                r = {"ok": False, "error": str(e)}
+            if r.get("ok"):
+                core_publish(self.image_path, phase="done", board=board_id,
+                             name=r.get("name"), path=r.get("path"),
+                             cached=bool(r.get("cached")))
+            else:
+                core_publish(self.image_path, phase="error", board=board_id,
+                             message=r.get("error", "The download failed."),
+                             detail=r.get("detail", ""))
+            self._release_if_idle()
+
+        self.image_thread = threading.Thread(target=run, daemon=True)
+        self.image_thread.start()
+        return {"ok": True}
+
+    def image_status(self):
+        try:
+            with open(self.image_path) as f:
+                return json.load(f)
+        except Exception:
+            return {"phase": "idle"}
 
     def scan_wifi(self):
         nets, method = core.scan_networks()
@@ -413,6 +480,13 @@ class Bridge:
                 "body": ("Quitting stops it partway. The card is fine and the box is "
                          "fine — you can open this app again and pick up from "
                          "\u201cIt's plugged in\u201d."),
+                "quit": "Quit anyway",
+            }
+        if self.image_thread and self.image_thread.is_alive():
+            return {
+                "title": "The OS image is still downloading.",
+                "body": ("Quitting stops the download. Nothing is harmed — the partial "
+                         "file is discarded and you can download it again next time."),
                 "quit": "Quit anyway",
             }
         return ""
