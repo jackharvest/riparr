@@ -27,8 +27,10 @@ setup page opens. Choose your network and enter the password.
 Most common causes, in order:
 
 1. **Wrong password** — the usual one
-2. **You picked a 5GHz network.** The Pi Zero 2W has no 5GHz radio. It must be 2.4GHz.
-3. **No WiFi country set** in Imager — WiFi won't start without it
+2. **A 5GHz network on a 2.4GHz-only board.** Most supported boards are dual-band and
+   5GHz is fine — but the Raspberry Pi Zero 2 W has no 5GHz radio, so on that board the
+   network must be 2.4GHz.
+3. **No WiFi country set** — WiFi won't start without it (the Preparer sets this for you)
 4. **The network is captive-portal or enterprise** (802.1X) — not supported
 
 ### It's up, but the name doesn't resolve (solid green)
@@ -118,7 +120,7 @@ Fix it and Riparr resumes where it stopped. Nothing is lost.
 ## Everything is slow
 
 **Probably not a fault.** A Blu-ray takes about three hours and a 4K disc most of a day,
-because the Pi Zero 2W's WiFi moves roughly 4 MB/s and the movie has to travel over it.
+because the board's WiFi moves roughly 4 MB/s and the movie has to travel over it.
 
 Genuinely slower than that:
 

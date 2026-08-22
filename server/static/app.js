@@ -1215,6 +1215,7 @@ systemPages.status = async () => {
       <div class="kv">
         <div class="k">Version</div><div class="v">${esc(st.version)}</div>
         <div class="k">Model</div><div class="v">${esc(sys.model)}</div>
+        ${sys.board ? `<div class="k">Prepared as</div><div class="v">${esc(sys.board)}</div>` : ""}
         <div class="k">Operating system</div><div class="v">${esc(sys.os)}</div>
         <div class="k">Kernel</div><div class="v">${esc(sys.kernel || "—")}</div>
         <div class="k">Mode</div><div class="v">${sys.mock ? "Development (simulated)" : "Appliance"}</div>
@@ -1865,7 +1866,7 @@ function wireContent(section, sub) {
       networks.map((n, i) => `
       <div class="rowitem" data-join="${i}"><div class="grow">
         <div class="t">${esc(n.ssid)}</div>
-        <div class="s">${n.signal}% · 2.4 GHz${n.secure ? "" : " · open"}</div>
+        <div class="s">${n.signal}%${n.band ? ` · ${n.band} GHz` : ""}${n.secure ? "" : " · open"}</div>
       </div><span class="badge">join</span></div>`).join("") +
       `<div id="join-res"></div>`;
 

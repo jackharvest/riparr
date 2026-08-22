@@ -93,7 +93,7 @@ For sending finished rips somewhere else — a transcoder, an automation.
 The completion webhook moved to **Notifications** below, where the rest of the ways
 Riparr can reach you now live.
 
-**Riparr does not transcode.** A Pi Zero 2W would take days and the result would be poor.
+**Riparr does not transcode.** This class of board would take days and the result would be poor.
 Hand off to a real machine.
 
 ## Notifications

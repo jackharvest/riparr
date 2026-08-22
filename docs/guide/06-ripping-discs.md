@@ -24,7 +24,7 @@ That's it. No button, no clicking, no app.
 | 4K UHD | most of a day |
 
 **This is your WiFi, not your drive.** Riparr sends the movie to your library as it rips,
-and a Pi Zero 2W's WiFi moves about 4 MB/s. A faster drive or a bigger SD card won't
+and the board's WiFi moves about 4 MB/s. A faster drive or a bigger SD card won't
 change these numbers. Nothing is wrong.
 
 ## What the eject actually means

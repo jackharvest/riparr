@@ -46,14 +46,15 @@ def hostname():
 def system_status():
     if MOCK:
         return {
-            "model": "Raspberry Pi Zero 2 W (simulated)",
-            "os": "Raspberry Pi OS Lite 64-bit (trixie)",
-            "kernel": "6.12.0-rpi-arm64",
+            "model": "OrangePi Zero2W (simulated)",
+            "os": "Armbian 25.x (Debian trixie), minimal",
+            "kernel": "6.12.0-current-sunxi64",
             "uptime_seconds": 48213,
-            "memory_total_mb": 512,
+            "memory_total_mb": 2048,
             "memory_used_mb": 214,
             "cpu_temp_c": 46.8,
             "throttled": False,
+            "board": "orangepizero2w",
             "mock": True,
         }
     model = _read("/proc/device-tree/model").strip("\x00").strip()
@@ -81,6 +82,10 @@ def system_status():
         "cpu_temp_c": float(m.group(1)) if m else None,
         # No vcgencmd means no throttle telemetry, which is not the same as throttled.
         "throttled": ("0x0" not in thr) if thr else False,
+        # The board the Preparer prepared this card for, recorded in riparr.conf and
+        # loaded into the service environment. `model` is what the hardware reports it
+        # actually is; a mismatch between the two is a support signal worth seeing.
+        "board": os.environ.get("RIPARR_BOARD") or None,
         "mock": False,
     }
 
@@ -351,14 +356,31 @@ def wifi_status():
     return base
 
 
+def _band_of(freq):
+    """The band a frequency belongs to, or None. Matches wifi_status()'s derivation."""
+    if not freq:
+        return None
+    return "6" if freq >= 5925 else "5" if freq >= 4900 else "2.4"
+
+
 def wifi_scan():
-    """Only 2.4 GHz results are ever returned — the radio cannot see anything else."""
+    """Every network the radio can see, whatever band it is on.
+
+    This used to drop anything at 5 GHz on the belief that the board was a Raspberry Pi
+    Zero 2 W, whose radio is 2.4 GHz only. But the reference board is an Orange Pi Zero 2W
+    (dual-band Wi-Fi 5), and the other supported boards go up to Wi-Fi 6 — so filtering by
+    frequency hid networks the hardware can actually join, and 5 GHz is the band that most
+    changes how fast a rip lands on the share. The right filter is the radio itself: a
+    2.4-only board simply never returns a 5 GHz result, so no hardcoded assumption is
+    needed or correct across boards.
+    """
     if MOCK:
         return [
             {"ssid": "HomeNetwork", "signal": 82, "secure": True, "band": "2.4"},
+            {"ssid": "HomeNetwork 5G", "signal": 74, "secure": True, "band": "5"},
             {"ssid": "Masons", "signal": 54, "secure": True, "band": "2.4"},
             {"ssid": "ROG 2G", "signal": 38, "secure": True, "band": "2.4"},
-            {"ssid": "xr500", "signal": 21, "secure": True, "band": "2.4"},
+            {"ssid": "xr500", "signal": 21, "secure": True, "band": "5"},
         ]
     out = _run(["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,FREQ", "dev", "wifi", "list"]) or ""
     nets = {}
@@ -370,12 +392,12 @@ def wifi_scan():
             freq = int(re.sub(r"\D", "", f[3]) or 0)
         except ValueError:
             continue
-        if freq >= 5000:          # the Zero 2W has no radio for this
-            continue
         sig = int(f[1]) if f[1].isdigit() else 0
+        # Keep the strongest sighting of an SSID, but never let a weak sighting on one
+        # band erase the band of the strong one it is replacing.
         if f[0] not in nets or sig > nets[f[0]]["signal"]:
             nets[f[0]] = {"ssid": f[0], "signal": sig,
-                          "secure": bool(f[2]), "band": "2.4"}
+                          "secure": bool(f[2]), "band": _band_of(freq)}
     return sorted(nets.values(), key=lambda n: -n["signal"])
 
 

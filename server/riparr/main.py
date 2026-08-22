@@ -603,8 +603,16 @@ def wifi(user=Depends(require_user)):
 
 @app.post("/api/wifi/scan")
 def wifi_scan(user=Depends(require_user)):
-    return {"networks": P.wifi_scan(),
-            "note": "Only 2.4 GHz networks are listed — this hardware has no 5 GHz radio."}
+    nets = P.wifi_scan()
+    # Only claim a band limit the hardware actually has. Most supported boards are
+    # dual-band (some Wi-Fi 6); the Raspberry Pi Zero 2 W is the 2.4 GHz-only exception,
+    # and even then the honest signal is "nothing on 5 GHz came back", not a promise.
+    dual = any(n.get("band") in ("5", "6") for n in nets)
+    note = ("5 GHz is faster and the better pick when the box and router are close."
+            if dual else
+            "Only 2.4 GHz networks were found — either this board has no 5 GHz radio, "
+            "or none are in range.")
+    return {"networks": nets, "note": note}
 
 
 @app.post("/api/wifi/connect")

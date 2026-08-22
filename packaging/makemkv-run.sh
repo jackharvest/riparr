@@ -40,9 +40,15 @@ chmod 0644 "$LOG"
 
 # Where the Preparer leaves the tarballs. /root/makemkv is unreadable to the service
 # account, which is exactly why this side has to do the looking.
+# Match any version, not a pinned one: the installer this hands off to
+# (makemkv-install.sh) already globs makemkv-{oss,bin}-* rather than a fixed version, so a
+# hardcoded 1.18.4 here was the one place a newer MakeMKV on the card would be missed and
+# silently re-downloaded. Both tarballs must be present for a directory to count.
 SRC=""
 for d in /root/makemkv /boot/makemkv /boot/firmware/makemkv /var/lib/riparr/makemkv; do
-  if [ -f "$d/makemkv-oss-1.18.4.tar.gz" ] && [ -f "$d/makemkv-bin-1.18.4.tar.gz" ]; then
+  oss=$(ls "$d"/makemkv-oss-*.tar.gz 2>/dev/null | head -1)
+  bin=$(ls "$d"/makemkv-bin-*.tar.gz 2>/dev/null | head -1)
+  if [ -n "$oss" ] && [ -n "$bin" ]; then
     SRC="$d"; break
   fi
 done

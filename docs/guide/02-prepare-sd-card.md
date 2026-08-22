@@ -7,85 +7,60 @@ set up entirely from a browser.
 
 ---
 
-## Two ways to do this
+## The Riparr Preparer
 
-**The Riparr Preparer** *(recommended)* — a small app that scans for your Wi-Fi, shows
-only the networks a Pi Zero 2W can actually join, and writes the card in one pass.
+The supported boards run **Armbian** (or, for the Raspberry Pi Zero 2 W, Raspberry Pi OS),
+and the Preparer is the tool that prepares a card for them. It scans for your Wi-Fi, writes
+your network in before the card ever boots, and downloads the right operating system for
+whichever board you have — so the box comes up on your network by itself the first time you
+plug it in.
 
 ```sh
 ~/riparr-build/prepare
 ```
 
-That's the whole thing. A window opens, you pick your card and your network, and macOS
-asks for your password **once**. It cannot pick a 5 GHz network, cannot write to your
-startup disk, and checks the settings file after writing it.
+That is the whole command. A window opens and walks you through it:
 
-**Raspberry Pi Imager** — the manual path, described below. Use this on Windows or Linux,
-or if you'd rather not install anything.
+**1. Pick your board.** The first thing on the card screen is a **Board** dropdown. Choose
+the one you have. It decides which operating system gets written — the Orange Pi Zero 2W is
+the default and the tested board; the others are marked **beta** (they should work, and
+you'd be helping confirm them). See [board support](../design/board-support.md) for the
+full list.
 
-> **[unresolved]** The Preparer is macOS-only and currently runs from a Python virtualenv.
-> A signed app bundle, and getting Riparr listed in Imager's OS list, are the eventual
-> answers for the other platforms.
+**2. Download the OS.** If the image for your board isn't already in your build folder, the
+Preparer shows a **Download the OS** button. It fetches the current image straight from the
+board vendor (armbian.com or raspberrypi.com) and checks it against the vendor's published
+checksum before it will use it. This is a few hundred megabytes; it only happens once per
+board.
+
+**3. Pick your card.** Your startup disk can never appear in the list, and anything that
+looks like an external drive rather than a card is tucked behind a separate reveal — so a
+backup disk can't be picked by accident.
+
+**4. Choose your Wi-Fi.** The Preparer scans and shows the networks in range. **If your
+board is dual-band, 5 GHz networks are listed too and are the better pick** when the box
+sits near the router — Wi-Fi is what sets how fast a rip lands on your library, so the
+faster band matters here. The passphrase is turned into a derived key before it's written,
+so your actual Wi-Fi password never touches the card.
+
+**5. Name it and write.** Give it a hostname (`riparr` by default — that's how you'll reach
+it), then write. macOS asks for your password **once**, and the Preparer writes the image,
+provisions your settings, verifies what it wrote, and ejects the card.
+
+> **Writing a card is macOS-only for now.** Everything else in the Preparer — the board
+> dropdown, the OS download, the Wi-Fi scan, and setting up a box whose card is already
+> written — works on Windows and Linux; only the raw card write is still being ported
+> ([cross-platform.md](../design/cross-platform.md)). On Windows or Linux today, download
+> the image for your board from the vendor and write it with your preferred imager, then
+> use the Preparer's *"It's plugged in"* route to finish setup over the network.
 
 ---
 
-## What you're doing
-
-Raspberry Pi Imager can write your WiFi details onto the card *before* it ever boots.
-Riparr is built around this — it's why the box appears on your network by itself the first
-time you plug it in.
-
-## Steps
-
-**1. Install Raspberry Pi Imager**
-
-Download from [raspberrypi.com/software](https://www.raspberrypi.com/software/).
-Available for macOS, Windows, and Linux.
-
-**2. Insert your SD card**
-
-Anything on it will be erased.
-
-**3. Choose the device**
-
-Set **Raspberry Pi Device** to **Raspberry Pi Zero 2 W**.
-
-**4. Choose the Riparr image**
-
-**[unresolved]** Riparr aims to be listed directly in Imager's OS list. Until then:
-**Choose OS → Use custom**, and select the `riparr-x.y.z.img.xz` file you downloaded.
-Don't decompress it first — Imager reads `.img.xz` directly.
-
-**5. Choose your SD card**
-
-Check this twice. Imager will happily erase an external drive.
-
-**6. Fill in the customization dialog — this is the important part**
-
-Imager asks whether you want to apply OS customization settings. **Say yes**, then set:
-
-| Field | Set it to |
-|---|---|
-| **Hostname** | `riparr` — this is how you'll reach it. Building more than one? Use `riparr-office`, `riparr-den`, etc. |
-| **Username and password** | Your login for the box itself. **Write these down.** This is separate from the Riparr web password you'll set next. |
-| **Configure wireless LAN** | Your WiFi name and password. **Must be a 2.4GHz network** — the Zero 2W cannot see 5GHz networks at all. |
-| **Wireless LAN country** | Required, or WiFi silently won't start. |
-| **Set locale settings** | Your timezone — this makes timestamps and logs readable. |
-| **Enable SSH** | Optional. Not needed. Turn it on if you want a way in when something goes badly wrong. |
-
-> ⚠️ **The 2.4GHz thing catches people.** If your router broadcasts one name for both
-> bands, that's fine. If 5GHz has its own name, don't use it — the Pi Zero 2W has no 5GHz
-> radio.
-
-**7. Write, and wait**
-
-Imager writes and verifies. A few minutes. When it says you can remove the card, do.
-
 ## What happens on first boot
 
-You don't need to watch this, but so you know: the box joins your WiFi, sizes itself to
-your card, announces itself as `riparr.local`, and starts the web interface. **Give it
-about two minutes** the first time.
+You don't need to watch this, but so you know: the box joins your Wi-Fi, sizes itself to
+your card, announces itself as `riparr.local`, and starts the web interface. **Give it a
+few minutes** the first time — about four from power-on.
 
 ---
 

@@ -2,24 +2,13 @@
 
 [← Guide index](README.md) · [Next: Prepare the SD card →](02-prepare-sd-card.md)
 
-> ### ⚠️ Out of date as of 2026-08-20
->
-> This guide describes a **Raspberry Pi Zero 2W**. The hardware is actually an
-> **Orange Pi Zero 2W** (Allwinner H618) — a different company's board with a nearly
-> identical name. It runs **Armbian**, not Raspberry Pi OS, and Raspberry Pi Imager
-> cannot prepare a card for it.
->
-> The Riparr Preparer handles it correctly. The rest of this guide — board name, OS,
-> ports, and the LED reference — has not been rewritten yet.
-> See [`DECISIONS.md` D17](../../DECISIONS.md) and [`JOURNAL.md`](../../JOURNAL.md).
-
 ---
 
 ## Parts
 
 | Part | Notes |
 |---|---|
-| **Raspberry Pi Zero 2W** | Must be the **2W**. The original Zero is too slow and has no WiFi. |
+| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. See [board support](../design/board-support.md). Whichever you pick, the Preparer downloads the right OS for it. |
 | **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most. |
 | **microSD card** | 32GB is enough. See [which card](#which-card). |
 | **USB-C power supply** | 30W for a Slim build, 100W PD for a Full build. |
@@ -73,7 +62,7 @@ Two card notes:
   Endurance or Samsung Pro Endurance. Every disc writes ~46GB through the card, and
   ordinary cards aren't built for that much sustained writing. For DVDs only, any decent
   card is fine.
-- **Do not buy an SD Express card.** They cost 3–4× more, the Pi Zero 2W can't use the
+- **Do not buy an SD Express card.** They cost 3–4× more, these boards can't use the
   fast interface at all, and they run hotter inside the box.
 
 ---
