@@ -709,8 +709,15 @@ def _rip(job, s, cancel_ev):
             line = line.strip()
             m = PRGV.match(line)
             if m:
-                cur, _, mx = (int(x) for x in m.groups())
-                frac = (cur / mx) if mx else 0
+                # PRGV is current,total,max -- field 1 is the *current operation's*
+                # progress and field 2 is progress across the whole job. Reading field 1
+                # made the bar race to full and snap back to zero on every internal
+                # step: scanning title sets, scanning contents, then the actual save,
+                # each running its own 0-100%. The ETA came off the same fraction, so it
+                # was fiction as well. Field 2 is the number a person means by "how far
+                # along is it".
+                _cur, tot, mx = (int(x) for x in m.groups())
+                frac = (tot / mx) if mx else 0
                 total = job.get("bytes_total") or title.get("bytes") or 0
                 done = int(total * frac)
                 elapsed = time.time() - started
@@ -722,9 +729,15 @@ def _rip(job, s, cancel_ev):
             if m:
                 last_msg = m.group(1)
                 continue
+            # MSG lines are MakeMKV's running commentary -- "Automatic SDF downloading
+            # is disabled or failed", "Title #22 has length of 33 seconds which is less
+            # than minimum". Accurate, addressed to somebody debugging MakeMKV, and
+            # alarming on an appliance: the word "failed" during a healthy rip is how
+            # you get someone pulling the cable. PRGC (the operation name) is what the
+            # phase line shows; MSG stays in the log where it is useful.
             m = MSG.match(line)
             if m:
-                last_msg = m.group(2)
+                log.info("Job %d: %s", job["id"], m.group(2))
     finally:
         try:
             proc.stdout.close()
