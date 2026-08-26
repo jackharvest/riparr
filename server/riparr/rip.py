@@ -1240,6 +1240,7 @@ def _transfer(job, s, local_path, cancel_ev):
     if use_direct(s) and local_path.startswith(_library_root()):
         return _place_directly(job, s, local_path, name, transport)
 
+
     name, warning = _avoid_clobbering(transport, name, job, s)
     if warning:
         log.warning("Job %d: %s", job["id"], warning)
@@ -1289,7 +1290,11 @@ def _transfer(job, s, local_path, cancel_ev):
         raise RipFailed("Couldn't write to your library: %s" % r.get("error"))
     db.stage_end(job["id"])
     db.update_job(job["id"], bytes_sent=total, eta_seconds=None)
-    return transport, name
+    # The third value is where the file is *now*. In direct mode the transfer moves it,
+    # and everything downstream -- verification especially -- was still being handed
+    # the path it used to be at. That is how a finished 23 GiB rip failed with
+    # "No such file or directory" pointing at its own staging directory.
+    return transport, name, local_path
 
 
 def _avoid_clobbering(transport, name, job, s):
@@ -1352,8 +1357,13 @@ def _place_directly(job, s, local_path, name, transport):
         log.warning("Job %d: %s", job["id"], warning)
         db.update_job(job["id"], warning=warning)
 
-    # `name` is share-relative; the mount is the share.
-    dest = os.path.join(P.LIBRARY_MOUNT, name)
+    # `name` is relative to the *configured library path*, which is
+    # "SHARE/subdirectory" -- and the mount is only the share. Joining it to the mount
+    # root drops the subdirectory and files the film one level too high: a 23 GiB
+    # Blu-ray landed in //host/OTHER/Movies instead of //host/OTHER/RiparrDumps/Movies,
+    # next to the user's own folders. `_library_root()` is the same path `_job_dir`
+    # writes into, which is why the two must agree.
+    dest = os.path.join(_library_root(), name)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     try:
         os.replace(local_path, dest)
@@ -1374,7 +1384,7 @@ def _place_directly(job, s, local_path, name, transport):
                   dest_path=transport.describe(name))
     _cleanup_staging(job)               # the empty .riparr-incoming/job-N
     log.info("Job %d written straight to the library: %s", job["id"], dest)
-    return transport, name
+    return transport, name, dest
 
 
 # ── stage 4: prove it arrived ──
@@ -1472,7 +1482,7 @@ def _run_job(job):
         job["mode"] = mode
 
         local_path = _rip(job, s, cancel_ev)
-        transport, name = _transfer(job, s, local_path, cancel_ev)
+        transport, name, local_path = _transfer(job, s, local_path, cancel_ev)
         _verify(job, s, transport, name, local_path)
         _finish(job, s, transport, name, local_path)
 
@@ -1652,9 +1662,9 @@ def _rerun_transfer(job):
     _cancel[job["id"]] = cancel_ev
     try:
         job["_year"] = _split_year(job.get("title") or "")[1]
-        transport, name = _transfer(job, s, job["local_path"], cancel_ev)
-        _verify(job, s, transport, name, job["local_path"])
-        _finish(job, s, transport, name, job["local_path"])
+        transport, name, local_path = _transfer(job, s, job["local_path"], cancel_ev)
+        _verify(job, s, transport, name, local_path)
+        _finish(job, s, transport, name, local_path)
     except Cancelled:
         db.update_job(job["id"], state="cancelled", finished_at=int(time.time()),
                       error="Cancelled")
