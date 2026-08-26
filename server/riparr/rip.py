@@ -698,6 +698,15 @@ def _output_size(out_dir):
 def _rip(job, s, cancel_ev):
     out_dir = _job_dir(job["id"])
     title = job["_title"]
+    # Remember the disc now that we know what it is. record_disc used to happen only in
+    # _finish(), after verification -- so a disc that ripped, uploaded and landed in the
+    # library but failed the read-back left no trace anywhere, and the Discs page stayed
+    # empty after a rip the user watched happen. `ripped_at` is still set only by
+    # _finish(), so duplicate refusal continues to mean "verified", not "attempted".
+    if job.get("fingerprint"):
+        db.record_disc(job["fingerprint"], label=job.get("disc_label"),
+                       title=job.get("title"), kind="movie",
+                       title_index=job.get("chosen_title"))
     db.update_job(job["id"], state="ripping", phase="Reading the disc",
                   local_path=None, bytes_ripped=0)
 

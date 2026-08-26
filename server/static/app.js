@@ -726,6 +726,30 @@ function jobRow(j) {
   // but I cannot tell you how far" is a different message from "stopped".
   const working = active <= 0
     && ["identifying", "queued", "ripping", "transferring", "verifying"].includes(j.state);
+
+  // Three steps, always all three, so the shape of the job is legible before it starts
+  // and the user can see what is still to come. The old version was three spans of
+  // 11.5px muted text distinguished only by colour -- the active one was technically
+  // marked and practically invisible.
+  const steps = [
+    { key: "ripping", label: "Rip", pct: ripPct },
+    { key: "transferring", label: "Upload", pct: sentPct },
+    { key: "verifying", label: "Verify", pct: verPct },
+  ];
+  const order = ["queued", "identifying", "ripping", "transferring", "verifying"];
+  const at = order.indexOf(j.state);
+  const stepHtml = steps.map((st) => {
+    const mine = order.indexOf(st.key);
+    const isNow = j.state === st.key;
+    const done = st.pct >= 100 || (at > mine && at !== -1);
+    const cls = isNow ? "now" : done ? "done" : "todo";
+    const mark = done ? icon("circle-check") : isNow ? `<span class="pip"></span>`
+                                                     : `<span class="pip hollow"></span>`;
+    const val = isNow && st.pct > 0 ? `${Math.round(st.pct)}%` : "";
+    return `<div class="step ${cls}">${mark}<span class="step-l">${st.label}</span>
+      ${val ? `<span class="step-v">${val}</span>` : ""}</div>`;
+  }).join("");
+
   return `
     <div class="job">
       <div class="job-head">
@@ -734,19 +758,20 @@ function jobRow(j) {
           <div class="job-phase">${esc(j.phase || STATE_LABEL[j.state] || j.state)}</div>
         </div>
         ${j.mode ? `<span class="badge ${j.mode === "burst" ? "burst" : ""}">${esc(j.mode)}</span>` : ""}
-        <span class="badge">${esc(STATE_LABEL[j.state] || j.state)}</span>
+        <span class="badge state">${esc(STATE_LABEL[j.state] || j.state)}</span>
         <button class="icon-btn" data-cancel="${j.id}" title="Cancel">${icon("xmark")}</button>
       </div>
       ${j.warning ? `<div class="job-warn">${icon("triangle-exclamation")}
         <span>${esc(j.warning)}</span></div>` : ""}
-      <div class="bar${working ? " working" : ""}"><i style="width:${active}%"></i></div>
-      <div class="job-legs">
-        <span class="${j.state === "ripping" ? "on" : ripPct >= 100 ? "did" : ""}">Rip ${leg(ripPct)}</span>
-        <span class="${j.state === "transferring" ? "on" : sentPct >= 100 ? "did" : ""}">Upload ${leg(sentPct)}</span>
-        <span class="${j.state === "verifying" ? "on" : verPct >= 100 ? "did" : ""}">Verify ${leg(verPct)}</span>
-        <span class="grow"></span>
-        ${j.eta_seconds ? `<span class="job-eta">${esc(duration(j.eta_seconds))} left</span>` : ""}
+      <div class="job-meter">
+        <div class="bar${working ? " working" : ""}"><i style="width:${active}%"></i></div>
+        <div class="job-figs">
+          <span class="job-pct">${active > 0 ? `${Math.round(active)}%` : ""}</span>
+          <span class="grow"></span>
+          ${j.eta_seconds ? `<span class="job-eta">${esc(duration(j.eta_seconds))} left</span>` : ""}
+        </div>
       </div>
+      <div class="job-steps">${stepHtml}</div>
     </div>`;
 }
 
@@ -1833,8 +1858,23 @@ function scheduleLiveRefresh(section) {
   // 1.2s while a job is live. The phase line, the legs and the ETA all move on their
   // own during a rip, and at 2.5s the numbers visibly stepped rather than counted.
   const delay = $$(".job").length ? 1200 : 5000;
-  liveTimer = setTimeout(() => { if (!document.hidden) route(); }, delay);
+  liveTimer = setTimeout(() => {
+    // A hidden tab must keep the loop alive, not end it. This used to just skip the
+    // refresh and never reschedule, so switching away during a rip killed polling for
+    // good: you came back to a page frozen on "Saving to MKV file" while the box had
+    // long since finished uploading. Nothing was wrong with the box, and nothing was
+    // wrong with the job -- the page had simply stopped asking.
+    if (document.hidden) { scheduleLiveRefresh(section); return; }
+    route();
+  }, delay);
 }
+
+/* Coming back to the tab should show now, not in a second and a bit. */
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && (location.hash.replace(/^#\//, "").split("/")[0] || "queue") === "queue") {
+    route();
+  }
+});
 
 function collectSettings() {
   const out = {};

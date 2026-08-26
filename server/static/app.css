@@ -580,19 +580,71 @@ td.stat .ic { font-size: var(--ic-nav); }
    0" moving under a bar that is barely moving is what tells somebody the box is
    working rather than hung, and that is the judgement the whole amber-LED problem
    comes down to. */
-.job { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.job { padding: 20px 22px; border-bottom: 1px solid var(--line); }
+
+/* Inside the disc cell the job is a column, not a full-bleed row. Left to spread, the
+   title sat at one edge and its own status badge at the other with half a metre of
+   nothing between them, and the progress bar ran underneath the poster. Holding the
+   content to a readable measure fixes the alignment and gives the artwork the right
+   half to live in. */
+.disc-cell .job { max-width: min(72%, 720px); border-bottom: 0; }
+@media (max-width: 900px) { .disc-cell .job { max-width: 100%; } }
 .job:last-of-type { border-bottom: 0; }
 .job-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .job-title { color: var(--fg-strong); font-size: 14.5px; }
 .job-phase { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
 .job .bar { height: 6px; }
-.job-legs {
-  display: flex; align-items: center; gap: 16px;
-  margin-top: 7px; font-size: 11.5px; color: var(--fg-muted);
+/* ── the job, as one legible block ──────────────────────
+ * This is the thing every eye is on during a manual rip, so it is laid out as a
+ * hierarchy rather than a stack of small grey text: what it is, what it is doing, how
+ * far, and which of the three stages is live.
+ */
+.job-meter { margin-top: 12px; }
+.job-figs {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-top: 6px; font-size: 12px; color: var(--fg-muted);
 }
-.job-legs .on { color: var(--accent); }
-.job-legs .did { color: var(--ok); }
-.job-eta { color: var(--fg); }
+.job-pct { color: var(--fg); font-size: 13px; font-variant-numeric: tabular-nums; }
+.job-eta { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+/* Three steps, always all three. The active one has to be obvious across a room --
+   the previous version distinguished it with a colour change on 11.5px muted text,
+   which is technically marked and practically invisible. */
+.job-steps {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 14px; flex-wrap: wrap;
+}
+.step {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px 5px 9px; border-radius: 999px;
+  font-size: 12.5px; line-height: 1;
+  border: 1px solid transparent;
+  color: var(--fg-muted); background: rgba(255,255,255,.03);
+}
+.step .ic { width: 13px; height: 13px; flex: none; }
+.step-v { font-variant-numeric: tabular-nums; opacity: .85; }
+
+/* Waiting: outlined dot, quiet. */
+.step.todo .pip {
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 1.5px solid currentColor; opacity: .45;
+}
+/* Running: filled dot, accent, and the only step that carries weight. */
+.step.now {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 500;
+}
+.step.now .pip {
+  width: 9px; height: 9px; border-radius: 50%; background: currentColor;
+  animation: step-pulse 1.6s ease-in-out infinite;
+}
+@keyframes step-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+/* Finished: check, settled green, no emphasis competing with the live step. */
+.step.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, transparent); }
+
+@media (prefers-reduced-motion: reduce) { .step.now .pip { animation: none; } }
+
 .job.needs { background: rgba(255,159,26,.06); border-left: 2px solid var(--warn); }
 
 /* Non-fatal, and it must not look fatal: the rip is running and the user is being
