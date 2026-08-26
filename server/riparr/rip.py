@@ -710,6 +710,70 @@ def _staging_free():
     return int(st.get("free_bytes") or 0)
 
 
+def purge_staging(need_bytes=0, keep_newest=0):
+    """Reclaim space by deleting staged copies that are safely in the library (D6).
+
+    D6 keeps a verified rip on the card so a downstream problem is a re-copy rather
+    than a re-rip, and says "not now" is the only correct time to delete something that
+    took forty minutes to make. The unsaid half is *when* now arrives: it arrives when
+    the next disc will not fit, and until this existed it never arrived at all --
+    `rip.py`'s own docstring has claimed a "retain-until-pressure purge policy" since
+    the beginning and there was no such code. Staging filled up and stayed full, and a
+    Blu-ray was refused for space next to 14 GB of films already on the NAS.
+
+    Oldest first, and **only** copies whose remote counterpart is confirmed to exist at
+    the same size, right now, over the network. A local file is not redundant because a
+    database column says the upload finished; it is redundant when the other copy is
+    actually there. Anything that cannot be confirmed is kept -- the cost of keeping it
+    is disk, and the cost of the other mistake is somebody's forty minutes.
+
+    Returns (freed_bytes, [descriptions]).
+    """
+    share = db.default_share()
+    if not share:
+        return 0, []
+    try:
+        transport = SH.Transport(share)
+        if not transport.reachable():
+            log.info("Not purging: the share is not answering, so nothing can be "
+                     "confirmed as safely stored.")
+            return 0, []
+    except Exception as e:
+        log.warning("Not purging: %s", e)
+        return 0, []
+
+    # Oldest first: the least recently finished rip is the one least likely to be
+    # wanted back. `keep_newest` protects the last few regardless.
+    done = [j for j in db.list_jobs(states=["done"], limit=100)
+            if j.get("local_path") and os.path.exists(j["local_path"])]
+    done.sort(key=lambda j: j.get("finished_at") or 0)
+    if keep_newest:
+        done = done[:-keep_newest] or []
+
+    freed, notes = 0, []
+    for job in done:
+        if need_bytes and freed >= need_bytes:
+            break
+        local = job["local_path"]
+        name = _remote_name(job)
+        try:
+            size = os.path.getsize(local)
+            remote = transport.size(name) if name else None
+        except OSError:
+            continue
+        if remote != size:
+            log.info("Keeping job %d on the card: the library copy is %s, not %d bytes.",
+                     job["id"], remote, size)
+            continue
+        _cleanup_staging(job)
+        db.update_job(job["id"], local_path=None)
+        freed += size
+        notes.append("%s (%d MiB)" % (job.get("title") or job["id"], size // 2 ** 20))
+        log.info("Purged the staged copy of %s; it is on the share at %s.",
+                 job.get("title") or job["id"], name)
+    return freed, notes
+
+
 def _plan_transfer(needed_bytes):
     """Mode selection (D11), honest about what this build can actually do.
 
@@ -717,8 +781,18 @@ def _plan_transfer(needed_bytes):
     D10's original refuse-before-starting check rather than D11's mode switch. The
     branch that is missing is the interesting one: when `supports_follow_copy` is
     True, "does not fit" stops being a refusal and becomes `stream`.
+
+    Refusing is the last resort, not the first. Before saying no, take back the space
+    that is only being held as a convenience -- see `purge_staging`.
     """
     free = _staging_free()
+    short = (needed_bytes + WINDOW_BYTES - free) if needed_bytes else (WINDOW_BYTES - free)
+    if short > 0:
+        freed, notes = purge_staging(need_bytes=short)
+        if freed:
+            log.info("Freed %d MiB from staging to make room: %s",
+                     freed // 2 ** 20, ", ".join(notes))
+            free = _staging_free()
     if free < WINDOW_BYTES:
         return None, ("There's not enough room on the card to rip anything safely. "
                       "Free some space, then try again.")
