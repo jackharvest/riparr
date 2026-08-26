@@ -701,13 +701,23 @@ def close_tray(device="/dev/sr0", wait=25):
         return True, "Tray closed."
     # Closing returns long before the disc is readable -- a DVD takes 15-25 s to spin
     # up and report its table of contents, and asking too early gets "no medium".
+    #
+    # "Present" alone is not enough to stop waiting. The drive can report a disc a
+    # moment before it can describe one, and `optical_drives()` caches a disc's
+    # identity for as long as it stays loaded -- so a read taken one second too early
+    # would latch a nameless, zero-byte disc until the next eject, and the rip that
+    # followed would be called "Unknown disc". Wait for an identity, and throw away
+    # any half-answer taken on the way there.
     deadline = time.time() + wait
     while time.time() < deadline:
         time.sleep(2)
         d = next((x for x in optical_drives() if x.get("present")), None)
-        if d:
+        if not d:
+            continue
+        if d.get("size_bytes") or d.get("label"):
             return True, "Tray closed."
-    return False, ("The tray closed but the drive found no disc in it. "
+        _disc_cache.pop(d["device"], None)
+    return False, ("The tray closed but the drive could not read a disc in it. "
                    "Put the disc in and try again.")
 
 
