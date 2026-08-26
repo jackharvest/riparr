@@ -1079,6 +1079,92 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .ni-title .ni-size { font-size: 11.5px; }
 .notify-events { display: grid; gap: 2px; margin-bottom: 4px; }
 
+/* ── notification channels ──
+   Four rows, each wearing the mark of the service it configures, each opening onto
+   its own setup instructions. Two things carry the state and neither is a word at the
+   far end of the row: the mark is full brand colour when the channel is set up and
+   grey when it is not, and a set-up one carries a tick on its corner. The eye lands
+   on the mark first, which is the point of using the real mark at all.
+
+   Brand hexes are the projects' own (Simple Icons): Discord #5865F2, ntfy #317F6F.
+   ntfy's green is lifted on dark surfaces -- the published value is chosen for white
+   paper and reads as near-black against #1f1f1f. */
+.channels {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.chan + .chan { border-top: 1px solid var(--line-2); }
+.chan-head {
+  display: flex; align-items: center; gap: 14px; width: 100%;
+  padding: 13px 16px; text-align: left; cursor: pointer;
+  background: none; border: 0; color: inherit; font: inherit;
+}
+.chan-head:hover { background: rgba(255,255,255,.04); }
+.chan-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.chan.open > .chan-head { background: rgba(255,255,255,.05); }
+
+.chan-ic {
+  position: relative; flex: 0 0 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 8px; font-size: 21px;
+  background: rgba(255,255,255,.06); color: var(--fg-muted);
+}
+.chan.on .chan-ic { background: rgba(255,255,255,.09); }
+.chan.on .chan-ntfy    { color: #4ec9ae; }   /* #317F6F, lifted for a dark surface */
+.chan.on .chan-discord { color: #5865f2; }
+.chan.on .chan-email   { color: var(--accent); }
+.chan.on .chan-webhook { color: var(--accent); }
+
+/* The tick sits on the mark, not beside it, so "is this one done" is answered in the
+   same glance that identifies which one it is. The ring is the panel colour so the
+   badge reads as on top of the tile rather than clipped into it. */
+.chan-tick {
+  position: absolute; right: -5px; bottom: -5px;
+  font-size: 14px; line-height: 0; color: var(--ok);
+  background: var(--bg); border-radius: 50%; padding: 2px;
+}
+.chan-txt { flex: 1; min-width: 0; display: block; }
+.chan-name { display: block; font-size: 14.5px; font-weight: 600; color: var(--fg-strong); }
+.chan-blurb {
+  display: block; margin-top: 2px; font-size: 12.5px; line-height: 17px;
+  color: var(--fg-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chan-state {
+  flex: 0 0 auto; font-size: 11px; letter-spacing: .3px;
+  padding: 3px 8px; border-radius: 3px;
+  background: rgba(255,255,255,.08); color: var(--fg-muted);
+}
+.chan.on .chan-state { background: rgba(39,194,76,.18); color: var(--ok); }
+.chan-caret {
+  flex: 0 0 14px; font-size: 12px; color: var(--fg-muted);
+  transition: transform .15s ease;
+}
+.chan.open .chan-caret { transform: rotate(180deg); }
+
+/* The list spans the section like every other list on a settings page; the *fields*
+   inside a panel keep the 650px form-group width, so a text input is the same width
+   here as it is on any other settings page rather than stretching to the window. */
+.chan-body { padding: 4px 16px 2px; border-top: 1px solid var(--line); }
+.chan-body .steps { margin-top: 14px; }
+.chan-body .btn-row { margin-bottom: 16px; }
+.chan-body .dc-when { padding-left: 0; }
+
+@media (max-width: 620px) {
+  .chan-head { gap: 11px; padding: 11px 12px; }
+  .chan-state { display: none; }
+  .chan-body { padding: 4px 12px 2px; }
+}
+
+/* A short JSON sample inside a step: a fenced block, not an inline run of code. */
+code.block {
+  display: block; margin-top: 6px; padding: 8px 11px;
+  background: rgba(0,0,0,.25); border-radius: var(--radius);
+  font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 18px;
+  color: var(--fg); white-space: pre-wrap; word-break: break-word;
+}
+
 /* ── the Discord walkthrough ──
    A webhook URL is four clicks deep in somebody else's app, and the docs page for it
    is written for people building bots. Numbered steps in the product beat a link out

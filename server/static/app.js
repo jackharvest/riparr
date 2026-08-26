@@ -1521,18 +1521,35 @@ async function paintRipArt() {
 
 /* ── settings ── */
 /* Five pages, not Sonarr's twenty. Riparr has no indexers, no download clients, no
-   quality profiles and no custom formats -- and "configure once" (concept.md) means the
-   settings surface should stay something a person can read in one sitting. */
+   quality profiles and no custom formats, so the settings surface stays something a
+   person can read in one sitting.
+
+   Each page says what it is for rather than repeating a slogan. The five subtitles
+   used to be one line -- "Configure once. Anything that needs revisiting is a bug." --
+   which told somebody who had just opened Connect for the first time nothing at all
+   about what Connect was. A subtitle is the only sentence guaranteed to be read on a
+   settings page, so it is worth spending on the page rather than on the product. */
 const SETTINGS_TABS = [
-  ["library", "Library"], ["ripping", "Ripping"], ["connect", "Connect"],
-  ["network", "Network"], ["general", "General"],
+  ["library", "Library",
+   "Where finished rips are written, what they are called, and which share each kind "
+   + "of disc goes to."],
+  ["ripping", "Ripping",
+   "What Riparr takes off a disc, how it gets to your library, and how thoroughly it "
+   + "is checked afterwards."],
+  ["connect", "Connect",
+   "How the box reaches you when you are not looking at this page, and where finished "
+   + "files are handed on."],
+  ["network", "Network",
+   "Which Wi-Fi networks this box will join, and in what order it tries them."],
+  ["general", "General",
+   "MakeMKV, the look of this interface, your password, and updates."],
 ];
 
 views.settings = async (sub = "library") => {
   const s = state.settings = await api.get("/api/settings");
   const body = await (settingsPages[sub] || settingsPages.library)(s);
-  const label = (SETTINGS_TABS.find(([k]) => k === sub) || SETTINGS_TABS[0])[1];
-  return `${head(label, "Configure once. Anything that needs revisiting is a bug.")}${body}`;
+  const tab = SETTINGS_TABS.find(([k]) => k === sub) || SETTINGS_TABS[0];
+  return `${head(tab[1], tab[2])}${body}`;
 };
 
 const settingsPages = {};
@@ -1677,46 +1694,99 @@ settingsPages.ripping = (s) => `
 /* Connect — how Riparr reaches you, and how finished files reach everything else.
    The notification half exists because a box whose entire promise is "walk away" had
    no way to tell you to come back: an LED covers the person walking past it and
-   nothing covered the person at work. */
+   nothing covered the person at work.
+
+   Four channels, each with its own setup story of six to ten steps in somebody else's
+   application. Laid out flat, that is a page you scroll through four times to find the
+   one you want, and every reader pays the cost of the three they will never use. So
+   each channel is a row wearing its own mark, and opening one is what asks for the
+   instructions. The mark matters more than it looks: people recognise Discord's face
+   long before they read the word, and a channel that is already working says so on the
+   mark itself rather than in a word at the other end of the row. */
+const CHANNELS = [
+  {key: "ntfy", name: "ntfy", icon: "ntfy",
+   blurb: "Push straight to your phone. No account, no signup — the least work of the four."},
+  {key: "discord", name: "Discord", icon: "discord",
+   blurb: "Posts into a channel, and can @-mention you so your phone actually buzzes."},
+  {key: "email", name: "Email", icon: "envelope",
+   blurb: "Any SMTP server: your provider's, your NAS's, or your own."},
+  {key: "webhook", name: "Webhook", icon: "circle-nodes",
+   blurb: "POSTs JSON to anything that speaks HTTP — Home Assistant, n8n, a script of your own."},
+];
+
+/* One channel: the row you click, and the panel it opens.
+
+   `summary` is what this channel is actually pointed at — the topic, the address, the
+   host. A row that says only "set up" is a row you have to open to check, and the one
+   thing somebody comes back to this page for is *which* account they wired it to. */
+function channelRow(c, on, summary, body) {
+  return `
+  <div class="chan ${on ? "on" : ""}" data-chan="${c.key}">
+    <button class="chan-head" type="button" aria-expanded="false" aria-controls="chan-${c.key}">
+      <span class="chan-ic chan-${c.key}">${icon(c.icon)}${
+        on ? `<span class="chan-tick" title="Set up">${icon("circle-check")}</span>` : ""}</span>
+      <span class="chan-txt">
+        <span class="chan-name">${esc(c.name)}</span>
+        <span class="chan-blurb">${esc(on && summary ? summary : c.blurb)}</span>
+      </span>
+      <span class="chan-state">${on ? "Set up" : "Not set up"}</span>
+      <span class="chan-caret">${icon("chevron-down")}</span>
+    </button>
+    <div class="chan-body" id="chan-${c.key}" hidden>${body}</div>
+  </div>`;
+}
+
 settingsPages.connect = async (s) => {
   const n = await api.get("/api/notifications");
   const on = new Set(n.enabled || []);
   const ch = n.configured || {};
-  return `
-  <div class="section"><h2>Tell me when</h2><div>
-    <p class="muted">Riparr sends these to every channel you set up below. Nothing is
-      sent anywhere until at least one is configured.</p>
-    <div class="notify-events">
-      ${n.events.map(e => `
-        <label class="switch"><input type="checkbox" data-set="notify_events" data-multi
-                value="${esc(e.key)}" ${on.has(e.key) ? "checked" : ""}>
-          <span class="track"></span><span class="lbl">${esc(e.label)}</span></label>`).join("")}
-    </div>
-  </div></div>
+  const live = Object.values(ch).filter(Boolean).length;
 
-  <div class="section"><h2>ntfy
-    <span class="grow"></span>${chanBadge(ch.ntfy)}</h2><div>
-    <p class="muted">The least work: pick a topic nobody else would guess, install the
-      ntfy app, subscribe to it. No account, no signup.</p>
+  const summary = {
+    ntfy: s.ntfy_topic
+      ? `${(s.ntfy_server || "https://ntfy.sh").replace(/^https?:\/\//, "").replace(/\/$/, "")}/${s.ntfy_topic}`
+      : "",
+    discord: s.discord_webhook
+      ? (s.discord_mention ? "A channel webhook, mentioning you" : "A channel webhook, posting quietly")
+      : "",
+    email: s.smtp_to ? `To ${s.smtp_to} via ${s.smtp_host}` : "",
+    webhook: s.webhook_url ? s.webhook_url.replace(/^https?:\/\//, "").slice(0, 60) : "",
+  };
+
+  const bodies = {};
+
+  bodies.ntfy = `
+    <ol class="steps">
+      <li><b>Install ntfy.</b> It is free and on both app stores, or you can leave
+        <a href="https://ntfy.sh/app" target="_blank" rel="noopener">ntfy.sh/app</a>
+        open in a browser tab.</li>
+      <li><b>Invent a topic.</b> A topic is just a name, and there is no password on
+        one — anyone who guesses it reads your notifications. So make it
+        <i>unguessable</i> rather than memorable: <code>riparr-3f9a2b7c</code>, not
+        <code>riparr</code>.</li>
+      <li><b>Subscribe to it</b> in the app: <b>+</b> → type the same topic → Subscribe.</li>
+      <li><b>Paste it below</b> and send a test. The test arrives on your phone or it
+        does not, which is the whole of the answer.</li>
+    </ol>
     <label class="f"><span>Topic</span>
-      <input data-set="ntfy_topic" value="${esc(s.ntfy_topic || "")}" placeholder="riparr-3f9a2b">
-      <span class="help">Anyone who knows the topic can read your notifications, so make
-        it unguessable rather than memorable.</span></label>
+      <input data-set="ntfy_topic" value="${esc(s.ntfy_topic || "")}" placeholder="riparr-3f9a2b7c">
+      <span class="help">Must match what you subscribed to in the app, exactly.</span></label>
     <label class="f"><span>Server</span>
-      <input data-set="ntfy_server" value="${esc(s.ntfy_server || "")}"></label>
+      <input data-set="ntfy_server" value="${esc(s.ntfy_server || "")}">
+      <span class="help">Leave this alone unless you run your own ntfy — a self-hosted
+        one on your NAS works and never leaves your network.</span></label>
     <label class="f"><span>Access token</span>
       <input data-set="ntfy_token" type="password" value="${esc(s.ntfy_token || "")}"
-             placeholder="only for a private server"></label>
-    ${testRow("ntfy")}
-  </div></div>
+             placeholder="only for a private server">
+      <span class="help">Public ntfy.sh topics need no token. A private server that
+        requires sign-in does.</span></label>
+    ${testRow("ntfy")}`;
 
-  <div class="section"><h2>Discord
-    <span class="grow"></span>${chanBadge(ch.discord)}</h2><div>
+  bodies.discord = `
     <p class="muted">A Discord webhook posts into a <b>channel</b>. If you want the box
       to tell <i>you</i> — a notification on your phone rather than a line in a channel
-      somebody might read on Tuesday — make a server of one and have Riparr mention
-      you in it. Both halves are below.</p>
-
+      somebody might read on Tuesday — make a server of one and have Riparr mention you
+      in it. Both halves are below.</p>
     <ol class="steps">
       <li><b>Make somewhere for it to post.</b> In Discord, click <b>+</b> at the bottom
         of the server list → <b>Create My Own</b> → <b>For me and my friends</b>. Call it
@@ -1733,7 +1803,6 @@ settingsPages.connect = async (s) => {
         <b>Copy User ID</b>, and paste that in "Mention me". Riparr will @-mention you,
         which is the thing that actually buzzes a phone.</li>
     </ol>
-
     <label class="f"><span>Webhook URL</span>
       <input data-set="discord_webhook" id="dc-url" value="${esc(s.discord_webhook || "")}"
              placeholder="https://discord.com/api/webhooks/…">
@@ -1761,11 +1830,23 @@ settingsPages.connect = async (s) => {
         make your phone light up. "A rip finished" is off by default for exactly that
         reason: it is good news, and good news can wait.</p>
     </div>
-    ${testRow("discord")}
-  </div></div>
+    ${testRow("discord")}`;
 
-  <div class="section"><h2>Email
-    <span class="grow"></span>${chanBadge(ch.email)}</h2><div>
+  bodies.email = `
+    <ol class="steps">
+      <li><b>Find your provider's outgoing (SMTP) server.</b> Gmail is
+        <code>smtp.gmail.com</code>, Outlook <code>smtp.office365.com</code>, Fastmail
+        <code>smtp.fastmail.com</code>. Your NAS almost certainly has one too.</li>
+      <li><b>Make an app password.</b> Any account with two-factor turned on — which is
+        all of them now — will reject your ordinary password here and give no useful
+        reason. Google calls it an <i>App password</i>; most others use the same words.
+        Use that, not the password you sign in with.</li>
+      <li><b>Port 587 with STARTTLS</b> is the usual pairing. If your provider says port
+        <b>465</b>, use it and turn STARTTLS <i>off</i>: 465 is encrypted from the first
+        byte, and asking it to start again fails.</li>
+      <li><b>From</b> normally has to be the same address you signed in as. Providers
+        refuse to send mail claiming to be somebody else.</li>
+    </ol>
     <div class="grid2">
       <label class="f"><span>SMTP server</span>
         <input data-set="smtp_host" value="${esc(s.smtp_host || "")}" placeholder="smtp.gmail.com"></label>
@@ -1781,24 +1862,66 @@ settingsPages.connect = async (s) => {
         <input data-set="smtp_to" value="${esc(s.smtp_to || "")}" placeholder="you@example.com"></label>
     </div>
     ${sw("smtp_tls", "Use STARTTLS", s.smtp_tls, "Leave on unless the port is 465, which is TLS from the start.")}
-    ${testRow("email")}
-  </div></div>
+    ${testRow("email")}`;
 
-  <div class="section"><h2>Webhook
-    <span class="grow"></span>${chanBadge(ch.webhook)}</h2><div>
+  bodies.webhook = `
+    <p class="muted">The general-purpose escape hatch. Every event is POSTed as JSON to
+      one URL, so anything that can receive an HTTP request can act on it — a Home
+      Assistant automation, an n8n flow, a shell script behind a tiny listener.</p>
+    <ol class="steps">
+      <li><b>Get a URL that accepts a POST.</b> In Home Assistant that is a webhook
+        trigger; in n8n, a Webhook node; anywhere else, whatever you already use.</li>
+      <li><b>Paste it below and send a test.</b> The body looks like this:
+        <code class="block">{"event":"done","title":"Arthur Christmas",
+"body":"Ripped and verified","hostname":"riparr"}</code></li>
+      <li><b>Events are the ones ticked at the top of this page.</b> <code>event</code>
+        is one of <code>${n.events.map(e => e.key).join("</code>, <code>")}</code>.</li>
+    </ol>
     <label class="f"><span>URL</span>
       <input data-set="webhook_url" value="${esc(s.webhook_url)}" placeholder="https://…">
-      <span class="help">POSTs JSON — event, title, body — for Home Assistant, n8n or
-        anything else that speaks HTTP.</span></label>
-    ${testRow("webhook")}
+      <span class="help">Must be <code>http://</code> or <code>https://</code>. A
+        service on your own network is fine and is the common case.</span></label>
+    ${testRow("webhook")}`;
+
+  return `
+  <div class="section"><h2>Tell me when</h2><div>
+    <p class="muted">Riparr sends every event ticked here to every channel set up
+      below. Until at least one channel is configured, nothing is sent anywhere and
+      these have no effect.</p>
+    <div class="notify-events">
+      ${n.events.map(e => `
+        <label class="switch"><input type="checkbox" data-set="notify_events" data-multi
+                value="${esc(e.key)}" ${on.has(e.key) ? "checked" : ""}>
+          <span class="track"></span><span class="lbl">${esc(e.label)}</span></label>`).join("")}
+    </div>
+  </div></div>
+
+  <div class="section"><h2>Channels
+    <span class="grow"></span>
+    <span class="badge ${live ? "ok" : "warn"}">${
+      live ? `${live} of ${CHANNELS.length} set up` : "none set up"}</span></h2><div>
+    <p class="muted">Pick whichever you already use — one is enough, and setting up two
+      is only worth it if you want a copy somewhere permanent. Open a channel to see
+      what it needs. ${live ? "A tick on the mark means Riparr has what it needs to "
+        + "send; the test button is how you find out whether it arrives."
+      : "Nothing is set up yet, so the box currently has no way to reach you when you "
+        + "are not on this page."}</p>
+    <div class="channels">
+      ${CHANNELS.map(c => channelRow(c, !!ch[c.key], summary[c.key], bodies[c.key])).join("")}
+    </div>
   </div></div>
 
   <div class="section"><h2>Handoff</h2><div>
-    <p class="muted">Riparr does not transcode — a Pi Zero 2W would take days and the
-      result would be poor. Hand finished files to a real machine instead.</p>
+    <p class="muted">Not a notification: this is where finished files go <i>next</i>.
+      Riparr does not transcode — a board this size would take days and the result
+      would be poor — so if you run something that does, write the rip where it is
+      watching for work instead of straight into your library.</p>
     <label class="f" style="margin-top:14px"><span>Watch folder</span>
       <input data-set="watch_folder" value="${esc(s.watch_folder)}" placeholder="/Media/_incoming">
-      <span class="help">Write here instead, for Tdarr or Unmanic to pick up.</span></label>
+      <span class="help">A path on your library share. Tdarr and Unmanic both work this
+        way: they pick the file up, transcode it, and put the result wherever they are
+        configured to. Leave this empty to write straight to the folders on the
+        <a href="#/settings/library">Library</a> page.</span></label>
   </div></div>${saveBar()}`;
 };
 
@@ -1852,9 +1975,6 @@ function sitesPanel(mk) {
     ${advice.note ? `<p class="help site-note">${icon("clock")} ${esc(advice.note)}</p>` : ""}
   </div></div>`;
 }
-
-const chanBadge = (ok) =>
-  `<span class="badge ${ok ? "ok" : ""}">${ok ? "configured" : "off"}</span>`;
 
 /* Save first, then send. A test button that tests the values already stored rather
    than the ones on screen answers a question nobody asked. */
@@ -2533,6 +2653,28 @@ function wireContent(section, sub) {
       toast(e.message, "bad");
     }
   };
+
+  /* The channel accordion on Connect. One open at a time: these panels are ten steps
+     of somebody else's instructions each, and two of them open at once is the flat
+     page this replaced. Nothing is destroyed by closing one -- the inputs stay in the
+     DOM, so `collectSettings` still reads a closed panel and Save still saves it. */
+  $$(".chan .chan-head").forEach(head => {
+    head.onclick = () => {
+      const row = head.closest(".chan");
+      const body = row.querySelector(".chan-body");
+      const opening = body.hidden;
+      $$(".chan").forEach(other => {
+        other.classList.remove("open");
+        other.querySelector(".chan-body").hidden = true;
+        other.querySelector(".chan-head").setAttribute("aria-expanded", "false");
+      });
+      if (opening) {
+        row.classList.add("open");
+        body.hidden = false;
+        head.setAttribute("aria-expanded", "true");
+      }
+    };
+  });
 
   // Check the URL that is on screen, not the one that is stored. The whole point is
   // to catch a paste that went wrong, and a check that reads the database would pass
