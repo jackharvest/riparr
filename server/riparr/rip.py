@@ -184,6 +184,31 @@ def enqueue(force=False, expect=None):
 
     label = d.get("label") or ""
 
+    # Before anything else, including creating a row: is this simply a disc we already
+    # have? The label and the size are both in hand within about fifteen seconds of the
+    # tray closing, and together they identify a disc well enough to say so
+    # (db.disc_by_label_size). The fingerprint below is the real identity and costs
+    # three to nine minutes of spinning the drive -- a long time to make somebody wait
+    # to be told a thing they already knew.
+    #
+    # No job row on this path. A refused duplicate is not an attempt at anything, and
+    # History is a list of attempts: leaving a cancelled row behind every time a disc
+    # went in and came out would inflate "try 4 of 7" with tries that never happened.
+    #
+    # Only ever a shortcut *out*. A disc not recognised here still gets the full scan,
+    # so nothing is ripped on the strength of a label.
+    if not force:
+        quick = db.disc_by_label_size(label, d.get("size_bytes"))
+        if quick:
+            # Consuming the arm must *grant* the force, not merely skip the refusal.
+            # Skipping alone would fall through to the scan below, where the arm is
+            # already spent and the post-scan check would refuse the very re-rip
+            # somebody just asked for.
+            if _consume_arm(quick.get("fingerprint")):
+                force = True
+            else:
+                return None, _refuse_duplicate(quick, d, label)
+
     # The row exists *before* the slow part, not after. `fingerprint()` reads the disc
     # structure through makemkvcon, which is minutes on a real drive -- and while it
     # ran there was no job, so the queue had nothing to draw and sat on "Rip this disc"
@@ -207,28 +232,6 @@ def enqueue(force=False, expect=None):
         db.stage_end(job_id)
         db.update_job(job_id, state="cancelled", phase=None,
                       finished_at=int(time.time()), error=reason)
-
-    # Before the expensive part: is this simply a disc we already have? The label and
-    # the size are both in hand within about fifteen seconds of the tray closing, and
-    # together they identify a disc well enough to say so (db.disc_by_label_size). The
-    # fingerprint below is the real identity and takes three to nine minutes to get --
-    # which is a long time to spin a drive in order to tell somebody something they
-    # could have been told at once.
-    #
-    # Only a shortcut *out*. A disc that is not recognised here still gets the full
-    # scan, so nothing is ever ripped on the strength of a label.
-    if not force:
-        quick = db.disc_by_label_size(label, d.get("size_bytes"))
-        if quick:
-            # Consuming the arm here has to *grant* the force, not merely skip the
-            # refusal. Skipping it alone would fall through to the scan below, where
-            # the arm is already spent and the post-scan duplicate check would refuse
-            # the very re-rip somebody just asked for.
-            if _consume_arm(quick.get("fingerprint")):
-                force = True
-            else:
-                db.update_job(job_id, fingerprint=quick.get("fingerprint") or "")
-                return None, _refuse_duplicate(quick, d, label, _abandon)
 
     # The scan that costs the minutes happens here, inside enqueue -- the worker's later
     # call is a cache hit. Reporting from the worker therefore reported nothing, and the
@@ -319,12 +322,13 @@ def ack_duplicate():
         db.set("last_duplicate", got)
 
 
-def _refuse_duplicate(known, drive, label, abandon):
+def _refuse_duplicate(known, drive, label, abandon=None):
     """Give the disc back, and say so in every way the box can. Returns the message.
 
     One function for both the fast path and the post-scan one, because the two must be
     indistinguishable from outside: the same record, the same notification, the same
-    light, the same words.
+    light, the same words. `abandon` is only supplied by the slow path, which has a job
+    row to take back down; the fast path never created one.
     """
     title = known.get("title") or pretty_label(label) or label
     when = time.strftime("%d %b %Y", time.localtime(known["ripped_at"]))
@@ -349,7 +353,8 @@ def _refuse_duplicate(known, drive, label, abandon):
     log.info("Duplicate signal: %s", r.get("message"))
     P.eject()
     msg = "You've already ripped %s." % title
-    abandon(msg)
+    if abandon:
+        abandon(msg)
     return msg
 
 
