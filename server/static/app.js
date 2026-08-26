@@ -2025,14 +2025,25 @@ function testRow(channel) {
     Save and send a test</button><span class="test-out" id="test-${channel}"></span></div>`;
 }
 
+/* Network — every network the box will join, in the order it should try them.
+   One network is the wrong shape for a thing you carry. Taking it to a friend's house
+   to show it off means their SSID and password have to be in it *before* you get
+   there: there is no screen, no keyboard, and no way to type a password into a box
+   that cannot reach the network your browser is on. So this is a list, the way a
+   phone's has been since about 2007, and wpa_supplicant joins the best one it can
+   see. */
 settingsPages.network = async () => {
   const w = await api.get("/api/wifi");
+  state.wifiSaved = w.saved || [];
+  state.wifiHere = w.ssid || "";
+  state.wifiOrder = null;
+  const here = state.wifiHere;
   return `
-    <div class="section"><h2>Connection
+    <div class="section"><h2>Right now
       <span class="grow"></span>
       <span class="badge ${w.connected ? "ok" : "bad"}">${w.connected ? "Connected" : "Offline"}</span></h2>
       <div><div class="kv">
-        <div class="k">Network</div><div class="v">${esc(w.ssid || "—")}</div>
+        <div class="k">Network</div><div class="v">${esc(here || "—")}</div>
         <div class="k">Signal</div><div class="v">${
           w.signal == null ? "—"
             : `${signalBars(w.signal)} ${w.signal}%${
@@ -2045,16 +2056,170 @@ settingsPages.network = async () => {
           w.iface ? ` <span class="muted">· ${esc(w.iface)}</span>` : ""}</div>
       </div></div>
     </div>
-    <div class="section"><h2>Join a different network
+
+    <div class="section"><h2>Known networks
+      <span class="grow"></span>
+      <button class="btn" id="wifi-add">Add a network</button></h2><div>
+      <p class="muted">The box tries these from the top down and joins the first one it
+        can see, so put the network it lives on first. A network can be added before
+        you are anywhere near it — that is the point: type a friend's name and password
+        in here at home, and the box joins their Wi-Fi on its own when you arrive.</p>
+      ${w.can_edit ? "" : `<div class="alert warn" style="margin-bottom:14px"><b>This
+        copy of Riparr can't change Wi-Fi yet.</b> The part that writes the network
+        list runs as root and is installed separately. Re-run the installer to add it:
+        <code>sudo bash /opt/riparr/tools/install.sh</code></div>`}
+      <div id="wifi-add-form"></div>
+      <div id="wifi-list">${wifiListHTML(w.saved, here)}</div>
+      <div class="btn-row" id="wifi-order-bar" hidden>
+        <button class="btn primary" id="wifi-save-order">Save this order</button>
+        <button class="btn" id="wifi-cancel-order">Cancel</button>
+        <span class="test-out" id="wifi-order-out"></span></div>
+      <div id="wifi-apply-out"></div>
+    </div></div>
+
+    <div class="section"><h2>In range now
       <span class="grow"></span>
       <button class="btn" id="wifi-scan">Scan</button></h2>
       <div id="wifi-results">
-        <p class="muted">Wi-Fi is configured when the card is written. Changing it here
-          needs the box to be reachable, so it can only move to a network it can
-          already see.</p>
+        <p class="muted">A scan takes a few seconds. Anything found here can be added
+          with one click — you will still need the password.</p>
       </div>
     </div>`;
 };
+
+/* The saved list. Reordering is arrows rather than drag: this page is read on a phone
+   as often as a laptop, the list is three or four entries, and a drag target that
+   small is a coin toss. */
+function wifiListHTML(saved, here) {
+  if (!saved || !saved.length)
+    return `<div class="empty-state"><div class="big">${icon("wifi")}</div>
+      <h2>No networks saved</h2>
+      <p>Riparr is reading the one the card was written with.</p></div>`;
+  return `<div class="wifi-saved">
+    ${saved.map((n, i) => `
+      <div class="wifi-row${n.ssid === here ? " on" : ""}" data-ssid="${esc(n.ssid)}">
+        <span class="wifi-rank">${i + 1}</span>
+        <span class="wifi-lock" title="${n.secure ? "Password protected" : "Open network"}">${
+          icon(n.secure ? "lock" : "wifi")}</span>
+        <div class="grow">
+          <div class="t">${esc(n.ssid)}</div>
+          <div class="s">${n.ssid === here
+            ? "Connected now"
+            : (i === 0 ? "Tried first" : `Tried ${ordinal(i + 1)}`)}</div>
+        </div>
+        <button class="icon-btn" data-wifi-up="${esc(n.ssid)}" title="Move up"
+                ${i === 0 ? "disabled" : ""}>${icon("arrow-up")}</button>
+        <button class="icon-btn" data-wifi-down="${esc(n.ssid)}" title="Move down"
+                ${i === saved.length - 1 ? "disabled" : ""}>${icon("arrow-down")}</button>
+        <button class="icon-btn danger" data-wifi-del="${esc(n.ssid)}" title="Forget"
+                ${saved.length === 1 ? "disabled" : ""}>${icon("trash-can")}</button>
+      </div>`).join("")}
+  </div>`;
+}
+
+const ordinal = (n) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+
+/* Rebound after every repaint: the rows are replaced wholesale, so the handlers go
+   with them. */
+function wireWifiRows(repaint) {
+  $$("[data-wifi-up]").forEach(b => b.onclick = () => window.__wifiMove(b.dataset.wifiUp, -1));
+  $$("[data-wifi-down]").forEach(b => b.onclick = () => window.__wifiMove(b.dataset.wifiDown, 1));
+  $$("[data-wifi-del]").forEach(b => b.onclick = () => window.__wifiDrop(b.dataset.wifiDel));
+}
+
+/* Adding a network. The name is typed, not only picked from a scan, because the whole
+   reason this list exists is networks that are not in range yet. */
+function showWifiForm(ssid = "", isOpen = false) {
+  const into = $("#wifi-add-form");
+  if (!into) return;
+  into.innerHTML = `
+    <div class="wifi-form">
+      <div class="grid2">
+        <label class="f"><span>Network name</span>
+          <input id="wf-ssid" value="${esc(ssid)}" placeholder="exactly as it appears, capitals and all">
+          <span class="help">SSIDs are case sensitive and a trailing space counts.</span></label>
+        <label class="f"><span>Password</span>
+          <input id="wf-pass" type="password" placeholder="${isOpen ? "none — this one is open" : "8 to 63 characters"}">
+          <span class="help">Turned into a key here and stored as one. The password
+            itself is never written to the card.</span></label>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="wf-go">Save it</button>
+        <button class="btn" id="wf-cancel">Cancel</button>
+        <span class="test-out" id="wf-out"></span></div>
+      <p class="help">New networks go to the top of the list. If this one is not in
+        range the box stays where it is and joins when it can see it.</p>
+    </div>`;
+  $("#wf-cancel").onclick = () => { into.innerHTML = ""; };
+  const go = $("#wf-go");
+  go.onclick = async () => {
+    const out = $("#wf-out");
+    const name = $("#wf-ssid").value.trim();
+    if (!name) { out.className = "test-out bad"; out.textContent = "A name is required."; return; }
+    go.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Saving…";
+    try {
+      const r = await api.post("/api/wifi/networks",
+                               { ssid: name, password: $("#wf-pass").value });
+      state.wifiSaved = r.saved || [];
+      state.wifiOrder = null;
+      into.innerHTML = "";
+      $("#wifi-list").innerHTML = wifiListHTML(state.wifiSaved, state.wifiHere);
+      wireWifiRows();
+      followWifiApply();
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    go.disabled = false;
+  };
+  $("#wf-ssid").focus();
+}
+
+/* Applying is the one change that can move the box somewhere the browser cannot
+   follow, so it reports rather than assuming. The root side publishes what it is
+   doing; this reads that until it settles. */
+async function followWifiApply(quiet = false) {
+  const out = $("#wifi-apply-out");
+  if (!out) return;
+  if (!quiet) {
+    out.innerHTML = `<div class="result busy"><span class="spin"></span>
+      Writing the list and reloading Wi-Fi. If the box moves to a different network,
+      this page will stop responding — reopen it at
+      <b>${esc(state.status ? state.status.hostname + ".local" : "the box's name")}</b>.</div>`;
+  }
+  for (let i = 0; i < 25; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    if (!$("#wifi-apply-out")) return;
+    let r;
+    try { r = await api.get("/api/wifi/apply"); } catch (e) { continue; }
+    const a = r.apply;
+    if (!a) continue;
+    if (a.phase === "done") {
+      out.innerHTML = `<div class="result ok"><b>${esc(a.message)}</b></div>`;
+      state.wifiHere = r.connected || state.wifiHere;
+      const list = $("#wifi-list");
+      if (list) {
+        try {
+          const w = await api.get("/api/wifi");
+          state.wifiSaved = w.saved || [];
+          list.innerHTML = wifiListHTML(state.wifiSaved, state.wifiHere);
+          wireWifiRows();
+        } catch (e) { /* the list on screen is still correct */ }
+      }
+      return;
+    }
+    if (a.phase === "error") {
+      out.innerHTML = `<div class="result bad"><b>${esc(a.message)}</b>
+        ${a.detail ? `<div class="why">${esc(a.detail)}</div>` : ""}</div>`;
+      return;
+    }
+    if (!quiet) {
+      out.innerHTML = `<div class="result busy"><span class="spin"></span>${esc(a.message)}</div>`;
+    }
+  }
+}
 
 settingsPages.general = async (s) => {
   const mk = await api.get("/api/makemkv");
@@ -3172,38 +3337,105 @@ function wireContent(section, sub) {
     toast("Share removed"); route();
   });
 
+  /* ── the saved network list ──
+     Order is the whole feature: wpa_supplicant joins the best network it can see, and
+     "best" is the number this list assigns. Reordering is local until Save, so moving
+     three entries costs one rewrite of /etc/wpa_supplicant rather than three -- and
+     each rewrite reloads the supplicant, which on a box you are talking to over Wi-Fi
+     is not free. */
+  const wifiList = $("#wifi-list");
+  if (wifiList) {
+    // Nothing saved at all is the state a freshly written card is in: one network on
+    // it that Riparr has never been told about. Ask the root side to read it back.
+    if (!(state.wifiSaved || []).length && $("#wifi-add")) {
+      api.post("/api/wifi/import").then(() => followWifiApply(true)).catch(() => {});
+    }
+
+    const order = () => (state.wifiOrder || (state.wifiSaved || []).map(n => n.ssid));
+    const bar = $("#wifi-order-bar");
+    const repaint = (dirty) => {
+      const saved = order().map(ssid =>
+        (state.wifiSaved || []).find(n => n.ssid === ssid)).filter(Boolean);
+      wifiList.innerHTML = wifiListHTML(saved, state.wifiHere);
+      if (bar) bar.hidden = !dirty;
+      wireWifiRows(repaint);
+    };
+    const move = (ssid, by) => {
+      const o = order().slice();
+      const i = o.indexOf(ssid);
+      const j = i + by;
+      if (i < 0 || j < 0 || j >= o.length) return;
+      [o[i], o[j]] = [o[j], o[i]];
+      state.wifiOrder = o;
+      repaint(true);
+    };
+    const drop = (ssid) => {
+      const o = order().filter(x => x !== ssid);
+      if (!o.length) { toast("Riparr will not forget the last network.", "bad"); return; }
+      state.wifiOrder = o;
+      repaint(true);
+    };
+    window.__wifiMove = move;
+    window.__wifiDrop = drop;
+    wireWifiRows(repaint);
+
+    const cancel = $("#wifi-cancel-order");
+    if (cancel) cancel.onclick = () => { state.wifiOrder = null; repaint(false); };
+
+    const save = $("#wifi-save-order");
+    if (save) save.onclick = async () => {
+      const out = $("#wifi-order-out");
+      save.disabled = true;
+      out.className = "test-out";
+      out.textContent = "Applying…";
+      try {
+        const r = await api.put("/api/wifi/networks", { ssids: order() });
+        state.wifiSaved = r.saved || [];
+        state.wifiOrder = null;
+        out.textContent = "";
+        if (bar) bar.hidden = true;
+        followWifiApply();
+      } catch (e) {
+        out.className = "test-out bad";
+        out.textContent = e.message;
+      }
+      save.disabled = false;
+    };
+  }
+
+  const wifiAdd = $("#wifi-add");
+  if (wifiAdd) wifiAdd.onclick = () => showWifiForm();
+
   const scan = $("#wifi-scan");
   if (scan) scan.onclick = async () => {
     const box = $("#wifi-results");
     box.innerHTML = `<div class="result busy"><span class="spin"></span>Scanning…</div>`;
-    const { networks, note } = await api.post("/api/wifi/scan");
-    box.innerHTML = `<p class="muted" style="margin-bottom:10px">${esc(note)}</p>` +
-      networks.map((n, i) => `
-      <div class="rowitem" data-join="${i}"><div class="grow">
-        <div class="t">${esc(n.ssid)}</div>
-        <div class="s">${n.signal}%${n.band ? ` · ${n.band} GHz` : ""}${n.secure ? "" : " · open"}</div>
-      </div><span class="badge">join</span></div>`).join("") +
-      `<div id="join-res"></div>`;
+    let r;
+    try { r = await api.post("/api/wifi/scan"); }
+    catch (e) { box.innerHTML = `<div class="result bad">${esc(e.message)}</div>`; return; }
+    const saved = new Set((state.wifiSaved || []).map(n => n.ssid));
+    if (!r.networks.length) {
+      box.innerHTML = `<div class="result bad"><b>Nothing came back.</b>
+        <div class="why">Either nothing is in range, or the radio could not be asked.
+        Riparr scans with <code>wpa_cli</code>, which needs the service account to be in
+        the <code>netdev</code> group — re-running the installer adds it.</div></div>`;
+      return;
+    }
+    box.innerHTML = `<p class="muted" style="margin-bottom:10px">${esc(r.note)}</p>` +
+      r.networks.map((n, i) => `
+      <div class="rowitem" ${saved.has(n.ssid) ? "" : `data-join="${i}"`}>
+        <span class="wifi-lock">${icon(n.secure ? "lock" : "wifi")}</span>
+        <div class="grow">
+          <div class="t">${esc(n.ssid)}</div>
+          <div class="s">${signalBars(n.signal)} ${n.signal}%${
+            n.band ? ` · ${n.band} GHz` : ""}${n.secure ? "" : " · open"}</div>
+        </div>
+        <span class="badge ${saved.has(n.ssid) ? "ok" : ""}">${
+          saved.has(n.ssid) ? "saved" : "add"}</span></div>`).join("");
 
-    $$("#wifi-results [data-join]").forEach(node => node.onclick = async () => {
-      const n = networks[+node.dataset.join];
-      const res = $("#join-res");
-      let pass = "";
-      if (n.secure) {
-        pass = prompt(`Password for ${n.ssid}`) ?? "";
-        if (!pass) return;
-      }
-      res.innerHTML = `<div class="result busy"><span class="spin"></span>
-        Joining ${esc(n.ssid)}… if this succeeds the connection drops briefly.</div>`;
-      try {
-        const r = await api.post("/api/wifi/connect", { ssid: n.ssid, password: pass });
-        res.innerHTML = `<div class="result ${r.ok ? "ok" : "bad"}">
-          <b>${r.ok ? "Joined" : "Couldn't join"}</b>${esc(r.message || "")}</div>`;
-        if (r.ok) toast(`Joined ${n.ssid}`, "ok");
-      } catch (e) {
-        res.innerHTML = `<div class="result bad"><b>Couldn't join</b>
-          <div class="why">${esc(e.message)}</div></div>`;
-      }
+    $$("#wifi-results [data-join]").forEach(node => node.onclick = () => {
+      const n = r.networks[+node.dataset.join];
+      showWifiForm(n.ssid, !n.secure);
     });
   };
 

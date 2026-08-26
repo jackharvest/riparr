@@ -154,6 +154,15 @@ DEFAULTS = {
     "duplicate_signal": "flash",
     "webhook_url": "",
     "watch_folder": "",
+    # Every Wi-Fi network this box will join, best first. A list rather than one entry
+    # because the box is meant to be carried: taking it to somebody else's house means
+    # their network has to be in it before it gets there, since there is no screen to
+    # type a password into once you have arrived. Each entry is
+    # {ssid, psk (64-hex, derived), open, added_at} -- never a passphrase.
+    #
+    # Excluded from /api/settings: it holds credentials, and the Network page has its
+    # own endpoints that return names and order without the keys.
+    "wifi_networks": [],
     # Notifications. The box's whole promise is "walk away", so these are the only way
     # it can reach someone who did.
     "notify_events": ["done", "ripped", "needs_you", "failed", "share_lost",

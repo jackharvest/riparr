@@ -1,0 +1,16 @@
+[Unit]
+Description=Apply Riparr's saved Wi-Fi networks
+Documentation=https://github.com/jackharvest/riparr
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/rm -f /run/riparr/wifi.request
+ExecStart=/usr/local/lib/riparr/wifi-apply.sh
+# Associating can take twenty seconds and the script waits for it deliberately, so
+# that the interface can say "connected to X" instead of "reloaded".
+TimeoutStartSec=180
+
+# Deliberately NOT sandboxed the way riparr.service is. This has to write
+# /etc/wpa_supplicant and talk to systemd, and a namespaced unit would do both
+# privately and invisibly — the mount would succeed inside the namespace and change
+# nothing outside it. See JOURNAL.md.

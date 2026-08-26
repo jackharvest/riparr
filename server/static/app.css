@@ -77,6 +77,11 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` attribute loses to any rule that sets `display`, and several here do --
+   .btn-row is a flex row, so a hidden one was visible. This is what the HTML attribute
+   is supposed to mean. */
+[hidden] { display: none !important; }
+
 body {
   background: var(--bg);
   background-attachment: fixed;
@@ -1088,6 +1093,44 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .ni-title .ni-dur { color: var(--fg-strong); font-variant-numeric: tabular-nums; }
 .ni-title .ni-size { font-size: 11.5px; }
 .notify-events { display: grid; gap: 2px; margin-bottom: 4px; }
+
+/* ── the saved Wi-Fi list ──
+   Ordered, because wpa_supplicant joins the best network it can see and this list is
+   what "best" means. The rank number is the point of the row, so it leads. Reordering
+   is arrows rather than drag: the list is three or four entries, it is read on a phone
+   as often as a laptop, and a drag target that small is a coin toss. */
+.wifi-saved {
+  border: 1px solid var(--line-2); border-radius: var(--radius); overflow: hidden;
+}
+.wifi-row {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.wifi-row:last-child { border-bottom: 0; }
+.wifi-row.on { background: rgba(39,194,76,.08); }
+.wifi-rank {
+  flex: 0 0 24px; height: 24px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.08); color: var(--fg-muted);
+  font-size: 11.5px; font-variant-numeric: tabular-nums;
+}
+.wifi-row.on .wifi-rank { background: rgba(39,194,76,.22); color: var(--ok); }
+.wifi-lock { flex: 0 0 auto; font-size: 13px; color: var(--fg-muted); }
+.wifi-row .t { color: var(--fg-strong); font-size: 13.5px; }
+.wifi-row .s { font-size: 11.5px; color: var(--fg-muted); }
+.wifi-row .icon-btn { font-size: 12px; }
+.wifi-row .icon-btn:disabled { opacity: .25; cursor: default; }
+.wifi-row .icon-btn.danger:hover:not(:disabled) { color: var(--bad); }
+/* Above the list, not below it, because a new network goes to the top -- and because
+   below it the form's Cancel stacked directly on the order bar's Cancel. */
+.wifi-form {
+  margin-bottom: 16px; padding: 16px 16px 4px;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: rgba(255,255,255,.03);
+}
+.wifi-form .help:last-child { margin-left: 0; margin-bottom: 14px; }
+#wifi-results .rowitem { cursor: default; }
+#wifi-results .rowitem[data-join] { cursor: pointer; }
 
 /* ── notification channels ──
    Four rows, each wearing the mark of the service it configures, each opening onto

@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch for a Riparr request to change the Wi-Fi networks
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# /etc/wpa_supplicant is root-owned and must stay that way. The web service can create
+# one file in its own runtime directory; that is the whole interface. Nothing in the
+# file is read — the network list comes from the database, which only the service
+# writes and only behind authentication — so a compromised service can ask for exactly
+# "apply the list you already have" and nothing else.
+PathExists=/run/riparr/wifi.request
+
+[Install]
+WantedBy=multi-user.target

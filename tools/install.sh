@@ -58,8 +58,14 @@ MISSING=()
 # NOT part of a minimal Debian: without it every failure path that returns the disc
 # raised FileNotFoundError straight through the handler that called it, so a rip failed
 # with "No such file or directory: 'eject'" and the real reason was never recorded.
+# wpasupplicant brings wpa_cli, which is how the box scans for networks and asks the
+# supplicant to re-read its config after the network list changes. The daemon itself is
+# already running -- it is what joined the network the Preparer wrote -- but a minimal
+# image can carry the daemon without the client.
+# iw reads the live association back (which SSID, what signal, which band). Without it
+# a perfectly healthy 5 GHz link reports as "not connected".
 for pkg in python3-venv python3-pip git ca-certificates avahi-daemon avahi-utils \
-           smbclient cifs-utils eject; do
+           smbclient cifs-utils eject wpasupplicant iw; do
   dpkg -s "$pkg" >/dev/null 2>&1 || MISSING+=("$pkg")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -130,7 +136,10 @@ fi
 # the status LED writes to /dev/spidev* which is root:spi. Each group is added only if
 # it exists: `spi` is absent until SPI is enabled in the device tree, and a box with no
 # LED must still install cleanly.
-for g in cdrom video spi gpio; do
+# netdev is new: wpa_supplicant's control socket is GROUP=netdev, and without it the
+# service cannot scan for networks or ask the supplicant to re-read its config. It
+# still cannot *write* the config -- that goes through the root bridge below.
+for g in cdrom video spi gpio netdev; do
   getent group "$g" >/dev/null && usermod -aG "$g" "$RIPARR_USER"
 done
 install -d -o "$RIPARR_USER" -g "$RIPARR_USER" "$DATA_DIR"
@@ -237,6 +246,16 @@ done
 # "Make both USB-C sockets host a drive", through the same door. This board has two
 # identical-looking sockets and only one can host; the other enumerates nothing and
 # logs nothing, which reads as a dead drive. One button beats one paragraph.
+# Wi-Fi, through the same one-way door. The box is meant to be carried, so it keeps an
+# ordered list of networks rather than one -- and writing /etc/wpa_supplicant needs
+# root, which the service does not have and must not be given.
+install -o root -g root -m 0755 "$INSTALL_DIR/packaging/wifi-apply.sh" \
+        /usr/local/lib/riparr/wifi-apply.sh
+install -m 0644 "$INSTALL_DIR/packaging/riparr-wifi.service" \
+        /etc/systemd/system/riparr-wifi.service
+install -m 0644 "$INSTALL_DIR/packaging/riparr-wifi.path" \
+        /etc/systemd/system/riparr-wifi.path
+
 install -o root -g root -m 0755 "$INSTALL_DIR/packaging/usbhost-fix.sh" \
         /usr/local/lib/riparr/usbhost-fix.sh
 install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.path" \
@@ -274,11 +293,11 @@ fi
 systemctl daemon-reload
 systemctl enable --quiet riparr-makemkv.path
 systemctl start riparr-makemkv.path
-for act in reboot poweroff usbhost; do
+for act in reboot poweroff usbhost wifi; do
   systemctl enable --quiet "riparr-$act.path"
   systemctl start "riparr-$act.path"
 done
-ok "MakeMKV, restart, shut down and the USB-C fix all work from the web interface"
+ok "MakeMKV, restart, shut down, Wi-Fi and the USB-C fix all work from the web interface"
 systemctl enable --quiet "$SERVICE"
 systemctl restart "$SERVICE"
 ok "riparr.service enabled and started"

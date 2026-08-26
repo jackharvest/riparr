@@ -717,6 +717,10 @@ SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 def _redact(s):
     s = dict(s)
     s.pop("session_secret", None)
+    # Wi-Fi PSKs. Not masked but removed: unlike an SMTP password there is no field on
+    # any settings page to type one back into, so a mask would only be a thing to
+    # accidentally save. The Network page has its own endpoints.
+    s.pop("wifi_networks", None)
     for k in SECRET_SETTINGS:
         if s.get(k):
             s[k] = SECRET_MASK
@@ -854,9 +858,36 @@ class WifiConnect(BaseModel):
     password: str = ""
 
 
+class WifiOrder(BaseModel):
+    ssids: list
+
+
 @app.get("/api/wifi")
 def wifi(user=Depends(require_user)):
-    return P.wifi_status()
+    P.wifi_adopt()          # pick up whatever the card was written with
+    st = dict(P.wifi_status())
+    st["saved"] = _saved_networks()
+    st["can_edit"] = P.MOCK or P.wifi_bridge_available()
+    st["apply"] = P.wifi_apply_state()
+    return st
+
+
+def _saved_networks():
+    """The saved list, without the keys.
+
+    Every entry holds a 256-bit PSK. It is not the passphrase -- it is derived on the
+    way in and the passphrase is never stored -- but it is still the credential that
+    joins that network, and there is no reason for it to cross the wire back to a
+    browser. The interface only ever needs the name and the order.
+    """
+    out = []
+    for n in (db.get("wifi_networks") or []):
+        if not isinstance(n, dict) or not n.get("ssid"):
+            continue
+        out.append({"ssid": n["ssid"],
+                    "secure": bool(n.get("psk")),
+                    "added_at": n.get("added_at")})
+    return out
 
 
 @app.post("/api/wifi/scan")
@@ -870,7 +901,80 @@ def wifi_scan(user=Depends(require_user)):
             if dual else
             "Only 2.4 GHz networks were found — either this board has no 5 GHz radio, "
             "or none are in range.")
-    return {"networks": nets, "note": note}
+    return {"networks": nets, "note": note, "saved": _saved_networks()}
+
+
+@app.post("/api/wifi/networks")
+def wifi_network_add(body: WifiConnect, user=Depends(require_user)):
+    """Remember a network. Adding one is the same operation as joining one.
+
+    On a box with no screen those really are the same thing: a connection that does not
+    survive a reboot is a connection that strands the box, and a network you cannot
+    reach yet -- a friend's house you have not driven to -- has to be enterable anyway.
+    So this takes an SSID that may be nowhere in range, derives the PSK, puts it at the
+    top of the list and applies.
+    """
+    ssid = (body.ssid or "").strip()
+    if not ssid:
+        raise HTTPException(status_code=400, detail="A network name is required.")
+    if body.password and not (8 <= len(body.password) <= 63):
+        raise HTTPException(
+            status_code=400,
+            detail="A Wi-Fi password is between 8 and 63 characters. Leave it empty "
+                   "for an open network.")
+    r = P.wifi_connect(ssid, body.password)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("message", "Could not save it."))
+    return {"ok": True, "message": r.get("message"), "saved": _saved_networks()}
+
+
+@app.put("/api/wifi/networks")
+def wifi_networks_reorder(body: WifiOrder, user=Depends(require_user)):
+    """Re-order the list, or drop entries from it, by naming what should remain.
+
+    Order is the whole feature: wpa_supplicant joins the highest-priority network it
+    can see, so "prefer home over the guest network at work" is expressed here and
+    nowhere else.
+    """
+    want = [str(x) for x in (body.ssids or [])]
+    have = {n["ssid"]: n for n in (db.get("wifi_networks") or [])
+            if isinstance(n, dict) and n.get("ssid")}
+    if not want:
+        raise HTTPException(
+            status_code=400,
+            detail="Riparr will not save an empty list — that would take the box off "
+                   "the network with no way to put it back except a card reader.")
+    ordered = [have[s] for s in want if s in have]
+    if not ordered:
+        raise HTTPException(status_code=400, detail="None of those networks are saved.")
+    db.set("wifi_networks", ordered)
+    r = P.wifi_apply()
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error", "Could not apply it."))
+    return {"ok": True, "saved": _saved_networks()}
+
+
+@app.post("/api/wifi/import")
+def wifi_import(user=Depends(require_user)):
+    """Ask the root side to read the live config and tell us what is in it.
+
+    Deliberately an explicit call rather than a side effect of loading the page: it
+    rewrites /etc/wpa_supplicant and reloads the supplicant, and a GET must not do
+    that. The Network page fires it once, when it has no saved networks at all — which
+    is exactly the state a freshly written card is in, with one network on it that
+    Riparr has never been told about.
+    """
+    r = P.wifi_apply()
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error", "Could not read it."))
+    return {"ok": True}
+
+
+@app.get("/api/wifi/apply")
+def wifi_apply_state(user=Depends(require_user)):
+    """What the root side is doing, or said last. Never blocks."""
+    return {"apply": P.wifi_apply_state(),
+            "connected": P.wifi_status().get("ssid")}
 
 
 @app.post("/api/wifi/connect")

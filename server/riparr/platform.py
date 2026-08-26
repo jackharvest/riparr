@@ -5,6 +5,8 @@ The rest of the codebase talks to this module and never shells out directly, so 
 whole app runs on a laptop with realistic fake data and runs unchanged on the Pi.
 `IS_APPLIANCE` is the only switch.
 """
+import hashlib
+import json
 import os
 import platform as _p
 import re
@@ -975,13 +977,20 @@ def _band_of(freq):
 def wifi_scan():
     """Every network the radio can see, whatever band it is on.
 
-    This used to drop anything at 5 GHz on the belief that the board was a Raspberry Pi
-    Zero 2 W, whose radio is 2.4 GHz only. But the reference board is an Orange Pi Zero 2W
-    (dual-band Wi-Fi 5), and the other supported boards go up to Wi-Fi 6 — so filtering by
-    frequency hid networks the hardware can actually join, and 5 GHz is the band that most
-    changes how fast a rip lands on the share. The right filter is the radio itself: a
-    2.4-only board simply never returns a 5 GHz result, so no hardcoded assumption is
-    needed or correct across boards.
+    This used to shell out to `nmcli`, which is not installed: the image runs
+    systemd-networkd with wpa_supplicant and ships no NetworkManager at all. So the
+    real path silently returned an empty list on every board Riparr has ever run on,
+    and only the mock ever produced a network. `wifi_status` had already been moved off
+    nmcli for exactly this reason; scanning and joining were left behind.
+
+    `wpa_cli` is the right tool for this stack, and it does not need root: the control
+    socket is `GROUP=netdev` (see the Preparer's wpa_conf), so the service account
+    being in `netdev` is the whole permission story.
+
+    No band filtering. It used to drop 5 GHz on the belief the board was a Pi Zero 2 W,
+    whose radio is 2.4-only -- but the reference board is dual-band and others go to
+    Wi-Fi 6, so the filter hid networks the hardware can actually join. The radio is
+    its own filter: a 2.4-only board never returns a 5 GHz result.
     """
     if MOCK:
         return [
@@ -991,34 +1000,179 @@ def wifi_scan():
             {"ssid": "ROG 2G", "signal": 38, "secure": True, "band": "2.4"},
             {"ssid": "xr500", "signal": 21, "secure": True, "band": "5"},
         ]
-    out = _run(["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,FREQ", "dev", "wifi", "list"]) or ""
+    iface = _wifi_iface() or "wlan0"
+    # Ask for a fresh sweep, then read the table. `scan` returns before the sweep is
+    # done -- it is a request, not a result -- so the results read below may be from
+    # the previous one. That is the correct trade: a stale list now beats a blank page
+    # for four seconds, and the caller can scan again.
+    _run(["wpa_cli", "-i", iface, "scan"], timeout=5)
+    time.sleep(2.5)
+    out = _run(["wpa_cli", "-i", iface, "scan_results"], timeout=8) or ""
     nets = {}
     for line in out.splitlines():
-        f = line.split(":")
-        if len(f) < 4 or not f[0]:
+        f = line.split("\t")
+        # bssid / frequency / signal level / flags / ssid -- and a header line, and
+        # `Selected interface` chatter, neither of which has five fields.
+        if len(f) < 5 or f[0] == "bssid":
             continue
+        ssid = f[4].strip()
+        if not ssid:
+            continue                       # a hidden network has nothing to show
         try:
-            freq = int(re.sub(r"\D", "", f[3]) or 0)
+            freq, dbm = int(f[1]), int(f[2])
         except ValueError:
             continue
-        sig = int(f[1]) if f[1].isdigit() else 0
-        # Keep the strongest sighting of an SSID, but never let a weak sighting on one
-        # band erase the band of the strong one it is replacing.
-        if f[0] not in nets or sig > nets[f[0]]["signal"]:
-            nets[f[0]] = {"ssid": f[0], "signal": sig,
-                          "secure": bool(f[2]), "band": _band_of(freq)}
+        sig = _dbm_to_quality(dbm) or 0
+        flags = f[3]
+        if ssid not in nets or sig > nets[ssid]["signal"]:
+            nets[ssid] = {"ssid": ssid, "signal": sig, "signal_dbm": dbm,
+                          "secure": ("WPA" in flags or "WEP" in flags),
+                          "band": _band_of(freq)}
     return sorted(nets.values(), key=lambda n: -n["signal"])
 
 
-def wifi_connect(ssid, password):
+# ─────────────────────── more than one network ───────────────────────
+#
+# The box is meant to be carried. Taking it to a friend's house to show it off means
+# their SSID and password have to be in it *before* it gets there -- there is no
+# screen, no keyboard, and no way to type a password into a box that cannot reach the
+# network the browser is on. So Riparr keeps an ordered list of networks rather than
+# one, exactly as a phone does, and wpa_supplicant picks whichever it can see.
+#
+# The passphrase is never stored or written as a passphrase. It is turned into the
+# 256-bit PSK on the way in (PBKDF2-HMAC-SHA1, 4096 iterations, the SSID as salt --
+# IEEE 802.11i Annex H.4), which is what wpa_supplicant wants anyway and means a
+# stolen card yields a key for one network rather than a password somebody reuses.
+
+def wifi_psk(ssid, passphrase):
+    """The 64-hex PSK for this SSID and passphrase, or "" for an open network."""
+    if not passphrase:
+        return ""
+    return hashlib.pbkdf2_hmac("sha1", passphrase.encode("utf-8"),
+                               ssid.encode("utf-8"), 4096, 32).hex()
+
+
+RUN_DIR = "/run/riparr"
+WIFI_REQUEST = "/run/riparr/wifi.request"
+WIFI_STATE = "/run/riparr/wifi.state"
+WIFI_UNIT = "/etc/systemd/system/riparr-wifi.path"
+
+
+def wifi_bridge_available():
+    """Can this process ask the root side to rewrite wpa_supplicant's config?
+
+    Same one-way door as MakeMKV, restart and shut down: the service creates one file
+    in its own runtime directory and a path unit turns that into a root oneshot whose
+    command line is fixed in the unit. Nothing in the file is parsed, so there is
+    nothing in it to trust -- the root side reads the network list from the database,
+    which only this service can write, and only behind authentication.
+    """
+    return os.path.exists(WIFI_UNIT) and os.path.isdir(RUN_DIR) and os.access(
+        RUN_DIR, os.W_OK)
+
+
+# Off the appliance there is no wpa_supplicant to reload, so the mock walks the same
+# states the root script publishes -- including seeding the list from the "current"
+# connection, which is what the import step does on real hardware. The plumbing below
+# it (the path unit, the script, the merge) is real and is NOT exercised here; it is
+# unvalidated until it runs on a board.
+_MOCK_WIFI = {"state": None}
+
+
+def wifi_apply():
+    """Ask for the saved list to be written out and wpa_supplicant reloaded."""
     if MOCK:
-        return {"ok": True, "message": "Connected (simulated)"}
-    cmd = ["nmcli", "dev", "wifi", "connect", ssid]
-    if password:
-        cmd += ["password", password]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    return {"ok": p.returncode == 0,
-            "message": (p.stdout or p.stderr).strip()}
+        from . import db
+        nets = db.get("wifi_networks") or []
+        if not nets:
+            nets = [{"ssid": wifi_status()["ssid"], "psk": "0" * 64, "open": False,
+                     "added_at": int(time.time())}]
+            db.set("wifi_networks", nets)
+        _MOCK_WIFI["state"] = {"phase": "done", "at": int(time.time()), "detail": "",
+                               "message": "Connected to %s" % nets[0]["ssid"]}
+        return {"ok": True, "message": "Applied (simulated)"}
+    if not wifi_bridge_available():
+        return {"ok": False,
+                "error": "This copy of Riparr was installed before it could change "
+                         "Wi-Fi from the web interface. Re-run the installer:\n\n"
+                         "    sudo bash /opt/riparr/tools/install.sh"}
+    try:
+        with open(WIFI_REQUEST, "w") as f:
+            f.write("%d\n" % int(time.time()))
+    except OSError as e:
+        return {"ok": False, "error": "Could not ask the system to apply it: %s" % e}
+    return {"ok": True, "message": "Applying"}
+
+
+WIFI_MERGED = "/run/riparr/wifi.merged.json"
+
+
+def wifi_adopt():
+    """Take up any network the root side found in the live config and we did not know.
+
+    The card is written with one network already on it. Nothing in the database knows
+    about that network, so the first time somebody saved a second one the config would
+    have been rewritten with only the second in it -- and the box would come home,
+    see nothing it recognised, and have no screen with which to say so.
+
+    So the apply script merges, and publishes what it merged. This picks that up, which
+    is what makes the network the Preparer wrote appear in the list like any other:
+    orderable, removable, and visibly there.
+
+    Returns True when the stored list changed.
+    """
+    from . import db
+    if MOCK:
+        return False
+    try:
+        with open(WIFI_MERGED) as f:
+            merged = json.load(f)
+    except (OSError, ValueError):
+        return False
+    if not isinstance(merged, list):
+        return False
+    have = db.get("wifi_networks") or []
+    known = {n.get("ssid") for n in have if isinstance(n, dict)}
+    added = [{"ssid": n["ssid"], "psk": n.get("psk") or "",
+              "open": not n.get("psk"), "added_at": int(time.time())}
+             for n in merged
+             if isinstance(n, dict) and n.get("ssid") and n["ssid"] not in known]
+    if not added:
+        return False
+    db.set("wifi_networks", list(have) + added)
+    return True
+
+
+def wifi_apply_state():
+    """What the root side said about the last apply, or None if it has not run."""
+    if MOCK:
+        return _MOCK_WIFI["state"]
+    try:
+        with open(WIFI_STATE) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return st if isinstance(st, dict) else None
+
+
+def wifi_connect(ssid, password):
+    """Kept for the one-network case: save it at the top, then apply.
+
+    The old implementation called `nmcli dev wifi connect`, which on this image is a
+    command that does not exist -- so it reported failure with an empty message and
+    nothing changed. Joining is now the same operation as saving, because on a headless
+    box those really are the same thing: the list is what survives a reboot, and a
+    connection that does not is a connection that strands the box.
+    """
+    from . import db
+    nets = [n for n in (db.get("wifi_networks") or []) if n.get("ssid") != ssid]
+    nets.insert(0, {"ssid": ssid, "psk": wifi_psk(ssid, password),
+                    "open": not password, "added_at": int(time.time())})
+    db.set("wifi_networks", nets)
+    r = wifi_apply()
+    if not r.get("ok"):
+        return {"ok": False, "message": r.get("error", "Could not apply the change.")}
+    return {"ok": True, "message": "Saved. The box is joining %s." % ssid}
 
 
 # ─────────────────────────────── makemkv ───────────────────────────────
