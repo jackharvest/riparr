@@ -695,6 +695,9 @@ td.stat .ic { font-size: var(--ic-nav); }
  * because they do not know it is askable: where did the half hour go.
  */
 .hist-table td { vertical-align: top; }
+/* "try 7 of 7", "32 MiB", "24 min ago" are short and must never break in half. Once
+   they wrap, the row grows a line and the table reads as damaged rather than dense. */
+.hist-table td.num, .hist-table th.num { white-space: nowrap; }
 .hist-table tr.hist td { border-bottom: 0; padding-bottom: 4px; }
 .hist-dest td { padding-top: 0; font-size: 12px; }
 .hist-dest .badge { margin-left: 8px; }
@@ -712,7 +715,7 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .btn.tiny .ic { font-size: 11px; margin-right: 4px; }
 
 /* One stage, one colour, used identically in the bar, the numbers under it and the
-   legend -- so the wide grey band a user asks about is findable in the key. */
+   key in the header -- so the wide band a user asks about is findable. */
 /* Capped, not stretched: the bar is a proportion, and a proportion drawn across
    half the page reads as a progress bar for something still happening. */
 .stagebar { display: flex; height: 7px; border-radius: 4px; overflow: hidden;
@@ -728,13 +731,79 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .sg-upload   { background: #27c24c; }
 .sg-verify   { background: #d2b04c; }
 
-.stage-key { margin-top: 16px; }
-.stage-key h3 { font-size: 14px; font-weight: 700; color: var(--fg-strong);
-                margin: 0 0 10px; text-transform: none; letter-spacing: 0; }
-.stage-key-row { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 10px; }
-.sk { font-size: 12px; display: inline-flex; align-items: baseline; gap: 6px; }
-.sk b { color: var(--fg-strong); font-weight: 600; }
-.stage-note { margin-top: 14px; font-size: 12.5px; }
+/* The key, in the page header. Always on screen, because it is what makes every bar
+   on the page readable. */
+.stage-key { display: flex; gap: 14px; flex-wrap: wrap; justify-content: flex-end;
+             max-width: 440px; }
+.sk { font-size: 11.5px; color: var(--fg-muted); white-space: nowrap;
+      display: inline-flex; align-items: baseline; gap: 3px; cursor: default; }
+.sk b { color: var(--fg); font-weight: 600; }
+.sk .sk-t { font-variant-numeric: tabular-nums; }
+/* A stage with no median yet is still in the key -- the colour has to be readable
+   before there is any history -- but it does not pretend to a number. */
+.sk.unknown { opacity: .55; }
+.stage-note { margin-top: 14px; font-size: 12.5px; max-width: 78ch; }
+
+/* ── History on a narrow screen ──
+ * Eight columns cannot survive a phone, and a table that scrolls sideways is a table
+ * nobody reads the right-hand half of. Below 900px each attempt becomes a card: the
+ * title and its error at the top, the four figures as a labelled wrapping row, the
+ * stage bar full width because it is the reason to be here, then the retries.
+ */
+/* 1100, not 900: eight columns plus two buttons stop fitting well before a phone.
+   Between those widths the table technically rendered, with every short figure broken
+   across two lines -- cards are simply the better layout by then. */
+@media (max-width: 1100px) {
+  .hist-table, .hist-table tbody, .hist-table tr, .hist-table td { display: block; }
+  .hist-table thead { display: none; }
+  /* Flex, not grid: the four figures have to share one *wrapping* line, and a grid
+     gives each of them a row of its own. (Floats are no help either -- a grid item's
+     float is ignored outright, which is how the first attempt at this went wrong.) */
+  .hist-table tr.hist {
+    padding: 12px 2px 4px; border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px;
+  }
+  .hist-table tbody tr.hist:first-child { border-top: 0; }
+  .hist-table tr.hist > td { padding: 0; border: 0; }
+  .hist-table tr.hist > td.stat { flex: 0 0 auto; width: auto; }
+  /* The title takes the whole of line one and pushes the four figures onto line two.
+     Sharing a line with them squeezed it to about sixty pixels, which turned a film
+     title into two lines and an error message into a one-word-per-line ribbon. */
+  .hist-table tr.hist > td.hist-name { flex: 1 0 calc(100% - 32px); min-width: 0; }
+  .hist-table tr.hist > td.num {
+    flex: 0 0 auto; width: auto;
+    display: inline-flex; align-items: baseline; gap: 5px;
+    font-size: 12px; margin: 9px 8px 0 0; text-align: left;
+  }
+  .hist-table tr.hist > td[data-label].num::before {
+    content: attr(data-label); color: var(--fg-muted); font-size: 11px;
+  }
+  /* The stage bar and the buttons each get a full line of their own, *after* all four
+     figures -- `When` comes last in the markup, so without this it would be stranded
+     below the bar instead of sitting with the other three. */
+  .hist-table tr.hist > td.hist-stages { flex: 1 0 100%; padding-top: 10px; order: 1; }
+  .hist-table tr.hist > td.hist-stages::before {
+    content: attr(data-label); display: block; color: var(--fg-muted);
+    font-size: 11px; margin-bottom: 4px;
+  }
+  /* Full width on a phone, capped on a tablet -- a proportion drawn across 780px of
+     empty space starts to read as a progress bar for something still running. */
+  .stagebar { width: 100%; max-width: 460px; }
+  .hist-table tr.hist > td.act { flex: 1 0 100%; text-align: left; padding-top: 10px;
+                                 order: 2; }
+  .hist-table .act .btn { margin: 0 6px 6px 0; }
+  .hist-table tr.hist-dest { padding: 0 2px 12px 0; }
+  .hist-table tr.hist-dest > td:first-child { display: none; }
+  .hist-table tr.hist-dest > td { padding: 0; border: 0; word-break: break-all; }
+  .hist-err { max-width: none; }
+  /* The key stops being a right-aligned toolbar and becomes a normal wrapping row. */
+  .page-head { flex-wrap: wrap; }
+  .stage-key { max-width: none; justify-content: flex-start; margin-left: 0; gap: 10px 14px; }
+  .head-acts { margin-left: 0; width: 100%; }
+}
+@media (max-width: 520px) {
+  .sk .sk-t { display: none; }        /* colour and name survive; the median can go */
+}
 
 /* The counting timer on an in-flight job. Sits under the stepper, because it is the
    answer to "is this thing stuck", and that question is asked while looking there. */

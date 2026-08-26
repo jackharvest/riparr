@@ -1152,6 +1152,8 @@ views.history = async () => {
 
   const typical = h.typical_stages || {};
   const row = (j) => {
+    // data-label carries each cell's column heading, so the narrow layout can put the
+    // heading back beside the value when the table stops being a table.
     const size = j.state === "done" ? j.bytes_sent || j.bytes_ripped || j.bytes_total
                                     : j.bytes_ripped || 0;
     // Work done, not wall clock. `finished_at` moves every time a job is retried or
@@ -1165,19 +1167,19 @@ views.history = async () => {
       <td class="stat">${icon(j.state === "done" ? "circle-check"
                              : j.state === "cancelled" ? "ban"
                              : "triangle-exclamation")}</td>
-      <td>
+      <td class="hist-name">
         <div class="hist-title">${esc(j.title || j.disc_label || "Unknown disc")}</div>
         ${j.title && j.disc_label && j.title !== j.disc_label
           ? `<div class="hist-sub">${esc(j.disc_label)}</div>` : ""}
         ${j.error ? `<div class="hist-err">${esc(j.error)}</div>` : ""}
       </td>
-      <td class="num">${j._tries > 1
+      <td class="num" data-label="Attempt">${j._tries > 1
         ? `<span title="This film has been attempted ${j._tries} times. Every attempt is a row here.">try ${j._try} of ${j._tries}</span>`
         : `<span class="muted">1</span>`}</td>
-      <td class="num">${size ? esc(filesize(size)) : `<span class="muted">—</span>`}</td>
-      <td class="num">${took != null ? esc(duration(took)) : `<span class="muted">—</span>`}</td>
-      <td>${stageBar(j.stages, typical)}</td>
-      <td class="num"><span title="${esc(when(j.finished_at))}">${esc(ago(j.finished_at))}</span></td>
+      <td class="num" data-label="Size">${size ? esc(filesize(size)) : `<span class="muted">—</span>`}</td>
+      <td class="num" data-label="Took">${took != null ? esc(duration(took)) : `<span class="muted">—</span>`}</td>
+      <td class="hist-stages" data-label="Where the time went">${stageBar(j.stages, typical)}</td>
+      <td class="num" data-label="When"><span title="${esc(when(j.finished_at))}">${esc(ago(j.finished_at))}</span></td>
       <td class="act">${(j.retries || []).map(r =>
         `<button class="btn tiny" data-hretry="${j.id}" data-haction="${esc(r.action)}"
                  title="${esc(r.why)}">${icon(RETRY_ICON[r.action] || "arrows-rotate")
@@ -1189,7 +1191,8 @@ views.history = async () => {
           ? ` <span class="badge ok">${esc(j.verified_mode)} verified</span>` : ""}</td></tr>` : ""}`;
   };
 
-  return `${head("History", "Every attempt, what each stage cost, and what can be retried.")}
+  return `${head("History", "Every attempt, what each stage cost, and what can be retried.",
+                 stageLegend(typical, h.stage_order, h.stage_labels))}
     <div class="card"><table class="hist-table">
       <thead><tr>
         <th class="stat"></th><th>Title</th><th class="num">Attempt</th>
@@ -1198,7 +1201,7 @@ views.history = async () => {
       </tr></thead>
       <tbody>${jobs.map(row).join("")}</tbody>
     </table></div>
-    ${stageLegend(typical, h.stage_order, h.stage_labels)}`;
+    ${stageNote(typical)}`;
 };
 
 /* A proportional bar of the stages, because the interesting fact about a rip is not
@@ -1220,27 +1223,43 @@ function stageBar(stages, typical) {
   </div>`;
 }
 
-/* The key for the colours above, doubling as the answer to "how long does this box
-   normally take" -- which is the number the queue's counting timer is built from. */
+/* The key for the stage colours. It belongs in the header row rather than under the
+   table: it is what makes every bar on the page readable, and a key you have to scroll
+   past the data to reach is a key you look at once and then stop using.
+
+   Doubling as "how long does this box normally take" -- the same medians the queue's
+   counting timer is built from -- so it earns the space twice. */
+const STAGE_SHORT = {
+  identify: "Reading", decrypt: "Decrypting", save: "Saving",
+  upload: "Uploading", verify: "Verifying",
+};
+
 function stageLegend(typical, order, labels) {
-  order = order || [];
-  const have = order.filter(k => typical[k]);
-  if (!have.length) {
-    return `<p class="muted stage-note">Riparr needs two finished rips of the same kind
-      before it can say what is normal for this box. Until then the queue counts up
-      rather than down.</p>`;
-  }
-  return `<div class="card stage-key"><h3>Typical on this box</h3>
-    <div class="stage-key-row">${have.map(k =>
-      `<span class="sk"><i class="sg-${esc(k)}"></i>
-        <b>${esc((labels || {})[k] || k)}</b>
-        <span>${esc(duration(typical[k].seconds))}</span>
-        <span class="muted">${typical[k].samples} rip${typical[k].samples === 1 ? "" : "s"}</span>
-      </span>`).join("")}</div>
-    <p class="muted">Medians over this box's own finished rips. MakeMKV cannot report
-      progress during the disc scan at all — the reads go through <code>/dev/sg0</code>,
-      where neither the file accounting nor the block layer can see them — so what this
-      machine did last time is the only honest estimate there is.</p></div>`;
+  order = order || Object.keys(STAGE_SHORT);
+  return `<div class="stage-key" role="group" aria-label="Stage colours">
+    ${order.map(k => {
+      const t = typical[k];
+      const full = (labels || {})[k] || k;
+      return `<span class="sk${t ? "" : " unknown"}" title="${esc(full)}${
+        t ? ` — usually ${duration(t.seconds)} on this box, over ${t.samples} rip${
+              t.samples === 1 ? "" : "s"}`
+          : " — no finished rips to average yet"}">
+        <i class="sg-${esc(k)}"></i><b>${esc(STAGE_SHORT[k] || full)}</b>${
+        t ? `<span class="sk-t">${esc(duration(t.seconds))}</span>` : ""}</span>`;
+    }).join("")}
+  </div>`;
+}
+
+/* The caveat that does not fit in a header chip, and only needs saying once. */
+function stageNote(typical) {
+  const have = Object.keys(typical || {}).length;
+  return `<p class="muted stage-note">${have
+    ? `Times above the colours are medians over this box's own finished rips.`
+    : `Riparr needs two finished rips before it can say what is normal for this box.
+       Until then the queue counts up rather than down.`}
+    MakeMKV cannot report progress during the disc scan at all — the reads go through
+    <code>/dev/sg0</code>, where neither the file accounting nor the block layer can see
+    them — so what this machine did last time is the only honest estimate there is.</p>`;
 }
 
 function when(ts) {
