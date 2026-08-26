@@ -685,6 +685,26 @@ td.stat .ic { font-size: var(--ic-nav); }
 }
 .rip-meta { margin-top: 3px; font-size: 11.5px; color: var(--fg-muted); }
 .rip-meta .bad { color: var(--bad, #e05c5c); }
+/* ── which disc is this ──
+ * The same chip in the same three colours on the Queue, on History and on a poster.
+ * Two copies of one film -- the DVD and the Blu-ray -- are the case this exists for,
+ * and they are only distinguishable if the answer looks identical everywhere.
+ */
+.fam {
+  display: inline-block; vertical-align: middle;
+  font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 3px; margin-left: 8px; line-height: 1.5;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.fam-dvd    { color: #d8c07a; border-color: rgba(216,192,122,.45); background: rgba(216,192,122,.12); }
+.fam-bluray { color: #7fb2f0; border-color: rgba(127,178,240,.45); background: rgba(127,178,240,.12); }
+.fam-uhd    { color: #c79bf0; border-color: rgba(199,155,240,.45); background: rgba(199,155,240,.14); }
+/* On a poster it has to survive whatever is behind it. */
+.fam.on-art {
+  position: absolute; top: 7px; left: 7px; margin: 0;
+  background: rgba(0,0,0,.68); backdrop-filter: blur(2px);
+}
+
 /* ── "you already ripped that" ──
  * The disc goes in, ten seconds of noise happen, the disc comes out. Without this the
  * box has done something deliberate and looks like it has malfunctioned.

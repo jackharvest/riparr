@@ -103,6 +103,9 @@ ADDED_COLUMNS = {
         # The size of the disc itself, paired with `label` to recognise a disc in
         # seconds instead of minutes -- see db.disc_by_label_size.
         ("size_bytes", "INTEGER"),
+        # dvd | bluray | uhd. The Discs page is a shelf, and a shelf that cannot tell
+        # you which of your two copies of a film this one is has lost the plot.
+        ("disc_family", "TEXT"),
     ],
 }
 
@@ -384,6 +387,21 @@ def disc_by_label_size(label, size_bytes):
     row = conn().execute(
         "SELECT * FROM discs WHERE label=? AND size_bytes=? AND ripped_at IS NOT NULL "
         "ORDER BY ripped_at DESC LIMIT 1", (label, int(size_bytes))).fetchone()
+    return dict(row) if row else None
+
+
+def job_for_remote_name(name):
+    """The last finished job that wrote to this path on the share.
+
+    Asked before overwriting anything: a destination that already exists is fine when
+    it is the same disc being re-ripped, and is somebody's other copy of the film when
+    it is not.
+    """
+    if not name:
+        return None
+    row = conn().execute(
+        "SELECT * FROM jobs WHERE remote_name=? AND state='done' "
+        "ORDER BY id DESC LIMIT 1", (name,)).fetchone()
     return dict(row) if row else None
 
 

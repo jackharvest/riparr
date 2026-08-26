@@ -834,17 +834,26 @@ def sanitise(name):
     return s.rstrip(". ") or "Untitled"
 
 
-def _render_template(template, title, year=None):
+# What a disc family is called in a filename. Plex and Jellyfin both read several
+# files in one movie folder as versions of the same film, so this is how two copies of
+# Arthur Christmas coexist instead of one deleting the other.
+SOURCE_TAG = {"dvd": "DVD", "bluray": "Bluray", "uhd": "UHD"}
+
+
+def _render_template(template, title, year=None, source=None):
     """Fill a Plex/Jellyfin-convention naming template.
 
     Unknown placeholders are left alone rather than blanked: a template with a typo
     should produce a visibly odd name, not a file called ` ().mkv`.
     """
-    values = {"Title": sanitise(title), "Year": str(year) if year else ""}
+    values = {"Title": sanitise(title), "Year": str(year) if year else "",
+              "Source": SOURCE_TAG.get(source or "", "")}
     out = template
     for k, v in values.items():
         out = out.replace("{%s}" % k, v)
     out = re.sub(r"\s*\(\)\s*", " ", out)           # an absent year leaves empty parens
+    out = re.sub(r"\s*\[\]\s*", " ", out)           # ...and an absent source, empty brackets
+    out = re.sub(r"\s+-\s+(\.[A-Za-z0-9]+)$", r"\1", out)   # "Film - .mkv"
     out = re.sub(r"\s{2,}", " ", out)
     out = re.sub(r"\s+(\.[A-Za-z0-9]+)$", r"\1", out)  # ...and a space before the suffix
     segments = []
@@ -1008,6 +1017,7 @@ def _rip(job, s, cancel_ev):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind="movie",
                        size_bytes=job.get("disc_bytes") or 0,
+                       disc_family=job.get("disc_family"),
                        title_index=job.get("chosen_title"))
     db.update_job(job["id"], state="ripping", phase="Reading the disc",
                   local_path=None, bytes_ripped=0, stage_pct=0)
@@ -1154,10 +1164,15 @@ def _transfer(job, s, local_path, cancel_ev):
     year = job.get("_year")
     folder = (s.get("movie_folder") or "Movies").strip("/")
     rel = _render_template(s.get("movie_template") or "{Title} ({Year})/{Title} ({Year}).mkv",
-                           title, year)
+                           title, year, source=job.get("disc_family"))
     name = "%s/%s" % (folder, rel) if folder else rel
 
     transport = SH.Transport(share)
+    name, warning = _avoid_clobbering(transport, name, job, s)
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
+        db.update_job(job["id"], warning=warning)
+
     total = os.path.getsize(local_path)
     db.stage_start(job["id"], "upload")
     db.update_job(job["id"], state="transferring", phase="Sending to your library",
@@ -1205,6 +1220,49 @@ def _transfer(job, s, local_path, cancel_ev):
     return transport, name
 
 
+def _avoid_clobbering(transport, name, job, s):
+    """Never overwrite somebody else's copy of the film. Returns (name, warning).
+
+    The destination is built from the *title*, so the DVD and the Blu-ray of the same
+    film render to exactly the same path -- and an SMB write to an existing path simply
+    replaces it. Ripping one after the other silently destroyed the first, with nothing
+    anywhere saying so. That is the worst class of bug this project can have: it looks
+    like success.
+
+    Overwriting is right in one case and one only: the same disc, ripped again, which
+    is what Re-rip is for. Anything else gets a source tag on the end -- Plex and
+    Jellyfin both read several files in one movie folder as versions of the same film,
+    so the two copies sit side by side and the user picks.
+    """
+    try:
+        if transport.size(name) is None:
+            return name, None                      # nothing there; nothing to protect
+    except Exception:
+        return name, None                          # cannot ask: proceed as before
+
+    prior = db.job_for_remote_name(name)
+    mine = job.get("fingerprint") or ""
+    if prior and (prior.get("fingerprint") or "") == mine and mine:
+        return name, None                          # the same disc, ripped again
+
+    tag = SOURCE_TAG.get(job.get("disc_family") or "")
+    if not tag:
+        # An unknown family cannot be tagged usefully, and a numbered suffix is a
+        # filename nobody can read. Say what is happening and let it replace: the user
+        # started this rip deliberately, and the alternative is a file called "(2)".
+        return name, ("There was already a file at %s. It has been replaced."
+                      % transport.describe(name))
+
+    stem, dot, ext = name.rpartition(".")
+    tagged = "%s - %s%s%s" % (stem, tag, dot, ext) if dot else "%s - %s" % (name, tag)
+    if tagged == name:
+        return name, None
+    prior_what = (prior.get("title") if prior else None) or "another copy"
+    return tagged, ("Your library already has %s at this name, from a different disc. "
+                    "This one has been saved as \u201c%s\u201d instead, so both are kept."
+                    % (prior_what, os.path.basename(tagged)))
+
+
 # ── stage 4: prove it arrived ──
 
 def _verify(job, s, transport, name, local_path):
@@ -1241,6 +1299,7 @@ def _finish(job, s, transport, name, local_path):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind="movie", ripped_at=now,
                        size_bytes=job.get("disc_bytes") or 0,
+                       disc_family=job.get("disc_family"),
                        title_index=job.get("chosen_title"), job_id=job["id"])
 
     # D6: a verified copy is kept until the space is needed, so a downstream problem

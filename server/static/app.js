@@ -727,6 +727,22 @@ views.queue = async () => {
    is the difference between a bar that is moving and a box that has hung -- the
    distinction that decides whether somebody pulls the cable. */
 
+/* ── which disc is this, at a glance ──
+   Riparr's three families, in the words on the box. The Queue, History and Discs all
+   render this identically, because "is that my DVD or my Blu-ray of the same film" is
+   a question the answer to must not change shape depending on where it is asked. */
+const FAMILY = {
+  dvd:    { label: "DVD",     cls: "fam-dvd" },
+  bluray: { label: "Blu-ray", cls: "fam-bluray" },
+  uhd:    { label: "4K UHD",  cls: "fam-uhd" },
+};
+
+function familyTag(family, extra = "") {
+  const f = FAMILY[family];
+  if (!f) return "";
+  return `<span class="fam ${f.cls}${extra ? " " + extra : ""}">${esc(f.label)}</span>`;
+}
+
 const STATE_LABEL = {
   queued: "Waiting", identifying: "Reading the disc", ripping: "Ripping",
   transferring: "Uploading", verifying: "Verifying", needs_input: "Needs you",
@@ -792,6 +808,7 @@ function jobRow(j) {
           <div class="job-title">${esc(j.title || j.disc_label || "Unknown disc")}</div>
           <div class="job-phase">${esc(j.phase || STATE_LABEL[j.state] || j.state)}</div>
         </div>
+        ${familyTag(j.disc_family)}
         ${j.mode ? `<span class="badge ${j.mode === "burst" ? "burst" : ""}">${esc(j.mode)}</span>` : ""}
         <span class="badge state">${esc(STATE_LABEL[j.state] || j.state)}</span>
         <button class="icon-btn" data-cancel="${j.id}" title="Cancel">${icon("xmark")}</button>
@@ -1189,7 +1206,8 @@ views.history = async () => {
                              : j.state === "cancelled" ? "ban"
                              : "triangle-exclamation")}</td>
       <td class="hist-name">
-        <div class="hist-title">${esc(j.title || j.disc_label || "Unknown disc")}</div>
+        <div class="hist-title">${esc(j.title || j.disc_label || "Unknown disc")}${
+          familyTag(j.disc_family)}</div>
         ${j.title && j.disc_label && j.title !== j.disc_label
           ? `<div class="hist-sub">${esc(j.disc_label)}</div>` : ""}
         ${j.error ? `<div class="hist-err">${esc(j.error)}</div>` : ""}
@@ -1317,6 +1335,7 @@ views.discs = async (highlight) => {
                     data-art="${esc(d.title || d.label || "")}">
       <div class="rip-art">
         <span class="rip-fallback">${icon("compact-disc")}</span>
+        ${familyTag(d.disc_family, "on-art")}
         ${!d.ripped_at ? `<span class="rip-flag" title="Seen, but never finished a verified rip">${
           icon("triangle-exclamation")}</span>` : ""}
       </div>
