@@ -494,6 +494,25 @@ def _stages(job):
         return []
 
 
+def stage_enter(job_id, name, at=None):
+    """Open a stage unless it is already the open one.
+
+    The idempotent form, and the one to reach for. A stage can legitimately be entered
+    from two places -- `identify` opens in `enqueue`, because that is where the nine
+    minutes of disc scanning actually happen, and the worker then walks into
+    `_identify` and would open it a second time. Splitting one stretch of work into
+    two runs still sums correctly, but it resets the clock the queue is counting
+    against, so the timer would jump back to zero halfway through the slowest stage.
+    """
+    job = get_job(job_id) or {}
+    for st in reversed(_stages(job)):
+        if st.get("ended") is None:
+            if st.get("name") == name:
+                return
+            break
+    stage_start(job_id, name, at=at)
+
+
 def stage_start(job_id, name, at=None):
     """Open a stage, closing whatever was open before it.
 

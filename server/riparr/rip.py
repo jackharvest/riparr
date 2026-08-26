@@ -159,8 +159,16 @@ def enqueue(force=False):
         state="identifying", phase="Reading the disc \u2014 a few minutes on an encrypted DVD",
         mode=None, bytes_total=int(d.get("size_bytes") or 0))
 
+    # The identify stage opens *here*, not in `_identify`. The scan is minutes long and
+    # it happens inside enqueue -- the worker's later call is a cache hit -- so timing
+    # it from the worker would record the slowest stage of the whole rip as zero
+    # seconds, and the one stage that most needs a "usually about nine minutes" would
+    # be the one stage that never got one.
+    db.stage_enter(job_id, "identify")
+
     def _abandon(reason):
         """Take the row back down when the disc turns out not to be rippable."""
+        db.stage_end(job_id)
         db.update_job(job_id, state="cancelled", phase=None,
                       finished_at=int(time.time()), error=reason)
 
@@ -198,6 +206,12 @@ def enqueue(force=False):
             _abandon("Already queued as job %d." % existing["id"])
             return existing["id"], None
 
+    # Close identify before the job goes into the queue. A job that waits behind
+    # another disc can sit at "queued" for half an hour, and leaving the stage open
+    # across that would record the wait as scan time and poison the median with it.
+    # `_identify` reopens it for its own pass, which is a cache hit and costs seconds;
+    # the two runs sum to the truth.
+    db.stage_end(job_id)
     db.update_job(job_id, state="queued", phase="Waiting to start")
     _wake.set()
     return job_id, None
@@ -659,7 +673,7 @@ def _identify(job, s):
     db.update_job(job["id"], state="identifying",
                   phase="Reading the disc \u2014 a few minutes on an encrypted DVD",
                   started_at=job.get("started_at") or int(time.time()))
-    db.stage_start(job["id"], "identify")
+    db.stage_enter(job["id"], "identify")
     drives = P.optical_drives()
     d = next((x for x in drives if x.get("present")), None)
     if not d:
