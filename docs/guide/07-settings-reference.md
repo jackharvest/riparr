@@ -12,12 +12,16 @@ exception is [the MakeMKV key](#makemkv-key).
 **The only setting that needs periodic attention, and Riparr tries hard to make it not
 your problem.**
 
-MakeMKV does the actual disc reading. Its free key **expires roughly every 60 days.**
+MakeMKV does the actual disc reading. Its free beta key **expires on a month boundary** —
+not a fixed number of days after you enter one, so a key issued mid-month may last a day
+or five weeks. Riparr says which month yours is good for rather than counting down to a
+date it cannot know, and fetches the current key from GuinpinSoft's forum so replacing it
+is one click.
 
 | Setting | Notes |
 |---|---|
 | **Key** | Paste a free beta key or a purchased permanent key |
-| **Expires** | Shown as a date and a countdown |
+| **Expires** | The month this key is good for, and the date it stops. Never a countdown to a date GuinpinSoft has not published |
 | **Warn me before expiry** | Default: 7 days |
 | **Notify via** | Web banner, plus any [notification channel](#notifications) you've set up |
 
@@ -31,21 +35,60 @@ the only recurring chore in the entire product.
 > you and them. Riparr asks you to read and accept it during setup, then downloads and
 > installs it for you. See [D14](../../DECISIONS.md).
 
+**makemkv.com goes down for weeks at a time**, so Riparr does not depend on it. It tries
+makemkv.com first, then Launchpad's `~heyarje/makemkv-beta` PPA, then the Internet
+Archive's capture of makemkv.com's own download URL — in that order, until one works.
+Every download is checked against a checksum pinned in Riparr's source, so a mirror can
+only give Riparr the right file or none at all.
+
+**Settings → General** also tracks makemkv.com and its forum separately, because they are
+different machines and fail independently. The forum is where the free key lives, and it
+is usually up when the site is not — which is the difference between "you are stuck" and
+"go here and copy the key".
+
 ## Library
+
+### Where things go
+
+One block per kind of disc, each naming a **share** and a **folder inside it**. Because
+both halves are choosable, "two folders on one server" and "two completely different
+machines" are the same control.
 
 | Setting | Notes |
 |---|---|
-| **Share** | Where finished rips go. Re-run discovery to change it. |
-| **Credentials** | Username/password for the share |
-| **Movie folder** | e.g. `/Media/Movies` |
-| **TV folder** | e.g. `/Media/TV` |
-| **Test write** | Re-run the setup check any time. Run this first if anything looks wrong. |
+| **Films → Share** | Which share. Defaults to the one you set up first |
+| **Films → Folder** | The folder inside it, e.g. `Movies` or `Films/Bluray`. Several levels deep is fine |
+| **Television → Share** | Can be the same share, or a different one entirely |
+| **Television → Folder** | e.g. `TV` or `Shows` |
+
+Under each block Riparr shows the full path it adds up to, and whether that share is
+**mounted** — which is what lets a rip be written straight into your library instead of
+being staged on the card first. A share added since the last restart is mounted on the
+next one.
+
+### Shares
+
+| Setting | Notes |
+|---|---|
+| **Server** | A name or an address. `.local` names work if your NAS advertises one |
+| **Share** | The top-level name your server publishes. One word, no slashes |
+| **Folder** | Everything below it. Riparr creates it if it does not exist |
+| **Username** | Optional. A domain account goes in as `DOMAIN\name`, `DOMAIN/name` or `name@domain` |
+| **Test and save** | Writes a real file into the folder, reads it back, compares it, deletes it. A share is not saved until that passes |
+
+The first share you add becomes the default, and adding more does not change that — so
+adding a share for box sets cannot quietly redirect your films.
+
+> **`NT_STATUS_LOGON_FAILURE` usually is not the password.** Many NAS boxes answer a
+> share name they do not recognise with the same error they use for a bad password,
+> rather than confirm which shares exist. Check the **Share** box first. Riparr's error
+> message says so, and prints the exact path it was trying to write to.
 
 ## Naming
 
 | Setting | Default |
 |---|---|
-| **Movie template** | `{Title} ({Year})/{Title} ({Year}).mkv` |
+| **Film template** | `{Title} ({Year})/{Title} ({Year}).mkv` |
 | **TV template** | `{Title} ({Year})/Season {Season:00}/{Title} - S{Season:00}E{Episode:00} - {EpisodeTitle}.mkv` |
 | **On unknown disc** | Ask me *(recommended)* / Use disc label / Skip |
 
@@ -104,16 +147,27 @@ Hand off to a real machine.
 On **Settings → Connect**. This is how the box reaches you once you have walked away
 from it — the LED only helps if you are in the room.
 
-| Setting | Notes |
+**Tell me when** is the list of events, at the top of the page. Riparr sends every one
+you tick to every channel you set up. Four are on by default.
+
+**Channels** below it is four rows, each wearing the mark of the service it configures.
+Click a row to open its setup instructions and fields; only one is open at a time. A
+channel Riparr has what it needs for shows its mark in full colour with a tick on the
+corner, and the row says what it is pointed at — the topic, the address, the host — so
+you can see which account you wired it to without opening it.
+
+| Channel | Notes |
 |---|---|
-| **Tell me when** | Which events are worth a notification. Four are on by default |
-| **ntfy** | Least work by far: pick an unguessable topic, install the app, subscribe. No account |
+| **ntfy** | Least work by far: pick an unguessable topic, install the app, subscribe. No account, no signup |
 | **Discord** | A webhook URL, plus your own user ID if you want it to ping you — see below |
-| **Email** | SMTP. The most configuration, and works everywhere |
+| **Email** | SMTP. The most configuration, and works everywhere. Almost certainly needs an *app password*, not your normal one |
 | **Webhook** | POSTs JSON — event, title, body, hostname — for Home Assistant, n8n, anything |
 
 Each has a **Save and send a test** button, which saves what is on screen before it
 sends, so you are testing what you just typed.
+
+One channel is enough. Setting up two is only worth it if you want a copy of everything
+somewhere permanent as well as a notification on your phone.
 
 **The one worth having on:** *The MakeMKV key is about to expire*. A lapsed key is the
 usual way a working box quietly stops working, and it always happens while you are not
@@ -196,6 +250,31 @@ On **Settings → Ripping**.
 |---|---|
 | **Tell me with** | `The drive's own light` (default), `The tray`, `Both`, or `Nothing — just eject` |
 | **Try the light** / **Try the tray** | Fires the signal now, with whatever disc is in the tray. Riparr cannot see the result, so watching it is the only test |
+
+## Network
+
+On **Settings → Network**. Riparr keeps a **list** of Wi-Fi networks rather than one, in
+the order it should try them, the way a phone does.
+
+The reason is the box is meant to be carried. Taking it to a friend's house to show it
+off means their network has to be in it *before* you get there — there is no screen, and
+you cannot type a password into a box that cannot reach the network your browser is on.
+
+| Setting | Notes |
+|---|---|
+| **Known networks** | Best first. The box joins the highest one it can see |
+| **Add a network** | Type a name and password for a network you are nowhere near. It joins when it can see it |
+| **↑ ↓** | Reorder. Nothing is written until you press **Save this order** |
+| **Forget** | Removes one. Riparr refuses to remove the last, which would strand the box |
+| **Scan** | Everything in range now. Anything already saved says so |
+
+The network the card was written with appears in this list automatically, so adding a
+second one cannot lose it. Passwords are turned into a key before they are stored and
+the password itself is never written down.
+
+> Changing Wi-Fi is the one setting that can move the box somewhere your browser cannot
+> follow. If nothing associates within twenty seconds, Riparr puts the previous settings
+> back by itself.
 
 ## System
 

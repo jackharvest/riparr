@@ -348,8 +348,9 @@ const wizard = {
         <div class="f"><span></span><div class="grow" id="wz-key-offer"></div></div>
         <label class="f"><span>MakeMKV key</span>
           <input id="w-key" placeholder="Paste a beta or purchased key">
-          <span class="help">The free beta key expires about every 60 days, and Riparr
-            warns you before it breaks rather than after. A
+          <span class="help">The free beta key expires at the end of a month rather
+            than a fixed number of days after you enter one, so Riparr says which month
+            yours is good for and fetches the next one for you. A
             <a href="${esc(i.homepage)}" target="_blank" rel="noopener">purchased key</a>
             removes the only recurring chore in the product. You can add this later.</span>
         </label>

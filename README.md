@@ -1,163 +1,173 @@
+<div align="center">
+
+<img src="server/static/img/riparr-mark.png" width="96" alt="">
+
 # Riparr
 
 **An *arr-style appliance for ripping Blu-rays and DVDs.**
 
-Sonarr manages TV. Radarr manages movies. Lidarr manages music. **Riparr manages the
-physical-to-digital step nobody automated well: getting discs off the shelf and into the
-library.**
+Insert a disc. Walk away. It ends up on your library share, correctly named.
 
-A small 3D-printed box houses an optical drive and an Orange Pi Zero 2W. **One USB-C
-cable** powers and runs the whole thing. You prepare the SD card in a small native app
-(WiFi pre-configured, fully headless, no terminal), browse to `riparr.local`, set
-credentials, run a short first-run wizard — and then never touch the settings again.
+[Get started](#the-three-stages) · [User guide](docs/guide/README.md) · [Which drive to buy](docs/guide/01-what-you-need.md#which-drive) · [Troubleshooting](docs/guide/08-troubleshooting.md)
 
-After that the loop is: **insert disc → close tray → walk away → disc ejects when done.**
-No keyboard, no screen, no clicking. The finished MKV lands on your network share,
-correctly named, and a status LED says what the box is doing when you are not at a browser.
+</div>
 
 ---
 
-## Start here
+Sonarr manages TV. Radarr manages films. Lidarr manages music. **Riparr manages the
+physical-to-digital step nobody automated well: getting discs off the shelf and into the
+library.**
 
-**→ Building or using one?** [**User Guide**](docs/guide/README.md) — SD card to first rip,
-in order. Five minutes of actual effort.
+A small 3D-printed box houses an optical drive and a single-board computer. **One USB-C
+cable** powers and runs the whole thing. There is no screen, no keyboard and no off
+switch. Once it is set up, the entire interaction is:
 
-**→ Working on Riparr itself?** [**DECISIONS.md**](DECISIONS.md) — every settled decision
-and why. Then [**JOURNAL.md**](JOURNAL.md) — current state, next actions, and findings
-that cost time to discover. Those two reload context fastest.
+> **insert disc → close tray → walk away → disc ejects when it is done**
+
+The finished MKV lands on your network share, named the way Plex and Jellyfin expect. A
+status LED on the box says what it is doing when you are not at a browser, and a web
+interface at `riparr.local` says it in words when you are.
+
+---
+
+## The three stages
+
+Riparr is three separate things and it is worth knowing which one you are in. They happen
+in this order, once, and then you are done with all of them.
+
+### 1 · Preparation — on your own computer, about 5 minutes
+
+You run the **Preparer**, a small app you download from
+[Releases](../../releases). It writes Riparr's operating system onto an SD card and puts
+your Wi-Fi, your hostname and your account on it, so the box can join your network the
+first time it is powered on. Nothing is typed into a terminal.
+
+There is no screen on the box, so everything it needs to reach your network has to be on
+the card *before* it boots. That is the whole reason this stage exists.
+
+| Your computer | What the Preparer can do |
+|---|---|
+| **macOS** | Everything: write the card, then set the box up |
+| **Windows** | Set the box up. Write the card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or [balenaEtcher](https://etcher.balena.io/) first |
+| **Linux** | Set the box up. Write the card with Imager or Etcher first |
+
+The app says which of these it can do on its first screen, before you choose anything.
+→ [Preparing the card, in detail](docs/guide/02-prepare-sd-card.md)
+
+### 2 · Setup — the box installs itself, about 10 minutes unattended
+
+Put the card in, plug the cable in, and the box boots and joins your Wi-Fi. The Preparer
+finds it on the network and installs Riparr onto it over SSH — you watch a progress bar.
+Then it hands you a browser window at `http://riparr.local:9797`, where a short wizard
+asks for four things:
+
+1. **A password** for the web interface
+2. **MakeMKV** — accept its licence and press install. It is built on the device, which
+   takes about half an hour and needs no attention
+3. **Your library share** — Riparr finds the servers on your network, you pick a share,
+   and it writes a real test file and reads it back before saving. A share it cannot
+   write to fails *now*, in front of you, instead of at 3am on your first rip
+4. **Where things go** — a folder for films, a folder for television. They can be on the
+   same share or on two different machines
+
+→ [First boot](docs/guide/03-first-boot.md) · [Connecting your library](docs/guide/04-connect-your-library.md)
+
+### 3 · Using it — forever, from a browser or not at all
+
+The daily loop needs no browser at all: put a disc in, take it out when it comes back.
+
+The web interface is there for the times you want it. **Queue** shows what is happening
+now, stage by stage, with real times rather than a bar that does not move. **History**
+and **Discs** are the record of what has been ripped. **Settings** is five pages you will
+mostly read once.
+
+Riparr can also tell you when it is finished, or when it needs you, through **ntfy,
+Discord, email or a webhook** — because a box whose entire promise is "walk away" needs a
+way to reach somebody who did.
+
+→ [Ripping discs](docs/guide/06-ripping-discs.md) · [Settings reference](docs/guide/07-settings-reference.md) · [LED card](docs/guide/led-reference.md)
+
+---
+
+## What you need
+
+| | |
+|---|---|
+| **A board** | Orange Pi Zero 2W is the reference. [Others are supported](docs/design/board-support.md), some still marked beta |
+| **An optical drive** | A USB one, or an internal one plus a bridge that **names** optical/ATAPI support. [This is the part people get wrong](docs/guide/01-what-you-need.md#which-drive) |
+| **An SD card** | 32 GB is enough for DVDs. Blu-ray wants more, or writing straight to your library — [the maths](docs/design/storage-sizing.md) |
+| **A network share** | SMB. Any NAS, or a folder shared from a computer that is usually on |
+| **4K UHD?** | That is a *drive* decision, not a setting. [Read this first](docs/guide/01-what-you-need.md#which-drive) |
 
 ---
 
 ## Status
 
-**Feature-complete for a first real rip, and waiting on one part.** The SD preparer, the
-Riparr service, the rip engine and the status LED all exist and run. **The board boots.**
-On 2026-08-20 the Orange Pi Zero 2W came up on Armbian, joined Wi-Fi, took a DHCP lease
-and synced its clock over the internet — about four minutes from power-on. That is the
-first-boot path, end to end.
+**Riparr rips discs, end to end, on real hardware.** On 2026-08-26 a Blu-ray went in and a
+verified MKV came out on the library share, unattended. Getting there took eleven
+interface bugs in one session, all of them now fixed and written down in
+[`JOURNAL.md`](JOURNAL.md).
 
-Getting there took discovering that **the board is an Orange Pi Zero 2W (Allwinner H618),
-not a Raspberry Pi** — a different company's product with a nearly identical name, on
-which Raspberry Pi OS cannot boot (D17). It then took a second session to notice it had
-been working the whole time: `riparr.local` never resolved because the image ships no
-avahi and mDNS was off on the link, and `armbian-ramlog` kept every log in a ramdisk that
-a power pull erased. Both are fixed. [`JOURNAL.md`](JOURNAL.md) has the full account.
+**This is still pre-1.0.** It has run on one board, with one drive, against one NAS. The
+parts most likely to surprise you are the ones that have met the fewest configurations:
+other boards, other drives, and Windows or Linux for the Preparer.
 
-Last working session: **2026-08-22**
+**Known and deliberate:**
 
-| | |
-|---|---|
-| **Prepare a card** | `~/riparr-build/prepare` — native macOS window, no terminal |
-| **Set the box up** | the same window, once it's plugged in — no terminal either ([how](tools/preparer/README.md)) |
-| **Find the box** | `tools/find-riparr.sh` — when `riparr.local` will not resolve |
-| **Diagnose a card** | `sudo bash tools/card-report.sh` — **from Terminal.app** ([why](JOURNAL.md)) |
-| **Install by hand** | copy the repo across, then `sudo bash tools/install.sh` |
-| **Reach it** | `http://riparr.local:9797` — [why 9797](DECISIONS.md) |
-| **Run it here** | `server/run.sh` → <http://localhost:8000> (mock mode off-board) |
-| **Needs** | `brew install e2fsprogs` — the Preparer writes config into ext4 with `debugfs` |
-
-**Riparr runs on the board, and is set up.** The whole path — write a card, plug it in,
-let the Preparer find the box and install itself, then finish in a browser — works end
-to end with no terminal at any point. MakeMKV installs from a button. Account, share
-and first-run wizard are all done on real hardware.
-
-**The one thing missing is a working USB-to-SATA adapter** — the one on hand had been
-dead for a year. Nothing in the software or the board is outstanding. The bridge is a
-BOM decision, not a cable: it must **name** optical/ATAPI support
-([why](docs/design/hardware.md)).
-
-**What is built and has never met a disc.** The rip engine exists end to end — identify,
-fingerprint, refuse duplicates, drive `makemkvcon`, transfer, verify, purge, and resume
-an interrupted job on boot. So does drive and disc detection: Riparr asks the drive what
-it can read (`DVD` / `Blu-ray` / `4K UHD`), asks MakeMKV whether 4K will work on it, and
-refuses a disc the drive cannot read instead of failing forty minutes in. The status LED
-is written too. **None of it has been exercised against real hardware**, because that
-needs the adapter.
-
-**The two things still designed and not built**, both [core] on the backlog:
-
-1. **Adaptive streaming (D11).** Follow-copy is not implemented, so a rip is transferred
-   after it completes and preflight refuses a title that does not fit the card. Gated on
-   R8 below.
-2. **AP-mode fallback** (`Riparr-Setup`). A mistyped Wi-Fi password still means writing
-   the card again.
-
-**The last open design risk** in [`docs/design/risks.md`](docs/design/risks.md):
-
-1. ~~**Does MakeMKV run on an Allwinner H618 with 1 GB?** (R1)~~ — **retired
-   2026-08-20.** It builds and runs: 307 MB peak RSS, 3:57 wall clock, no swap touched.
-2. **Does MakeMKV write MKV linearly?** (test 1b / R8) Gates the streaming design, and is
-   the only unanswered design risk. Needs a disc and a working drive.
-
-**The GitHub repo is not published yet**, so the install one-liner has nothing to fetch.
-Installing from a local checkout works today.
-
-## Documents
-
-### For users
-| Doc | What's in it |
-|---|---|
-| [`docs/guide/`](docs/guide/README.md) | The full setup-to-first-rip path, in order |
-| [`docs/guide/led-reference.md`](docs/guide/led-reference.md) | Printable LED card |
-| [`docs/guide/01-what-you-need.md`](docs/guide/01-what-you-need.md#which-drive) | **Which drive to buy** — and why 4K is a different drive, not a setting |
-| [`docs/guide/08-troubleshooting.md`](docs/guide/08-troubleshooting.md) | Organized by symptom, not by subsystem |
-| [`tools/preparer/`](tools/preparer/README.md) | **SD preparer** — native macOS window. One authorization prompt, band-aware Wi-Fi scan, PSK derivation, disk guards, and headless provisioning for both Raspberry Pi and Allwinner card layouts |
-| [`tools/flasher/`](tools/flasher/README.md) | The same thing for scripts and CI. Needs a TTY. |
-
-### For developers
-| Doc | What's in it |
-|---|---|
-| [`DECISIONS.md`](DECISIONS.md) | Locked decisions + rationale. **Read this first.** |
-| [`JOURNAL.md`](JOURNAL.md) | Where we actually are, next actions, hard-won findings |
-| [`docs/design/concept.md`](docs/design/concept.md) | Product vision, target UX, prior art, differentiator |
-| [`docs/design/architecture.md`](docs/design/architecture.md) | Stack, partitions, the streaming rip pipeline, image build |
-| [`docs/design/hardware.md`](docs/design/hardware.md) | BOM, power design, form-factor variants, thermal |
-| [`docs/design/board-support.md`](docs/design/board-support.md) | Every board in the Zero 2W footprint, tiered by effort to support |
-| [`server/riparr/drives.py`](server/riparr/drives.py) | The drive registry — capability, form factor, and the 4K question (D26) |
-| [`docs/design/storage-sizing.md`](docs/design/storage-sizing.md) | What card size actually buys, all math shown |
-| [`docs/design/risks.md`](docs/design/risks.md) | Known risks + the validation plan that retires them |
-| [`docs/design/security.md`](docs/design/security.md) | Pen-test findings + threat model. **First pass remediated; re-review on real hardware pending.** |
-| [`docs/design/backlog.md`](docs/design/backlog.md) | Feature ideas, roughly prioritized |
-| [`docs/design/scenarios.md`](docs/design/scenarios.md) | Twenty-three layman scenarios walked against the code, and what they surfaced |
-| [`docs/design/scenarios-preparer.md`](docs/design/scenarios-preparer.md) | The same walk for the Mac Preparer app |
-| [`server/`](server/) | The appliance service — FastAPI + SQLite, *arr-style web UI |
+- **The MakeMKV beta key expires monthly.** That is GuinpinSoft's decision, not ours.
+  Riparr fetches the current key, tells you when the one you have lapses, and makes
+  replacing it one click.
+- **No transcoding.** A board this size would take days and the result would be poor.
+  Riparr can write to a watch folder instead, for Tdarr or Unmanic to pick up.
+- **Adaptive streaming (D11) is designed, not built.** A rip is transferred once it is
+  complete rather than as it is written. Writing *straight* to your library — which is
+  faster than the card on the reference board, and removes the card as a size limit — is
+  built and is a setting.
 
 ---
 
-## The 30-second summary of what's decided
+## Running it
 
-- **OS:** **Armbian minimal (Debian trixie), 64-bit**, for `orangepizero2w` — Armbian
-  ships only rolling community builds for this board, and there is no stable release to
-  pin to (D17). aarch64 is the non-negotiable part; MakeMKV needs it
-- **Stack:** Python / FastAPI + SQLite, single process, static frontend
-- **Storage:** 3 partitions. Staging is isolated from rootfs so a stalled upload queue can
-  never brick the box
-- **Adaptive streaming (D11):** *designed, not built* (D22). The uploader is meant to
-  follow the file as MakeMKV writes it, which would make any card size work for any disc.
-  Until R8 is answered a rip is transferred once complete, so **buy the card for the
-  biggest disc you own** — 32GB for DVDs, 128GB for Blu-ray, 256GB for 4K
-- **No on-device transcoding.** Hand off to external workers
-- **The bottleneck is WiFi, not the drive.** ~4 MB/s upload sets every throughput ceiling
-  in the design — which is exactly why streaming is free
+```sh
+# On the box, from a checkout
+sudo bash tools/install.sh          # → http://riparr.local:9797
 
-## Open questions carried into next session
+# On your own machine, to look at the interface
+server/run.sh                       # → http://localhost:8000, simulated hardware
+```
 
-1. ~~Does `makemkvcon` run on aarch64?~~ — **retired 2026-08-20** (R1). Peak RSS during a
-   *real rip* on 1 GB is still unmeasured; that needs a disc
-2. Does MakeMKV write MKV linearly, or does it seek back to finalize headers? (**gates
-   D11** — R8). If it rewrites, byte-level follow-copy dies and streaming falls back to
-   title-level
-3. Slim 5V-only drive vs. full-size 12V drive — this forks the product into
-   "Riparr Slim" and "Riparr Full" rather than "DVD" and "Blu-ray" (D26)
-4. Verification read-back over WiFi costs as long as the upload — default-on or opt-in?
-5. ~~Repo not yet `git init`'d~~ — done 2026-08-19
-6. **D12 licensing** — the UI derives from Sonarr's GPL-3.0 theme tokens. Accept GPL-3.0,
-   re-derive the palette, or drop to theme.park only? Exposure is deliberately confined to
-   one file plus a handful of constants
-7. **The LED's SPI path is written from the datasheet and never met an LED.** Ten seconds
-   to check once one is wired: **System → Status → Test the LED**
-8. **MakeMKV's LibreDrive wording is unconfirmed** — `drives.parse_libredrive()` reads
-   free text out of `makemkvcon` output. First Blu-ray drive that appears settles it
+Off the board, `riparr/platform.py` reports a simulated system, a simulated drive with a
+disc in it and discoverable shares, so the whole interface is exercisable on a laptop.
+
+| Tool | For |
+|---|---|
+| [`tools/preparer/`](tools/preparer/README.md) | The Preparer — the app in stage 1 |
+| `tools/find-riparr.sh` | Finding the box when `riparr.local` will not resolve |
+| `sudo bash tools/card-report.sh` | Diagnosing a card that will not boot |
+| [`tools/flasher/`](tools/flasher/README.md) | The Preparer's job from a terminal, for scripts and CI |
+
+---
+
+## Documents
+
+**For users** — [`docs/guide/`](docs/guide/README.md) is the whole path in order, and
+[troubleshooting](docs/guide/08-troubleshooting.md) is organised by what you actually
+observed rather than by subsystem.
+
+**For anyone working on it:**
+
+| Doc | What's in it |
+|---|---|
+| [`DECISIONS.md`](DECISIONS.md) | Every settled decision and why. **Read this first.** |
+| [`JOURNAL.md`](JOURNAL.md) | Where things actually are, and every finding that cost more than ten minutes to discover |
+| [`docs/design/concept.md`](docs/design/concept.md) | What this is for, and the principles that decide arguments |
+| [`docs/design/architecture.md`](docs/design/architecture.md) | Stack, partitions, the rip pipeline |
+| [`docs/design/hardware.md`](docs/design/hardware.md) | BOM, power, thermal, form factors |
+| [`docs/design/board-support.md`](docs/design/board-support.md) | Every supported board, tiered by how much is proven |
+| [`docs/design/risks.md`](docs/design/risks.md) | Open risks and the tests that retire them |
+| [`docs/design/security.md`](docs/design/security.md) | Threat model and pen-test findings |
+| [`docs/design/backlog.md`](docs/design/backlog.md) | What is not built yet |
+| [`server/`](server/) | The appliance service — FastAPI + SQLite, one process |
 
 ---
 
@@ -165,8 +175,9 @@ Installing from a local checkout works today.
 
 Riparr is free and GPL-3.0. If it saved you a shelf of discs and you feel like it:
 [**buy me a coffee**](https://buymeacoffee.com/jackharvest). That link is also the mug
-icon in the top right of the web interface — the one and only ask anywhere in the
-product.
+icon in the top right of the web interface — the one and only ask anywhere in the product.
+
+Bugs and ideas: [Issues](../../issues).
 
 ---
 
@@ -185,7 +196,35 @@ must ship source under GPL-3.0 too.
 |---|---|
 | Design tokens | [Sonarr](https://github.com/Sonarr/Sonarr) — GPL-3.0 |
 | Themes | [theme.park](https://github.com/themepark-dev/theme.park) — MIT |
+| Icons | [Font Awesome Free](https://fontawesome.com/license/free) — CC BY 4.0 · brand marks from [Simple Icons](https://simpleicons.org/) — CC0 |
+| Wordmark face | [Russo One](server/static/fonts/RussoOne-OFL.txt) — SIL OFL 1.1 |
+| Window shell | [pywebview](https://pywebview.flowrl.com/) — BSD-3-Clause |
 | Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not distributed with Riparr**; fetched and accepted during setup ([D14](DECISIONS.md)) |
 
-Riparr is not affiliated with, endorsed by, or connected to Sonarr, Radarr, or GuinpinSoft.
-Those names and logos belong to their respective owners.
+Riparr is not affiliated with, endorsed by, or connected to Sonarr, Radarr, GuinpinSoft
+or any other project named here. Those names and logos belong to their respective owners.
+
+---
+
+## AI usage
+
+Riparr was written with substantial help from an AI coding assistant, working from my
+design decisions and against real hardware. I am saying so plainly because I would want
+to know, and because "was any of this written by a machine" is a fair question to ask of
+any project you are about to run on your own network.
+
+What that does and does not mean here:
+
+- **Every decision is a human one.** `DECISIONS.md` records what was chosen and why, and
+  each entry was settled by me, not generated. Where the reasoning was mine and the prose
+  was not, the reasoning is still mine.
+- **Nothing ships on the strength of looking correct.** The claims in this repository are
+  the ones that were run: checksums verified against two independent sources, PSK
+  derivation checked against the IEEE 802.11i reference vectors, the write test that
+  reads a file back before a share is trusted. `JOURNAL.md` is the record, including the
+  wrong turns.
+- **The bugs are mine.** If something here breaks your setup, that is on the person who
+  shipped it. [Open an issue](../../issues).
+
+If you would rather not run software written this way, that is entirely reasonable, and
+this section is here so you can make that call before you install anything.

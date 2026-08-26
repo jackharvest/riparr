@@ -1,20 +1,44 @@
 # Riparr Preparer
 
-A native macOS window that prepares an SD card for a Riparr appliance.
+A native window that prepares an SD card for a Riparr appliance, and then sets the
+appliance up.
+
+**Most people should download it** from [Releases](../../../../releases) — `.zip` for
+macOS and Windows, `.tar.gz` for Linux. There is no installer.
+
+From a checkout:
 
 ```sh
-~/riparr-build/prepare
+pip install -r requirements.txt
+python3 shell.py                    # any operating system
+python3 app.py                      # macOS only; the hand-built NSWindow
 ```
 
-That's the whole invocation. No terminal interaction, no `sudo` prompt, no arrow-key
-menus — macOS asks for your password once, in its own dialog, and that single
-authorization covers writing the image, applying your settings and ejecting the card.
+No terminal interaction, no arrow-key menus. On macOS the system asks for your password
+once, in its own dialog, and that single authorization covers writing the image, applying
+your settings and ejecting the card.
+
+## Two halves, which port very differently
+
+**Setting a box up** — finding it on the network, installing Riparr onto it over SSH,
+handing you a browser — is stdlib and SSH, and works on macOS, Windows and Linux.
+
+**Writing an SD card** is macOS-only today. `writer.py` speaks `diskutil`,
+`/dev/rdiskN`, macOS's fskit mount daemon, and macOS's rules about which application owns
+removable-media consent; none of that has a tested equivalent elsewhere. `core.host_capabilities()`
+answers this, and the welcome screen greys the card route out with the reason **before**
+anything is chosen — the alternative is failing at the last step with a card possibly half
+written, which is the worst possible place to learn it.
 
 ## What it is
 
-A real `NSWindow` hosting a `WKWebView`, via PyObjC. The only new dependency is
-`pyobjc-framework-WebKit` (51 KB) — WebKit itself already ships with macOS. There is no
-Electron, no bundled browser, and nothing to download.
+`shell.py` uses **pywebview** (BSD-3-Clause), which wraps the operating system's own web
+view — WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux. So `ui/` is hosted by
+the same engine the user's browser already uses and moved across untouched. No Electron,
+no bundled browser, nothing to download at runtime.
+
+`app.py` is the original: a real `NSWindow` hosting a `WKWebView` via PyObjC, built by
+hand. It still works and is still the macOS reference, but `shell.py` is what ships.
 
 ## What it does that Raspberry Pi Imager doesn't
 

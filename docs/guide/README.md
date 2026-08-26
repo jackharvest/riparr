@@ -6,24 +6,45 @@ This guide takes you from a blank SD card to a working appliance in about five m
 actual effort. **Read it in order the first time.** After that, you should never need it
 again — that's the whole point of the product.
 
-> ⚠️ **Pre-release.** Most of Riparr is built and running — the SD preparer, the web
-> interface, setup, the rip engine and the status LED all exist. What has never been done
-> is a **real rip on real hardware**, because the optical drive is not connected yet.
-> Anything designed but not built is marked **[unresolved]** inline.
+> **Pre-1.0.** Riparr rips discs end to end on real hardware — a Blu-ray went in and a
+> verified file came out on the library share, unattended. What it has not done is meet
+> many *different* configurations: it has run on one board, with one drive, against one
+> NAS. Anything designed but not built is still marked **[unresolved]** inline.
 
 ---
 
-## Setup — do this once
+## There are three stages, and then you are done
+
+Knowing which one you are in makes the rest of this guide much easier to follow. They
+happen in this order, once.
+
+**1 · Preparation — on your own computer.** Writing Riparr onto an SD card, with your
+Wi-Fi and your account already on it. The box has no screen, so everything it needs to
+reach your network has to be on the card *before* it is switched on. That is the whole
+reason this stage exists.
+
+**2 · Setup — the box installs itself.** You put the card in and plug the cable in. It
+joins your Wi-Fi, the Preparer finds it and installs Riparr onto it, and then a browser
+opens on a short wizard: a password, MakeMKV, your library share, and where films and
+television should go.
+
+**3 · Using it — from a browser, or not at all.** The daily loop needs no browser: put a
+disc in, take it out when it comes back. The web interface is for the times you want to
+look.
+
+---
+
+## Stages 1 and 2 — do this once
 
 | | | Time |
 |---|---|---|
 | **1** | [What you need](01-what-you-need.md) — parts list, and which card to buy | — |
-| **2** | [Prepare the SD card](02-prepare-sd-card.md) — the Preparer: pick your board, WiFi, headless | 3 min |
+| **2** | [Prepare the SD card](02-prepare-sd-card.md) — the Preparer: pick your board, Wi-Fi, headless | 3 min |
 | **3** | [First boot](03-first-boot.md) — find the box, set your password | 1 min |
 | **4** | [Connect your library](04-connect-your-library.md) — pick a share, test the write | 1 min |
 | **5** | [Library layout & naming](05-library-layout.md) — Plex/Jellyfin conventions | 1 min |
 
-## Then, forever after
+## Stage 3 — forever after
 
 | | |
 |---|---|

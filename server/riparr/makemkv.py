@@ -239,7 +239,7 @@ EULA_POINTS = [
     "You may only use it to copy discs you own or are otherwise permitted to copy.",
     "You may not sell, rent, lease or sublicense it.",
     "You may not reverse engineer, decompile or modify it.",
-    "The free beta key expires roughly every 60 days. A permanent key can be purchased.",
+    "The free beta key expires on a month boundary. A permanent key can be purchased.",
 ]
 
 # Checked before anything is downloaded. makemkv.com has been unreachable, and the
