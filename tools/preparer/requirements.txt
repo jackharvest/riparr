@@ -1,0 +1,16 @@
+# The Riparr Preparer.
+#
+# pywebview wraps the operating system's own web view -- WKWebView on macOS, WebView2 on
+# Windows, WebKitGTK on Linux -- so `ui/` is hosted by the same engine the user's browser
+# already uses. No Electron, nothing to download at runtime, and the interface (the part
+# there is most of) did not need porting.
+pywebview>=5.0
+
+# $6$ password hashing. macOS crypt(3) has no SHA-512 support and *silently returns a DES
+# hash* when asked for one, producing a card whose console login cannot work --
+# discoverable only after flashing and booting. The Preparer refuses to run without this.
+passlib>=1.7
+
+# macOS only, and only for app.py, the hand-built NSWindow that predates shell.py.
+# shell.py needs none of it; pywebview pulls what it needs on each platform.
+pyobjc-framework-WebKit>=10.0 ; sys_platform == "darwin"

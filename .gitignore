@@ -23,5 +23,10 @@ ssh_config
 __pycache__/
 *.pyc
 
+# ── PyInstaller, from building the Preparer ───────────────────────────
+tools/preparer/build/
+tools/preparer/dist/
+*.spec
+
 # ── macOS ─────────────────────────────────────────────────────────────
 .DS_Store

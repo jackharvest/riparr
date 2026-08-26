@@ -1,0 +1,175 @@
+# Build the Preparer for macOS, Windows and Linux, and attach the three to a release.
+#
+# The Preparer is the only piece a person runs on their own computer; the appliance half
+# installs itself onto the board. So "an app for every operating system" means this app,
+# and the point of building it here rather than asking people to install Python is that
+# nobody should need a toolchain to write an SD card.
+#
+# Card writing is macOS-only today (see core.host_capabilities): writer.py speaks
+# diskutil and /dev/rdiskN. The Windows and Linux builds still do the longer half --
+# find the box, install Riparr on it over SSH, finish in a browser -- and say so on
+# their first screen rather than failing at the last step.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (for a dry run, any string)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS (Apple silicon)
+            artifact: riparr-preparer-macos
+          - os: windows-latest
+            label: Windows (x64)
+            artifact: riparr-preparer-windows
+          - os: ubuntu-latest
+            label: Linux (x64)
+            artifact: riparr-preparer-linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # WebKitGTK is the web view pywebview uses on Linux, and PyGObject is how Python
+      # reaches it. Neither is a pip package on this runner.
+      - name: Linux web view
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libgirepository1.0-dev libcairo2-dev pkg-config python3-dev \
+            gir1.2-webkit2-4.1 libwebkit2gtk-4.1-0
+
+      - name: Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tools/preparer/requirements.txt
+          pip install pyinstaller
+
+      - name: Build
+        shell: bash
+        run: |
+          cd tools/preparer
+          # --add-data puts ui/ (html, css, js, fonts, the mark) inside the bundle;
+          # shell.py resolves it relative to __file__, which PyInstaller points at the
+          # unpacked directory at runtime.
+          # --collect-all webview: pywebview loads its per-platform backend by name at
+          # runtime, so static analysis does not find it and the bundle starts, opens
+          # nothing, and exits 0.
+          pyinstaller --noconfirm --clean --windowed --name "Riparr Preparer" \
+            --collect-all webview \
+            --add-data "ui${PATHSEP:-:}ui" \
+            --add-data "hostos${PATHSEP:-:}hostos" \
+            shell.py
+        env:
+          PATHSEP: ${{ runner.os == 'Windows' && ';' || ':' }}
+
+      # A directory is not something anyone can download and double-click, and macOS
+      # strips the quarantine-safe structure out of a plain zip of a .app made by some
+      # tools. `ditto` keeps the bundle intact.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd tools/preparer/dist
+          ditto -c -k --sequesterRsrc --keepParent "Riparr Preparer.app" \
+            "../../../riparr-preparer-macos.zip"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "tools/preparer/dist/Riparr Preparer/*" `
+            -DestinationPath "riparr-preparer-windows.zip"
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd tools/preparer/dist
+          tar czf ../../../riparr-preparer-linux.tar.gz "Riparr Preparer"
+
+      - name: Smoke test
+        shell: bash
+        continue-on-error: true
+        run: |
+          # Not a launch -- there is no display on any of these runners. This only
+          # proves the modules that decide *what the app can do* import and answer,
+          # which is the half that has broken before.
+          cd tools/preparer
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          import core, boards
+          caps = core.host_capabilities()
+          print('host:', caps['name'], 'write_card:', caps['write_card'])
+          assert caps['setup'] is True
+          assert boards.all_boards(), 'no boards'
+          print('boards:', len(boards.all_boards()))
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            riparr-preparer-*.zip
+            riparr-preparer-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Riparr ${{ github.ref_name }}
+
+            **Download the Preparer for your computer**, then follow
+            [the guide](docs/guide/README.md).
+
+            | | |
+            |---|---|
+            | macOS | `riparr-preparer-macos.zip` |
+            | Windows | `riparr-preparer-windows.zip` |
+            | Linux | `riparr-preparer-linux.tar.gz` |
+
+            Writing an SD card works on macOS today. On Windows and Linux the app does
+            the second half — finding the box and installing Riparr on it — and says so
+            on its first screen. Write the card with Raspberry Pi Imager or
+            balenaEtcher, then come back.
+
+            Checksums are in `SHA256SUMS.txt`.

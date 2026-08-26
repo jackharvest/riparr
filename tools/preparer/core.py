@@ -542,6 +542,54 @@ def build_toml(cfg):
     return "\n".join(lines)
 
 
+# ─────────────────── what this operating system can do ───────────────────
+#
+# The Preparer has two halves and they port very differently.
+#
+# The *setup* half -- find a box on the network, install Riparr on it over SSH, finish
+# in a browser -- is stdlib and SSH, and works anywhere Python does.
+#
+# The *card-writing* half is not portable and pretending otherwise would be the worst
+# kind of lie: it would fail at the last step, after the user had entered a Wi-Fi
+# password and chosen a disk, with the card possibly half written. writer.py speaks
+# `diskutil`, `/dev/rdiskN`, macOS's fskit mount daemon and macOS's rules about which
+# application owns removable-media consent. None of that has an equivalent elsewhere
+# that has been tested.
+#
+# So the app says which half it can do, on the first screen, before anything is chosen.
+# A Windows or Linux user writes the image with the tool they already have and comes
+# back for the setup half, which is the longer and more valuable half anyway.
+
+def host_capabilities():
+    import sys
+    darwin = sys.platform == "darwin"
+    devices = []
+    try:
+        devices = hostos.list_block_devices()
+    except Exception:
+        pass
+    _, wifi_method = ([], "none")
+    try:
+        _, wifi_method = hostos.scan_wifi()
+    except Exception:
+        pass
+    return {
+        "name": hostos.NAME,
+        "platform": sys.platform,
+        "write_card": darwin,
+        # Everything below works on every platform with a backend, which is why the
+        # setup route is offered regardless.
+        "list_disks": bool(devices) or darwin,
+        "scan_wifi": wifi_method != "none",
+        "setup": True,
+        "write_note": "" if darwin else (
+            "Writing an SD card is macOS-only for now. On %s, write the OS image with "
+            "Raspberry Pi Imager or balenaEtcher, put the card in the box, and come "
+            "back here to set it up — that is the longer half and it works the same on "
+            "every system." % hostos.NAME),
+    }
+
+
 def host_timezone():
     if os.path.islink("/etc/localtime"):
         return os.readlink("/etc/localtime").split("zoneinfo/")[-1]

@@ -143,6 +143,7 @@ class Bridge:
             # screen needs to know before it offers the button.
             "can_setup": os.path.exists(os.path.join(self.assets, "riparr_key")),
             "size_guide": core.size_guide(),
+            "host": core.host_capabilities(),
             "timezone": core.host_timezone(),
             "country": os.environ.get("RIPARR_COUNTRY", "US"),
         }

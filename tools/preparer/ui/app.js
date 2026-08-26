@@ -745,6 +745,18 @@ async function init() {
   renderBoards();
   renderGuide(state.boot.size_guide);
 
+  // Card writing is macOS-only today. Say so here, before anything is chosen, rather
+  // than failing at the last step with a Wi-Fi password entered and possibly a card
+  // half written. The setup half works everywhere and is the longer half.
+  const host = state.boot.host || {};
+  if (host.write_card === false) {
+    const card = $("#go-card");
+    card.disabled = true;
+    card.classList.add("unavailable");
+    $("#host-note").textContent = host.write_note;
+    $("#host-note").hidden = false;
+  }
+
   // The second route can only work with the private key in the build folder. Offer it
   // greyed with the reason rather than letting someone walk into a dead end.
   if (!state.boot.can_setup) {
