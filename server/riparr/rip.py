@@ -682,6 +682,19 @@ PRGC = re.compile(r'^PRGC:\d+,\d+,"(.*)"')
 MSG = re.compile(r'^MSG:(\d+),\d+,\d+,"(.*?)"')
 
 
+def _output_size(out_dir):
+    """How big the MKV being written is right now, or 0 before it exists.
+
+    MakeMKV names the file from the title, so this takes whatever .mkv turned up
+    rather than assuming a name.
+    """
+    try:
+        return max((os.path.getsize(os.path.join(out_dir, f))
+                    for f in os.listdir(out_dir) if f.endswith(".mkv")), default=0)
+    except OSError:
+        return 0
+
+
 def _rip(job, s, cancel_ev):
     out_dir = _job_dir(job["id"])
     title = job["_title"]
@@ -701,6 +714,7 @@ def _rip(job, s, cancel_ev):
                             text=True, bufsize=1)
     last_msg = ""
     started = time.time()
+    first_byte_at = None
     try:
         for line in proc.stdout:
             if cancel_ev.is_set():
@@ -709,19 +723,38 @@ def _rip(job, s, cancel_ev):
             line = line.strip()
             m = PRGV.match(line)
             if m:
-                # PRGV is current,total,max -- field 1 is the *current operation's*
-                # progress and field 2 is progress across the whole job. Reading field 1
-                # made the bar race to full and snap back to zero on every internal
-                # step: scanning title sets, scanning contents, then the actual save,
-                # each running its own 0-100%. The ETA came off the same fraction, so it
-                # was fiction as well. Field 2 is the number a person means by "how far
-                # along is it".
-                _cur, tot, mx = (int(x) for x in m.groups())
-                frac = (tot / mx) if mx else 0
+                # Progress comes from the file that is actually growing, not from
+                # MakeMKV's operation counter. Neither PRGV field can drive one
+                # continuous bar: field 1 restarts on every sub-operation (title sets,
+                # contents, decrypt, save) and field 2 restarts once, when the save
+                # begins. Both read past 90% while the process had written literally
+                # zero bytes and staging was empty -- a bar that is smooth and wrong.
+                #
+                # The output file's size against the title's expected size is what a
+                # person means by "how far along is it", and it is the same number
+                # `bytes_ripped` has always claimed to be. PRGV still drives this
+                # branch because it is MakeMKV's heartbeat; it just no longer supplies
+                # the number. Before the file exists this reports 0, which the
+                # interface already renders as an indeterminate sweep.
                 total = job.get("bytes_total") or title.get("bytes") or 0
-                done = int(total * frac)
-                elapsed = time.time() - started
-                eta = int(elapsed / frac - elapsed) if frac > 0.01 else None
+                done = _output_size(out_dir)
+                if done and not first_byte_at:
+                    first_byte_at = time.time()
+                # `total` is MakeMKV's estimate of the title, so the finished file can
+                # overshoot it. Hold just short of full until the process has actually
+                # exited: a bar that sits at 100% while work continues is the same lie
+                # as one that sits at zero while work happens, and `_finish` sets the
+                # real figure from the file on disk.
+                if total and done > total:
+                    done = int(total * 0.99)
+                frac = (done / total) if total else 0
+                # Rate is measured from the first byte on disk, so the minutes of
+                # decryption before the save do not drag the estimate down.
+                eta = None
+                if first_byte_at and frac > 0.01:
+                    writing = time.time() - first_byte_at
+                    if writing > 5:
+                        eta = int(writing / frac - writing)
                 db.update_job(job["id"], bytes_ripped=done, eta_seconds=eta,
                               phase=last_msg or "Reading the disc")
                 continue
@@ -810,7 +843,10 @@ def _transfer(job, s, local_path, cancel_ev):
     def progress(sent, of):
         elapsed = time.time() - started
         frac = (sent / of) if of else 0
-        db.update_job(job["id"], bytes_sent=sent,
+        # Put the phase back. A share that went away sets "Waiting for your library to
+        # come back", and nothing cleared it once bytes started moving again -- so the
+        # box sat there claiming to be waiting while the bar climbed past 10%.
+        db.update_job(job["id"], bytes_sent=sent, phase="Sending to your library",
                       eta_seconds=int(elapsed / frac - elapsed) if frac > 0.02 else None)
 
     # D11's backpressure, in the form this build can honour: the rip is already safe on

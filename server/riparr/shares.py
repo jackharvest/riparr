@@ -439,7 +439,20 @@ def verify_remote(transport, name, local_path, expect_sha=None, progress=None):
     if expect_sha is None:
         expect_sha = sha256_file(local_path)
 
-    fd, tmp = tempfile.mkstemp(suffix=".verify")
+    # Next to the rip, not in /tmp. On the appliance /tmp is tmpfs -- 485 MB of RAM --
+    # and this reads the *whole file* back to hash it, so a 4.5 GB DVD filled the RAM
+    # disk and smbclient reported NT_STATUS_DISK_FULL. That reads as "your NAS is
+    # full", which is the wrong machine entirely: the upload had already succeeded and
+    # the size check had already passed.
+    #
+    # Streaming the read-back through the hash without storing it would avoid the
+    # second copy, but smbclient's parallel_read writes at offsets and needs a
+    # seekable destination, so a pipe is not an option.
+    #
+    # Consequence worth knowing: verification needs as much free space as the title
+    # itself, on top of the rip. Peak staging is 2x the largest title, not 1x.
+    fd, tmp = tempfile.mkstemp(suffix=".verify",
+                               dir=os.path.dirname(local_path) or None)
     os.close(fd)
     try:
         r = transport.fetch(name, tmp)
