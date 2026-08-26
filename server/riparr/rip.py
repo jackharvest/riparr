@@ -329,6 +329,11 @@ def _refuse_duplicate(known, drive, label, abandon):
     title = known.get("title") or pretty_label(label) or label
     when = time.strftime("%d %b %Y", time.localtime(known["ripped_at"]))
     log.info("Refused a duplicate: %s", title)
+    # Learn the size while the disc is here. A disc recorded before `size_bytes`
+    # existed can only be recognised the slow way -- so the slow way, having spent the
+    # three minutes, writes down what it now knows and the next insertion is instant.
+    if not known.get("size_bytes") and drive.get("size_bytes") and known.get("fingerprint"):
+        db.record_disc(known["fingerprint"], size_bytes=int(drive["size_bytes"]))
     # Written down *before* the physical signal, because the signal takes about ten
     # seconds and the browser should already be on its way to the Discs page, pointing
     # at this film, by the time the tray opens.
