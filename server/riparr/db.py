@@ -74,6 +74,10 @@ ADDED_COLUMNS = {
         ("attempts", "INTEGER DEFAULT 0"),
         ("titles", "TEXT"),            # JSON: candidate titles found on the disc
         ("chosen_title", "INTEGER"),
+        # 0..1 through whatever stage the job is in right now. Bytes cannot express
+        # every stage -- reading an encrypted disc is minutes of CPU with no file yet --
+        # and a stage with no number is a stage the user is watching blind.
+        ("stage_pct", "REAL"),
         ("question", "TEXT"),          # what Riparr needs a human to answer
         ("local_path", "TEXT"),        # staging file, so a resumed job can find it
         ("bytes_verified", "INTEGER DEFAULT 0"),
@@ -411,6 +415,34 @@ def get_disc(fingerprint):
     row = conn().execute("SELECT * FROM discs WHERE fingerprint=?",
                          (fingerprint,)).fetchone()
     return dict(row) if row else None
+
+
+def typical_job_seconds(kind=None, minimum=2):
+    """How long a rip usually takes on this box, from this box's own history.
+
+    There is no way to compute a real estimate for the slow half of a rip: MakeMKV
+    reports nothing during the disc scan and the kernel cannot see the reads because
+    they go through /dev/sg0. What there *is* is evidence -- this machine has ripped
+    discs before and it took about as long each time. A median over past successful
+    rips is fuzzy, honestly labelled, and infinitely better than a blank space.
+
+    Returns (median_seconds, sample_count), or (None, n) until there is enough to say.
+    """
+    q = ("SELECT started_at, finished_at FROM jobs "
+         "WHERE state='done' AND started_at IS NOT NULL AND finished_at IS NOT NULL")
+    args = []
+    if kind:
+        q += " AND disc_family=?"
+        args.append(kind)
+    q += " ORDER BY id DESC LIMIT 20"
+    spans = sorted(r["finished_at"] - r["started_at"]
+                   for r in conn().execute(q, args)
+                   if r["finished_at"] > r["started_at"])
+    if len(spans) < minimum:
+        return None, len(spans)
+    mid = len(spans) // 2
+    med = spans[mid] if len(spans) % 2 else (spans[mid - 1] + spans[mid]) // 2
+    return med, len(spans)
 
 
 def record_disc(fingerprint, **fields):

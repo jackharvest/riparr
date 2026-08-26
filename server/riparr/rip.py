@@ -164,7 +164,20 @@ def enqueue(force=False):
         db.update_job(job_id, state="cancelled", phase=None,
                       finished_at=int(time.time()), error=reason)
 
-    fp = fingerprint(d)
+    # The scan that costs the minutes happens here, inside enqueue -- the worker's later
+    # call is a cache hit. Reporting from the worker therefore reported nothing, and the
+    # first ten minutes of every rip stayed at "no idea". The row already exists by this
+    # point, so it can carry the number.
+    def scan_progress(frac, msg=None):
+        fields = {}
+        if frac is not None:
+            fields["stage_pct"] = round(frac, 4)
+        if msg:
+            fields["phase"] = msg
+        if fields:
+            db.update_job(job_id, **fields)
+
+    fp = fingerprint(d, on_progress=scan_progress)
     db.update_job(job_id, fingerprint=fp)
 
     if not force:
@@ -322,7 +335,7 @@ def uhd_warning(drive, libredrive=None):
 
 # ─────────────────────────────── identification ───────────────────────────────
 
-def fingerprint(drive):
+def fingerprint(drive, on_progress=None):
     """A stable identity for a disc, without reading the whole thing.
 
     The volume label alone is not enough: DVDs ship labels like `LOGICAL_VOLUME_ID`
@@ -332,7 +345,7 @@ def fingerprint(drive):
     """
     parts = [drive.get("label") or "", drive.get("media") or ""]
     try:
-        for t in read_titles(drive.get("device"), drive):
+        for t in read_titles(drive.get("device"), drive, on_progress=on_progress):
             parts.append("%d:%d" % (t["index"], t["seconds"]))
     except Exception:
         pass
@@ -370,7 +383,7 @@ def _titles_key(disc):
                          disc.get("size_bytes") or 0)
 
 
-def read_titles(device, disc=None):
+def read_titles(device, disc=None, on_progress=None):
     """Every title on the disc, with its runtime and size.
 
     Codes are MakeMKV's own AP_ItemAttributeId: 2 name, 9 duration, 10 size as text,
@@ -405,8 +418,47 @@ def read_titles(device, disc=None):
     # over two minutes of user CPU and still adding titles. The scan is interruptible
     # from the interface, so a generous ceiling costs nothing and a tight one cost
     # every rip attempted on this box.
-    p = subprocess.run([binary, "-r", "--cache=1", "info", _disc_arg(device)],
-                       capture_output=True, text=True, timeout=TITLES_TIMEOUT)
+    # Streamed rather than captured whole, so the scan can say how far along it is.
+    # makemkvcon emits PRGV throughout `info`; it was being thrown away, which is why
+    # reading an encrypted disc looked like nine minutes of nothing happening.
+    proc = subprocess.Popen(
+        [binary, "-r", "--cache=1", "info", _disc_arg(device)],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    out_lines = []
+    found = [0]
+    deadline = time.time() + TITLES_TIMEOUT
+    try:
+        for raw in proc.stdout:
+            out_lines.append(raw)
+            if time.time() > deadline:
+                proc.kill()
+                raise subprocess.TimeoutExpired(binary, TITLES_TIMEOUT)
+            if on_progress:
+                # `makemkvcon info` emits no PRGV at all -- a full scan of a real disc
+                # is 172 MSG lines and 16 DRV lines and nothing else, so there is no
+                # percentage to be had here however much one is wanted. What it does do
+                # is announce each title as it finds it (MSG 3028), and a rising count
+                # is honest evidence of motion where a fabricated percentage would not
+                # be. The scan is CPU-bound for minutes; this is what keeps it company.
+                mm = MSG.match(raw.strip())
+                if mm and mm.group(1) == "3028":
+                    found[0] += 1
+                    # "titles" is DVD jargon and reads as "films" to everyone else --
+                    # a disc reporting "17 titles found" sounds like it is about to rip
+                    # seventeen movies. It is menus, trailers, idents and chapter stubs;
+                    # exactly one of them, the longest, becomes the film.
+                    on_progress(None, "Reading the disc \u2014 %d track%s catalogued"
+                                % (found[0], "" if found[0] == 1 else "s"))
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        proc.wait()
+
+    class _P:
+        stdout = "".join(out_lines)
+    p = _P()
     titles = {}
     for line in (p.stdout or "").splitlines():
         m = TINFO.match(line)
@@ -612,7 +664,19 @@ def _identify(job, s):
     if not d:
         raise RipFailed("The disc was removed before Riparr could read it.")
 
-    titles = read_titles(d.get("device"), d)
+    # Report the scan as it goes. Nine minutes of "Reading the disc" with a sweeping
+    # bar is honest but it is not company: makemkvcon knows how far through it is, and
+    # the user should too.
+    def identify_progress(frac, msg=None):
+        fields = {}
+        if frac is not None:
+            fields["stage_pct"] = round(frac, 4)
+        if msg:
+            fields["phase"] = msg
+        if fields:
+            db.update_job(job["id"], **fields)
+
+    titles = read_titles(d.get("device"), d, on_progress=identify_progress)
     if not titles:
         raise RipFailed("Riparr couldn't read any titles from this disc. "
                         "If it's dirty or scratched, clean it and try again.")
@@ -708,7 +772,7 @@ def _rip(job, s, cancel_ev):
                        title=job.get("title"), kind="movie",
                        title_index=job.get("chosen_title"))
     db.update_job(job["id"], state="ripping", phase="Reading the disc",
-                  local_path=None, bytes_ripped=0)
+                  local_path=None, bytes_ripped=0, stage_pct=0)
 
     if P.MOCK:
         return _mock_rip(job, out_dir, cancel_ev)
@@ -765,6 +829,7 @@ def _rip(job, s, cancel_ev):
                     if writing > 5:
                         eta = int(writing / frac - writing)
                 db.update_job(job["id"], bytes_ripped=done, eta_seconds=eta,
+                              stage_pct=round(frac, 4),
                               phase=last_msg or "Reading the disc")
                 continue
             m = PRGC.match(line)
@@ -856,6 +921,7 @@ def _transfer(job, s, local_path, cancel_ev):
         # come back", and nothing cleared it once bytes started moving again -- so the
         # box sat there claiming to be waiting while the bar climbed past 10%.
         db.update_job(job["id"], bytes_sent=sent, phase="Sending to your library",
+                      stage_pct=round(frac, 4),
                       eta_seconds=int(elapsed / frac - elapsed) if frac > 0.02 else None)
 
     # D11's backpressure, in the form this build can honour: the rip is already safe on
@@ -900,7 +966,8 @@ def _verify(job, s, transport, name, local_path):
                          else "Reading it back to check every byte"))
 
     def progress(done, total):
-        db.update_job(job["id"], bytes_verified=done)
+        db.update_job(job["id"], bytes_verified=done,
+                      stage_pct=round(done / total, 4) if total else None)
 
     r = SH.verify_remote(transport, name, local_path, progress=progress, mode=mode)
     if not r.get("ok"):

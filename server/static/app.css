@@ -606,6 +606,9 @@ td.stat .ic { font-size: var(--ic-nav); }
 }
 .job-pct { color: var(--fg); font-size: 13px; font-variant-numeric: tabular-nums; }
 .job-eta { color: var(--fg); font-variant-numeric: tabular-nums; }
+/* The learned guess is quieter than the measured elapsed time next to it, because one
+   of them is a fact and the other is this box's average. */
+.job-guess { color: var(--fg-muted); font-weight: 400; }
 
 /* Three steps, always all three. The active one has to be obvious across a room --
    the previous version distinguished it with a colour change on 11.5px muted text,
@@ -961,8 +964,25 @@ td.path {
    tray, a "reading the disc" row and a full progress view, and letting it resize on
    every transition made the page jump under the pointer -- and gave the artwork a
    different crop each time. One height, contents centred. */
-.disc-cell { min-height: 296px; display: flex; flex-direction: column; justify-content: center; }
+.disc-cell { min-height: 296px; display: flex; flex-direction: column; justify-content: center;
+              position: relative; }
 @media (max-width: 700px) { .disc-cell { min-height: 260px; } }
+
+/* The drive, what it can read, and the disc in it are facts about the machine, not
+   about the job -- so they sit on the floor of the cell rather than floating in the
+   middle of it. `margin-top: auto` in the cell's flex column pushes them down and lets
+   the job or the tray keep the optical centre. */
+.disc-cell > .tray-strip { margin-top: auto; }
+.disc-cell .tray-drive {
+  margin: 0; position: absolute; left: 22px; right: 22px; bottom: 16px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  justify-content: center;
+  font-size: 12px; color: var(--fg-muted);
+}
+/* The empty/loaded tray centres its own content, so the drive line is lifted out of
+   that flow and pinned instead -- otherwise it rides up with the text above it. */
+.disc-cell .empty-state { position: static; }
+.disc-cell.has-art .tray-drive, .disc-cell .tray-drive { z-index: 1; }
 
 .tray-art {
   position: absolute; inset: 0 0 0 auto;

@@ -676,11 +676,14 @@ views.queue = async () => {
   // the one thing on this page that changes without the user doing anything -- a disc
   // goes in and nothing on screen knew, and the Refresh button re-rendered the same
   // stale snapshot, so it looked broken rather than slow.
-  const [{ jobs }, st, ar] = await Promise.all([
+  const [q, st, ar] = await Promise.all([
     api.get("/api/queue"),
     api.get("/api/status"),
     api.get("/api/autorip"),
   ]);
+  const jobs = q.jobs;
+  state.typical = q.typical_seconds;
+  state.typicalN = q.typical_samples;
   state.status = st;
   const drives = state.status.drives || [];
   const inTray = drives.find(d => d.present);
@@ -718,9 +721,15 @@ function jobRow(j) {
   const ripPct = pct(j.bytes_ripped, j.bytes_total);
   const sentPct = pct(j.bytes_sent, j.bytes_total);
   const verPct = pct(j.bytes_verified, j.bytes_total);
-  const active = j.state === "ripping" ? ripPct
-               : j.state === "transferring" ? sentPct
-               : j.state === "verifying" ? verPct : 0;
+  // The bar shows the stage that is happening now, which is what a stepper promises.
+  // stage_pct is reported by every stage including identification, where there are no
+  // bytes to count -- reading an encrypted disc is minutes of CPU before a file exists,
+  // and that was the stretch with nothing on screen at all.
+  const stage = typeof j.stage_pct === "number" ? j.stage_pct * 100 : null;
+  const byBytes = j.state === "ripping" ? ripPct
+                : j.state === "transferring" ? sentPct
+                : j.state === "verifying" ? verPct : 0;
+  const active = stage !== null ? stage : byBytes;
   // Reading the disc reports nothing, and MakeMKV is silent until its first progress
   // line, so a real rip opens with a bar sitting at zero. Sweep it instead: "moving,
   // but I cannot tell you how far" is a different message from "stopped".
@@ -738,14 +747,24 @@ function jobRow(j) {
   ];
   const order = ["queued", "identifying", "ripping", "transferring", "verifying"];
   const at = order.indexOf(j.state);
+  // Identification belongs to Rip as far as anyone watching is concerned -- it is the
+  // box reading the disc. Without this map no step matched `identifying` at all, so
+  // for the first ten minutes of every rip all three pills sat grey and the interface
+  // looked idle while the drive was audibly working.
+  const stageOf = { queued: "ripping", identifying: "ripping", ripping: "ripping",
+                    transferring: "transferring", verifying: "verifying" };
+  const nowKey = stageOf[j.state];
   const stepHtml = steps.map((st) => {
     const mine = order.indexOf(st.key);
-    const isNow = j.state === st.key;
+    const isNow = nowKey === st.key;
     const done = st.pct >= 100 || (at > mine && at !== -1);
     const cls = isNow ? "now" : done ? "done" : "todo";
     const mark = done ? icon("circle-check") : isNow ? `<span class="pip"></span>`
                                                      : `<span class="pip hollow"></span>`;
-    const val = isNow && st.pct > 0 ? `${Math.round(st.pct)}%` : "";
+    // The live pill shows the stage's own number, which during identification is the
+    // only number there is.
+    const live = isNow && stage !== null ? stage : st.pct;
+    const val = isNow && live > 0 ? `${Math.round(live)}%` : "";
     return `<div class="step ${cls}">${mark}<span class="step-l">${st.label}</span>
       ${val ? `<span class="step-v">${val}</span>` : ""}</div>`;
   }).join("");
@@ -768,7 +787,18 @@ function jobRow(j) {
         <div class="job-figs">
           <span class="job-pct">${active > 0 ? `${Math.round(active)}%` : ""}</span>
           <span class="grow"></span>
-          ${j.eta_seconds ? `<span class="job-eta">${esc(duration(j.eta_seconds))} left</span>` : ""}
+          ${j.eta_seconds
+            ? `<span class="job-eta">${esc(duration(j.eta_seconds))} left</span>`
+            // No percentage to show means a stage that cannot report one -- reading an
+            // encrypted disc is minutes of CPU and MakeMKV emits no progress at all
+            // during it. Elapsed time is not progress, but it is true, it moves every
+            // second, and it is the difference between "working" and "hung".
+            : j.started_at
+            ? `<span class="job-eta">${esc(duration(Math.max(0, (Date.now() / 1000) - j.started_at)))} so far${
+                state.typical
+                  ? ` · <span class="job-guess">usually done by ${esc(clockAt(j.started_at + state.typical))}</span>`
+                  : ""}</span>`
+            : ""}
         </div>
       </div>
       <div class="job-steps">${stepHtml}</div>
@@ -780,6 +810,13 @@ const leg = (p) => (p >= 100 ? "\u2713" : p > 0 ? `${Math.round(p)}%` : "");
 /* Time, not bytes. concept.md says the user should never see a gigabyte and says the
    same about progress and time estimates; the queue did the first half and showed two
    bars that answered "how far" but never "how long". */
+/* A wall-clock time, because "usually done by 07:12" is a thing a person can plan
+   around and "about 26 minutes" is a thing they have to do arithmetic on. */
+function clockAt(epochSeconds) {
+  const d = new Date(epochSeconds * 1000);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 function duration(sec) {
   sec = Math.max(0, Math.round(sec));
   if (sec < 90) return `${sec}s`;

@@ -763,7 +763,13 @@ def _job_out(j):
 
 @app.get("/api/queue")
 def queue(user=Depends(require_user)):
-    return {"jobs": [_job_out(j) for j in db.list_jobs(states=db.ACTIVE_STATES)]}
+    jobs = [_job_out(j) for j in db.list_jobs(states=db.ACTIVE_STATES)]
+    # What a rip usually costs on this machine, from this machine's own history. The
+    # slow half of a rip cannot report progress at all -- see db.typical_job_seconds --
+    # so a fuzzy "usually done by" beats an empty space, provided it is labelled as the
+    # guess it is and only offered once there is something to average.
+    typical, samples = db.typical_job_seconds()
+    return {"jobs": jobs, "typical_seconds": typical, "typical_samples": samples}
 
 
 class RipRequest(BaseModel):
