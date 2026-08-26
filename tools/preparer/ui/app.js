@@ -583,7 +583,12 @@ function pollSetup() {
 
     if (phase === "done") {
       clearInterval(state.poll);
-      state.setupUrl = st.url;
+      // step_verify already established which address answers from *this* Mac and
+      // publishes both plus the verdict. Trust it: where mDNS does not cross to the
+      // box (guest VLANs, mesh routers with the relay off, multicast-blocked wifi)
+      // setup still succeeds via the IP, and .local is a dead link.
+      state.setupUrl = (st.by_name === false && st.url_address) || st.url
+                       || st.url_address || null;
       state.elapsed = st.elapsed;
       show("done");
       renderDone(true);
@@ -601,7 +606,9 @@ function pollSetup() {
 /* ── the finish line ────────────────────────────────────── */
 function renderDone(installed) {
   const host = state.hostname;
-  const addr = `${host}.local:${state.port}`;
+  // Display and open the address that was actually verified, not an assumed name.
+  const addr = (state.setupUrl || `http://${host}.local:${state.port}`)
+                 .replace(/^https?:\/\//, "");
 
   if (installed) {
     // The only ending worth having: it is running, here is the link.
@@ -635,9 +642,12 @@ function renderDone(installed) {
       "Plug in the single USB-C cable",
       `Wait about two minutes, then connect over SSH`,
     ].map(t => `<li>${t}</li>`).join("");
-    const ssh = state.boot.ssh_config
-      ? `ssh -F ${esc(state.boot.ssh_config)} root@${esc(host)}.local`
-      : `ssh root@${esc(host)}.local`;
+    // Always the explicit -i form. An ssh_config in the build folder is not written
+    // by this app and cannot be trusted to fit: a `Host riparr` block does not match
+    // the `riparr.local` we print here, so -F silently contributes no key and no
+    // known_hosts, and a stale one may still say `User riparr` from the Pi-era image.
+    // The card only ever has root, and the key is right there next to it.
+    const ssh = `ssh -i ${esc(state.boot.assets)}/riparr_key root@${esc(host)}.local`;
     $("#done-note").innerHTML = `<span class="ssh-line">${ssh}</span>`;
     $("#done-actions").innerHTML =
       `<button class="primary" id="resume-setup">Set it up for me</button>`
@@ -672,9 +682,7 @@ function connectPreview() {
     : "The SSH key <b>riparr_key</b> is missing from your build folder, so there is no "
       + "way to get into the box. Use the build folder that wrote the card, or prepare "
       + "a card again.";
-  const ssh = state.boot.ssh_config
-    ? `ssh -F ${state.boot.ssh_config} root@${h}.local`
-    : `ssh -i ${state.boot.assets}/riparr_key root@${h}.local`;
+  const ssh = `ssh -i ${state.boot.assets}/riparr_key root@${h}.local`;
   $("#connect-ssh").textContent = ssh;
   return { host: h, port: p, ok };
 }

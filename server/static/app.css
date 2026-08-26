@@ -808,6 +808,24 @@ td.path {
 }
 .manual-row input { flex: 1; max-width: none; }
 
+/* ── wizard: the share detail panel ─────────────────────
+ * This is the only .card in the app that holds a plain form rather than a table or
+ * an empty state, so it is the only place `.card > .body`'s padding has to carry the
+ * whole layout -- and the markup used to omit `.body` entirely, leaving the form
+ * flush against the card border.
+ *
+ * Spacing here comes from one rule rather than from each control's own bottom
+ * margin, which is what the stray inline `margin:-4px 0 14px` was cancelling out.
+ * An empty result slot must not leave a gap at the foot of the card.
+ */
+#w-detail .card > .body > * { margin-top: 0; margin-bottom: 0; }
+#w-detail .card > .body > * + * { margin-top: 18px; }
+#w-detail .card > .body > #w-testres:empty { margin-top: 0; }
+/* Buttons belong to the input column, not the label column -- the same offset
+   `.f .help` already uses, and dropped at the same breakpoint where labels stack. */
+#w-detail .btn-row { margin-left: calc(var(--form-label-w) + var(--form-label-gap)); }
+@media (max-width: 1200px) { #w-detail .btn-row { margin-left: 0; } }
+
 /* Signal strength as bars. A percentage alone is a number to squint at; four bars is
    read without reading. */
 .sig { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px;

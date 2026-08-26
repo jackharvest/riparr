@@ -220,6 +220,22 @@ const wizard = {
       </div>
       <div class="wz-body" id="wz-body"></div>`;
     this[name]();
+
+    // Enter finishes the step. These inputs are not in a <form> -- each step is plain
+    // markup with an onclick on one primary button -- so nothing submits on its own,
+    // and typing the last field then pressing Enter appeared to do nothing.
+    // Bound on the body rather than per-input so every step gets it, including the
+    // async ones that fill this element after we return.
+    $("#wz-body").onkeydown = (e) => {
+      if (e.key !== "Enter" || e.isComposing) return;
+      // A field with its own Enter handler (the share step has two) has already acted
+      // and called preventDefault; do not also fire the step's primary button.
+      if (e.defaultPrevented) return;
+      const t = e.target;
+      if (!t || t.tagName !== "INPUT" || t.type === "checkbox" || t.type === "radio") return;
+      const btn = $("#wz-body").querySelector(".wz-actions .btn.primary:not([disabled])");
+      if (btn) { e.preventDefault(); btn.click(); }
+    };
   },
 
   next() { this.step++; this.render(); },
@@ -410,9 +426,14 @@ const wizard = {
     this.data.spass = pass;
 
     const d = $("#w-detail");
-    d.innerHTML = `<div class="section"><div>
-      <div class="result busy"><span class="spin"></span>Asking ${esc(host)} what it offers…</div>
-    </div></div>`;
+    // Same shell as the loaded state below -- header, .card, .body. Rendering a
+    // .section here and a .card a moment later made the panel change component
+    // type mid-flight, which reads as a jump exactly where the eye is waiting.
+    d.innerHTML = `<div class="card">
+      <header><h3>${esc(host)}</h3></header>
+      <div class="body">
+        <div class="result busy"><span class="spin"></span>Asking ${esc(host)} what it offers…</div>
+      </div></div>`;
     let res;
     try {
       res = await api.post("/api/shares/browse",
@@ -422,20 +443,18 @@ const wizard = {
     const needsAuth = !res.ok && /LOGON_FAILURE|ACCESS_DENIED|NT_STATUS_ACCESS/i.test(res.error || "");
     d.innerHTML = `<div class="card">
       <header><h3>${esc(host)}</h3></header>
-      <div>
+      <div class="body">
         ${res.ok ? "" : `<div class="result ${needsAuth ? "" : "bad"}"><b>${
             needsAuth ? "This server wants a username and password"
                       : "Couldn't list shares"}</b>
            <div class="why">${esc(res.error)}</div></div>`}
-        <div class="grid2">
-          <label class="f"><span>Username</span>
-            <input id="w-suser" value="${esc(user)}" autocomplete="off"
-                   placeholder="DOMAIN\\user or user"></label>
-          <label class="f"><span>Password</span>
-            <input id="w-spass" type="password" value="${esc(pass)}"
-                   autocomplete="new-password"></label>
-        </div>
-        <div class="btn-row" style="margin:-4px 0 14px">
+        <label class="f"><span>Username</span>
+          <input id="w-suser" value="${esc(user)}" autocomplete="off"
+                 placeholder="DOMAIN\\user or user"></label>
+        <label class="f"><span>Password</span>
+          <input id="w-spass" type="password" value="${esc(pass)}"
+                 autocomplete="new-password"></label>
+        <div class="btn-row">
           <button class="btn" id="w-recheck">List shares with these credentials</button>
         </div>
         <label class="f"><span>Share</span>

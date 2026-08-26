@@ -127,6 +127,7 @@ class Finisher:
             os.path.dirname(self.key), "known_hosts")
         self.address = None          # resolved IP or hostname we actually reach
         self.found_by = None         # "name" or "address"
+        self.reachable_by_name = None  # did <host>.local answer from this Mac?
         self.log = deque(maxlen=400)
         self.state = {k: "waiting" for k, _, _ in STEPS}
         self.current = None
@@ -453,7 +454,8 @@ class Finisher:
         self._emit("done", "Riparr is running.",
                    elapsed=round(time.time() - started),
                    url="http://%s.local:%d" % (self.host, self.port),
-                   url_address="http://%s:%d" % (self.address, self.port))
+                   url_address="http://%s:%d" % (self.address, self.port),
+                   by_name=self.reachable_by_name)
         return True
 
 
