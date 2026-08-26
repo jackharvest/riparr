@@ -31,18 +31,43 @@ matched — no "fix match" pass in Plex afterward.
 
 If you name things your own way, the templates are editable, Sonarr-style:
 
-| Token | Becomes |
-|---|---|
-| `{Title}` | `Blade Runner` |
-| `{Year}` | `1982` |
-| `{Season:00}` | `01` |
-| `{Episode:00}` | `01` |
-| `{EpisodeTitle}` | `Pilot` |
-| `{Quality}` | `Bluray-1080p` |
-| `{Edition}` | `Director's Cut` |
+| Token | Becomes | Built? |
+|---|---|---|
+| `{Title}` | `Blade Runner` | yes |
+| `{Year}` | `1982` | yes |
+| `{Source}` | `DVD`, `Bluray`, `UHD` | yes |
+| `{Season:00}` | `01` | **not yet** |
+| `{Episode:00}` | `01` | **not yet** |
+| `{EpisodeTitle}` | `Pilot` | **not yet** |
+| `{Quality}` | `Bluray-1080p` | **not yet** |
+| `{Edition}` | `Director's Cut` | **not yet** |
 
-A live preview shows the result against a real example as you type, so you can't save a
-template that produces something broken.
+A token that is not built is left in the filename as written, rather than blanked — a
+template with a typo should produce a visibly odd name, not a file called ` ().mkv`.
+The TV tokens wait on TV support; `{Quality}` waits on Riparr reading the video stream,
+which it does not do.
+
+## Two copies of the same film
+
+The DVD and the Blu-ray of one film produce the same title, so the default template
+sends them to the same filename. **Riparr will not overwrite the first with the
+second.** When the destination already exists and it was written by a *different* disc,
+the new rip is saved alongside with its source on the end:
+
+```
+Movies/Arthur Christmas (2011)/
+    Arthur Christmas (2011).mkv          ← the Blu-ray, ripped first
+    Arthur Christmas (2011) - DVD.mkv    ← the DVD, ripped later
+```
+
+Plex and Jellyfin both read several files in one movie folder as **versions** of the
+same film, so you get a "play version" choice rather than two entries. The rip that was
+renamed says so on its History row.
+
+Re-ripping the *same* disc still replaces its own file, which is what Re-rip is for.
+
+To tag every rip from the start instead, put `{Source}` in the template:
+`{Title} ({Year})/{Title} ({Year}) - {Source}.mkv`.
 
 ## How Riparr identifies a disc
 
