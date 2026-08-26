@@ -136,7 +136,8 @@ def enqueue(force=False):
     # LibreDrive is asked only for a 4K disc. It costs a `makemkvcon` run, it is
     # irrelevant to DVD and to 1080p Blu-ray, and paying for it on every disc would
     # put a minute of dead time in front of the common case to serve the rare one.
-    libredrive = P.libredrive_status(d) if disc_family(d) == "uhd" else None
+    # block=True: the refusal below has to be right, and a UHD disc is worth the wait.
+    libredrive = P.libredrive_status(d, block=True) if disc_family(d) == "uhd" else None
     refusal = unreadable_reason(d, libredrive)
     if refusal:
         log.info("Refused a disc this drive cannot read: %s", refusal)
@@ -608,7 +609,7 @@ def _identify(job, s):
     title_name, year = _split_year(name)
     # The UHD hedge is recorded, not acted on: MakeMKV is the only thing that can say
     # for certain whether this drive will decode the disc, and it answers in a minute.
-    warning = uhd_warning(d, P.libredrive_status(d))
+    warning = uhd_warning(d, P.libredrive_status(d, block=True))
     if warning:
         log.warning("Job %d: %s", job["id"], warning)
     db.update_job(job["id"], title=title_name, chosen_title=chosen["index"],

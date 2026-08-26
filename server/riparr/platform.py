@@ -11,6 +11,7 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
 import time
 
 from . import drives as DRV, optical as OPT
@@ -238,9 +239,15 @@ def _mock_drives():
 # the one thing that would change the answer -- installing MakeMKV -- restarts nothing
 # but is caught by the `installed` guard below returning `None` until it is there.
 _libredrive_cache = {}
+# key -> Event, set when that key's probe finishes. Without this, every poll that
+# arrives during the ~2 minutes a probe takes starts its own `makemkvcon`: the cache is
+# only written *after* the run, so it cannot suppress a stampede. Nine of them piled up
+# on the first real drive we ever attached.
+_libredrive_inflight = {}
+_libredrive_lock = threading.Lock()
 
 
-def libredrive_status(drive):
+def libredrive_status(drive, block=False):
     """Whether MakeMKV can get underneath this drive's firmware -- the UHD question.
 
     `drives.py` explains why nothing else can answer it: there is no MMC profile for
@@ -249,6 +256,12 @@ def libredrive_status(drive):
     whether it has one.
 
     Returns "enabled", "possible", "no", or None for "not asked / cannot tell".
+
+    Costs a ~2 minute `makemkvcon` run against a real drive, so by default it is started
+    in the background and this returns None until the answer is cached. `block=True` is
+    for the rip path, where the refusal actually has to be correct and waiting is fine.
+    **Never block a polled endpoint on this** -- `/api/status` did, and the dashboard
+    polls it, so signing in hung on the first drive we ever attached.
     """
     if MOCK:
         return {"uhd": "enabled", "bluray": "no", "dvd": None}.get(
@@ -262,13 +275,43 @@ def libredrive_status(drive):
     if key in _libredrive_cache:
         return _libredrive_cache[key]
 
-    binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
-    m = re.search(r"sr(\d+)$", drive.get("device") or "")
-    out = _run([binary, "-r", "--cache=1", "info", "disc:%s" % (m.group(1) if m else "0")],
-               timeout=120) or ""
-    verdict = DRV.parse_libredrive(out)
-    _libredrive_cache[key] = verdict
-    return verdict
+    with _libredrive_lock:
+        ev = _libredrive_inflight.get(key)
+        first = ev is None
+        if first:
+            ev = _libredrive_inflight[key] = threading.Event()
+
+    if first:
+        if block:
+            _libredrive_probe(key, drive, ev)
+            return _libredrive_cache.get(key)
+        threading.Thread(target=_libredrive_probe, args=(key, drive, ev),
+                         daemon=True).start()
+    elif block:
+        ev.wait(timeout=150)
+
+    # None already means "not asked / cannot tell" to every caller, so a probe still
+    # running is reported the same way and the answer appears on a later poll.
+    return _libredrive_cache.get(key)
+
+
+def _libredrive_probe(key, drive, ev):
+    """Ask MakeMKV, once per drive model, off the request path."""
+    try:
+        binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
+        m = re.search(r"sr(\d+)$", drive.get("device") or "")
+        out = _run([binary, "-r", "--cache=1", "info",
+                    "disc:%s" % (m.group(1) if m else "0")], timeout=120) or ""
+        _libredrive_cache[key] = DRV.parse_libredrive(out)
+    except Exception:
+        # A probe that blew up must not be retried on every poll for ever, but it also
+        # must not poison the answer permanently -- leave the cache empty and let the
+        # next caller start a fresh one.
+        pass
+    finally:
+        ev.set()
+        with _libredrive_lock:
+            _libredrive_inflight.pop(key, None)
 
 
 def _usb_devices():
