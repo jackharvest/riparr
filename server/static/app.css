@@ -645,6 +645,55 @@ td.stat .ic { font-size: var(--ic-nav); }
 
 @media (prefers-reduced-motion: reduce) { .step.now .pip { animation: none; } }
 
+/* ── the rips gallery ───────────────────────────────────
+ * A shelf of films, not a spreadsheet. The poster is the index; the words are the
+ * detail you look for second. Tiles are a fixed 2:3 so a wall of them lines up
+ * whatever mix of artwork and disc-icon fallbacks it contains.
+ */
+.rips {
+  display: grid; gap: 20px 18px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+.rip { margin: 0; min-width: 0; }
+.rip-art {
+  position: relative; aspect-ratio: 2 / 3; border-radius: var(--radius);
+  background: var(--panel) center/cover no-repeat;
+  border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  transition: transform .18s ease, border-color .18s ease;
+}
+.rip-art.has { border-color: transparent; }
+.rip:hover .rip-art { transform: translateY(-2px); border-color: var(--accent); }
+/* The disc icon is the resting state, so a film we could not identify is a plain tile
+   rather than a broken image. It goes when a poster lands on top of it. */
+.rip-fallback { color: var(--fg-muted); opacity: .35; }
+.rip-fallback .ic { width: 42px; height: 42px; }
+.rip-art.has .rip-fallback { display: none; }
+.rip-flag {
+  position: absolute; top: 7px; right: 7px; color: var(--warn);
+  background: rgba(0,0,0,.55); border-radius: 50%; padding: 4px; line-height: 0;
+}
+.rip figcaption { margin-top: 9px; }
+.rip-title {
+  color: var(--fg-strong); font-size: 13px; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rip-meta { margin-top: 3px; font-size: 11.5px; color: var(--fg-muted); }
+.rip-meta .bad { color: var(--bad, #e05c5c); }
+.rip-retry { margin-top: 8px; width: 100%; }
+@media (prefers-reduced-motion: reduce) { .rip:hover .rip-art { transform: none; } }
+
+/* The verify choice sits with Auto Rip because that is where somebody decides what
+   "walk away" means. It is one setting: it governs a rip started by hand too. */
+.ar-verify {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; font-size: 12px; color: var(--fg-muted);
+}
+.ar-verify select { height: 26px; padding: 0 8px; font-size: 12px; max-width: none; width: auto; }
+.ar-verify-note { flex: 1 1 240px; min-width: 0; }
+
 .job.needs { background: rgba(255,159,26,.06); border-left: 2px solid var(--warn); }
 
 /* Non-fatal, and it must not look fatal: the rip is running and the user is being

@@ -104,7 +104,13 @@ DEFAULTS = {
     "min_title_seconds": 120,
     "rip_mode": "main",
     "transfer_mode": "auto",
-    "verify_after_transfer": True,
+    # "quick" | "deep" | "off". Quick compares the size the share reports against the
+    # file that was sent -- nearly free, and it catches the failure that actually
+    # happens (a truncated or refused transfer). Deep reads the whole file back and
+    # hashes it, which is correct and expensive: it costs a second full download and,
+    # because smbclient needs a seekable destination, as much free space again as the
+    # title itself.
+    "verify_mode": "quick",
     "keep_local_copy": True,
     # Looks the disc up on Wikipedia to put its poster faintly behind the page. It is
     # the only feature that tells an outside server what you are ripping, so it is a

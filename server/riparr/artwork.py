@@ -97,7 +97,9 @@ def _get(url, timeout=12):
 # box that rips discs all day must not grow a picture cache in RAM for ever.
 _images = {}
 _images_lock = threading.Lock()
-MAX_IMAGES = 8
+# Sized for the rips gallery rather than the one disc in the tray. Posters are ~70-150
+# KB each, so this is a couple of megabytes at worst on a box with 969 MB.
+MAX_IMAGES = 48
 IMAGE_TTL = 6 * 3600
 
 

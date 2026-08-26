@@ -889,15 +889,20 @@ def _transfer(job, s, local_path, cancel_ev):
 # ── stage 4: prove it arrived ──
 
 def _verify(job, s, transport, name, local_path):
-    if not s.get("verify_after_transfer", True):
+    # Old boolean setting, honoured so an upgrade does not silently change behaviour.
+    mode = s.get("verify_mode") or ("deep" if s.get("verify_after_transfer", True)
+                                    else "off")
+    if mode == "off":
         return
-    db.update_job(job["id"], state="verifying", phase="Checking it arrived intact",
-                  bytes_verified=0)
+
+    db.update_job(job["id"], state="verifying", bytes_verified=0,
+                  phase=("Checking the size on your library" if mode == "quick"
+                         else "Reading it back to check every byte"))
 
     def progress(done, total):
         db.update_job(job["id"], bytes_verified=done)
 
-    r = SH.verify_remote(transport, name, local_path, progress=progress)
+    r = SH.verify_remote(transport, name, local_path, progress=progress, mode=mode)
     if not r.get("ok"):
         raise RipFailed("The file reached your library but didn't verify: %s"
                         % r.get("error"))

@@ -417,7 +417,8 @@ class Transport:
         return "//%s/%s/%s" % (self.host, self.share, self._remote(name))
 
 
-def verify_remote(transport, name, local_path, expect_sha=None, progress=None):
+def verify_remote(transport, name, local_path, expect_sha=None, progress=None,
+                  mode="deep"):
     """Read the file back off the share and prove it matches (D6).
 
     An SMB write returning success is not evidence of a good file -- which is the whole
@@ -435,6 +436,13 @@ def verify_remote(transport, name, local_path, expect_sha=None, progress=None):
     if remote_size != total:
         return {"ok": False,
                 "error": "The share has %d bytes; the rip is %d." % (remote_size, total)}
+
+    # The size check above is the whole of "quick", and it is not nothing: a truncated
+    # write, a share that filled up mid-transfer and a refused write all show up here,
+    # and those are the failures that actually happen. What it cannot see is silent
+    # corruption of bytes that did arrive -- which is what "deep" is for.
+    if mode == "quick":
+        return {"ok": True, "sha256": None, "mode": "quick"}
 
     if expect_sha is None:
         expect_sha = sha256_file(local_path)
@@ -462,7 +470,7 @@ def verify_remote(transport, name, local_path, expect_sha=None, progress=None):
         if got != expect_sha:
             return {"ok": False,
                     "error": "The file on the share doesn't match what was written."}
-        return {"ok": True, "sha256": got}
+        return {"ok": True, "sha256": got, "mode": "deep"}
     finally:
         try:
             os.unlink(tmp)

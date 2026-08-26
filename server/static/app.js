@@ -974,6 +974,20 @@ function autoRipPanel(ar) {
           : ar.ready ? "Turn this on and Riparr starts ripping the moment a disc is inserted."
           : "Not available yet \u2014 see below."}</div>
         ${checkList(checks, fails, warns)}
+        <div class="ar-verify">
+          After each rip:
+          <select id="ar-verify" title="Applies to every rip, automatic or started by hand">
+            ${opt("quick", "quick check", state.settings && state.settings.verify_mode)}
+            ${opt("deep", "deep check (slow)", state.settings && state.settings.verify_mode)}
+            ${opt("off", "no check", state.settings && state.settings.verify_mode)}
+          </select>
+          <span class="ar-verify-note">${
+            (state.settings && state.settings.verify_mode) === "deep"
+              ? "Reads the whole film back off the share — roughly doubles the time and needs as much free space again."
+              : (state.settings && state.settings.verify_mode) === "off"
+              ? "Nothing is checked after the upload."
+              : "Compares the size on your library with what was sent."}</span>
+        </div>
       </div>
     </div>`;
 }
@@ -999,23 +1013,88 @@ function checkList(checks, fails, warns) {
   </details>`;
 }
 
+/* ── the rips gallery ──
+   A finished rip is a film, and a list of films should look like a shelf of films. The
+   table this replaced answered "what happened" precisely and "what have I got" not at
+   all -- and the artwork the box already fetches for the tray was thrown away the
+   moment the disc came out. Posters are the index here; the words underneath are the
+   detail you go looking for second. */
 views.history = async () => {
-  const { jobs } = await api.get("/api/history");
-  return `${head("History", "Everything Riparr has finished or failed.")}
-    ${jobs.length ? `<div class="card"><table>
-      <thead><tr><th>Title</th><th>Finished</th><th>Where it went</th><th>Result</th><th class="act"></th></tr></thead>
-      <tbody>${jobs.map(j => `<tr>
-        <td>${esc(j.title || j.disc_label || "Unknown disc")}</td>
-        <td class="muted">${ago(j.finished_at)}</td>
-        <td class="path">${j.dest_path ? esc(j.dest_path) : '<span class="muted">\u2014</span>'}</td>
-        <td><span class="badge ${j.state === "done" ? "ok" : j.state === "cancelled" ? "" : "bad"}">${esc(j.state)}</span>
-          ${j.error ? `<div class="s muted">${esc(j.error)}</div>` : ""}</td>
-        <td class="act">${j.state !== "done" && j.local_path
-          ? `<button class="btn" data-retry="${j.id}">Retry upload</button>` : ""}</td>
-      </tr>`).join("")}</tbody></table></div>`
-    : `<div class="card"><div class="empty-state"><div class="big">${icon("clock-rotate-left")}</div>
-        <h2>No history yet</h2><p>Finished rips will appear here.</p></div></div>`}`;
+  let { jobs } = await api.get("/api/history");
+  if (!jobs.length) {
+    return `${head("History", "Everything Riparr has finished or failed.")}
+      <div class="card"><div class="empty-state"><div class="big">${icon("clock-rotate-left")}</div>
+        <h2>No rips yet</h2><p>Finished rips appear here, with their artwork.</p></div></div>`;
+  }
+  // One tile per film, not per attempt. A shelf answers "what have I got"; eight tiles
+  // of the same disc from eight tries answers "what did I do last night". The newest
+  // attempt wins the tile and carries the state, and the rest become a count -- nothing
+  // is hidden, it is just not shouted eight times.
+  const byFilm = [];
+  const seen = new Map();
+  for (const j of jobs) {
+    // Fingerprint is the disc's identity, so attempts group even when the early ones
+    // failed before identification resolved a title and fell back to the raw volume
+    // label -- otherwise THE_BOSS_BABY and The Boss Baby sit side by side as two films.
+    const key = j.fingerprint || (j.title || j.disc_label || "?").toLowerCase();
+    const at = seen.get(key);
+    if (at === undefined) { seen.set(key, byFilm.length); byFilm.push({ ...j, tries: 1 }); }
+    else {
+      byFilm[at].tries += 1;
+      // A disc that eventually succeeded is a success, whenever that happened.
+      if (byFilm[at].state !== "done" && j.state === "done") {
+        byFilm[at] = { ...j, tries: byFilm[at].tries };
+      }
+      // Prefer a real title over a volume label, whichever attempt happened to get it.
+      if (!byFilm[at].title && j.title) byFilm[at].title = j.title;
+    }
+  }
+  jobs = byFilm;
+
+  const card = (j) => {
+    const name = j.title || j.disc_label || "Unknown disc";
+    const bad = j.state !== "done";
+    return `<figure class="rip" data-art="${esc(j.title || j.disc_label || "")}">
+      <div class="rip-art">
+        <span class="rip-fallback">${icon("compact-disc")}</span>
+        ${bad ? `<span class="rip-flag" title="${esc(j.error || j.state)}">${
+          icon("triangle-exclamation")}</span>` : ""}
+      </div>
+      <figcaption>
+        <div class="rip-title" title="${esc(name)}">${esc(name)}</div>
+        <div class="rip-meta">${esc(ago(j.finished_at))}${
+          bad ? ` · <span class="bad">${esc(STATE_LABEL[j.state] || j.state)}</span>` : ""}${
+          j.tries > 1 ? ` · ${j.tries} attempts` : ""}</div>
+      </figcaption>
+      ${j.state !== "done" && j.local_path
+        ? `<button class="btn rip-retry" data-retry="${j.id}">Retry upload</button>` : ""}
+    </figure>`;
+  };
+  return `${head("History", "Every rip, newest first.")}
+    <div class="rips">${jobs.map(card).join("")}</div>`;
 };
+
+/* Fill the posters in after the grid is on screen. Each lookup is cached server-side by
+   normalised title, and a miss simply leaves the disc icon showing -- a film we cannot
+   identify is a tile without a picture, never a broken image. */
+async function paintRipArt() {
+  const cards = $$(".rip[data-art]");
+  for (const el of cards) {
+    const label = el.dataset.art;
+    if (!label || el.dataset.done) continue;
+    el.dataset.done = "1";
+    let hit;
+    try { hit = await api.get(`/api/artwork?label=${encodeURIComponent(label)}`); }
+    catch (e) { continue; }
+    if (!hit || !hit.ok) continue;
+    const art = el.querySelector(".rip-art");
+    if (art) {
+      art.style.backgroundImage = `url("${hit.image}")`;
+      art.classList.add("has");
+      art.title = hit.title;
+    }
+  }
+}
 
 views.discs = async () => {
   const { discs } = await api.get("/api/discs");
@@ -1138,8 +1217,20 @@ settingsPages.ripping = (s) => `
       <span class="help">Automatic streams when space is tight and rips at full speed,
         ejecting early, when there's room. Throughput is identical either way — Wi-Fi is
         the binding constraint, not the drive.</span></label>
-    ${sw("verify_after_transfer", "Verify after transfer", s.verify_after_transfer,
-        "Reads the file back from the share and checks it matches. Catches silent corruption.")}
+    <label class="f"><span>Verify after transfer</span>
+      <select data-set="verify_mode">
+        ${opt("quick", "Quick — check the size", s.verify_mode)}
+        ${opt("deep", "Deep — read every byte back", s.verify_mode)}
+        ${opt("off", "Don't verify", s.verify_mode)}
+      </select>
+      <span class="help">Quick asks the share how big the file is and compares it with
+        what was sent. It is nearly free and catches what actually goes wrong — a
+        truncated transfer, a share that filled up, a write that was refused.
+        <b>Deep</b> reads the entire file back and hashes it, so it also catches silent
+        corruption of bytes that did arrive. That means downloading the whole rip again:
+        it roughly doubles the time after a rip and needs as much free space on the card
+        as the film itself. Worth it for an archive you will never re-rip; overkill for
+        most.</span></label>
     ${sw("keep_local_copy", "Keep the local copy", s.keep_local_copy,
         "Retains the rip until the space is needed, so a downstream problem is a re-copy rather than a re-rip.")}
   </div></div>${saveBar()}`;
@@ -2044,6 +2135,18 @@ function wireContent(section, sub) {
 
   // Offered when the diagnosis says the drive is probably in the socket that cannot
   // host. Reboots, so it borrows the same full-screen overlay as restart.
+  if ($(".rips")) paintRipArt();
+
+  const arVerify = $("#ar-verify");
+  if (arVerify) arVerify.onchange = async () => {
+    try {
+      await api.put("/api/settings", { verify_mode: arVerify.value });
+      if (state.settings) state.settings.verify_mode = arVerify.value;
+      toast("Saved", "ok");
+      route();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+
   const usbFix = $("#usb-host-fix");
   if (usbFix) usbFix.onclick = async () => {
     if (!confirm("Make both USB-C sockets work?\n\nThe box will restart. "
