@@ -19,13 +19,23 @@ That's it. No button, no clicking, no app.
 
 | Disc | Roughly |
 |---|---|
-| DVD | ~30 minutes |
-| Blu-ray | ~3 hours |
-| 4K UHD | most of a day |
+| DVD | **~20–30 minutes** *(measured)* |
+| Blu-ray | ~3 hours *(estimate)* |
+| 4K UHD | most of a day *(estimate)* |
 
-**This is your WiFi, not your drive.** Riparr rips the disc, then sends the movie to your
-library, and the board's WiFi moves about 4 MB/s. A faster drive won't change these
-numbers. Nothing is wrong.
+**Most of that is the box thinking, not the network.** Measured on a retail DVD: about
+**sixteen minutes pass before a single byte is written**. Commercial discs are encrypted,
+and the box unscrambles them in software — that is arithmetic, and this is a small
+computer. Reading and unscrambling takes far longer than writing the film out or sending
+it to your library.
+
+So during a rip the drive spins, the box gets warm, and for a while the progress bar has
+nothing honest to show you — that stretch is real work, not a fault. Riparr shows a
+sweeping bar and a running clock rather than a percentage it would have to invent.
+
+A faster drive will not change these numbers. A faster **card** helps a little: writing
+the film out runs at about 9 MB/s on the reference board, which is marginally slower than
+the Wi-Fi that sends it onward.
 
 ## What the eject actually means
 

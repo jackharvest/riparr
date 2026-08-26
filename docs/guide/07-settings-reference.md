@@ -75,12 +75,15 @@ Mostly informational. The defaults adapt to your card.
 | Setting | Notes |
 |---|---|
 | **Mode** | `Automatic` *(recommended)* — streams when space is tight, rips at full speed and ejects early when there's room |
-| **Verify after transfer** | On. Reads the file back and checks it matches. Catches silent corruption. |
+| **Verify after transfer** | `Quick` *(default)* — asks your library how big the file is and compares it with what was sent. Nearly free, and it catches what actually goes wrong: a truncated transfer, a share that filled up, a write that was refused. `Deep` also reads every byte back and hashes it, so it catches silent corruption too — but it downloads the whole film again, roughly doubling the time after a rip and needing as much free space on the card as the film itself. `Don't verify` trusts the upload. The choice applies to automatic and manual rips alike. |
 | **Keep local copy** | On. Riparr retains the local copy until it needs the room, so a downstream problem is a re-copy instead of a re-rip. |
 | **Space remaining** | Shown in discs, not gigabytes |
 
-> **[unresolved]** Verification reads the whole file back over WiFi, which on a Blu-ray
-> costs about as long as the upload did. Whether it stays default-on is undecided.
+> **Resolved 2026-08-26.** Deep verification is no longer the only option, and it is no
+> longer the default. It reads the whole file back, so on top of the time it needs as much
+> free space as the film — the read-back has to land somewhere, because `smbclient` cannot
+> stream it. Quick verification catches the failures that actually happen and costs
+> nothing, so it is the default; deep is there for an archive you never intend to re-rip.
 
 ## Handoff
 
