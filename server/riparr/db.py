@@ -95,10 +95,14 @@ ADDED_COLUMNS = {
         # rebuilding the path from the template afterwards is guessing -- the year is
         # already stripped out of `title` by then, so the guess comes out wrong.
         ("remote_name", "TEXT"),
+        ("disc_bytes", "INTEGER"),     # the whole disc, not the title: see discs.size_bytes
     ],
     "discs": [
         ("title_index", "INTEGER"),    # the remembered title choice (R5: fix once, ever)
         ("job_id", "INTEGER"),
+        # The size of the disc itself, paired with `label` to recognise a disc in
+        # seconds instead of minutes -- see db.disc_by_label_size.
+        ("size_bytes", "INTEGER"),
     ],
 }
 
@@ -355,6 +359,32 @@ def list_jobs(states=None, limit=50):
 def list_discs(limit=200):
     return [dict(r) for r in conn().execute(
         "SELECT * FROM discs ORDER BY COALESCE(ripped_at,0) DESC LIMIT ?", (limit,))]
+
+
+def disc_by_label_size(label, size_bytes):
+    """A disc we have seen before, recognised without reading it properly.
+
+    The fingerprint is the real identity, and getting one means a full `makemkvcon`
+    scan -- three to nine minutes with the drive spinning. That is a long time to make
+    somebody wait to be told a thing they could have been told at once, and it is the
+    difference between "Riparr noticed" and "Riparr eventually noticed".
+
+    The volume label arrives in about fifteen seconds and the disc size comes with it.
+    Neither is enough alone: labels repeat across the discs of a boxed set, and plenty
+    of discs share a size. **Together** they are strong -- two different films with the
+    same volume label *and* the same byte count is not a case that turns up -- and the
+    cost of being wrong is bounded, because the page says which film it thinks this is
+    and Forget is next to it.
+
+    Rows recorded before this column existed have no size and are never matched here,
+    so they simply fall back to the full scan. Returns the disc row, or None.
+    """
+    if not label or not size_bytes:
+        return None
+    row = conn().execute(
+        "SELECT * FROM discs WHERE label=? AND size_bytes=? AND ripped_at IS NOT NULL "
+        "ORDER BY ripped_at DESC LIMIT 1", (label, int(size_bytes))).fetchone()
+    return dict(row) if row else None
 
 
 def forget_disc(fingerprint):

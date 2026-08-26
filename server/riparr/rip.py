@@ -208,6 +208,28 @@ def enqueue(force=False, expect=None):
         db.update_job(job_id, state="cancelled", phase=None,
                       finished_at=int(time.time()), error=reason)
 
+    # Before the expensive part: is this simply a disc we already have? The label and
+    # the size are both in hand within about fifteen seconds of the tray closing, and
+    # together they identify a disc well enough to say so (db.disc_by_label_size). The
+    # fingerprint below is the real identity and takes three to nine minutes to get --
+    # which is a long time to spin a drive in order to tell somebody something they
+    # could have been told at once.
+    #
+    # Only a shortcut *out*. A disc that is not recognised here still gets the full
+    # scan, so nothing is ever ripped on the strength of a label.
+    if not force:
+        quick = db.disc_by_label_size(label, d.get("size_bytes"))
+        if quick:
+            # Consuming the arm here has to *grant* the force, not merely skip the
+            # refusal. Skipping it alone would fall through to the scan below, where
+            # the arm is already spent and the post-scan duplicate check would refuse
+            # the very re-rip somebody just asked for.
+            if _consume_arm(quick.get("fingerprint")):
+                force = True
+            else:
+                db.update_job(job_id, fingerprint=quick.get("fingerprint") or "")
+                return None, _refuse_duplicate(quick, d, label, _abandon)
+
     # The scan that costs the minutes happens here, inside enqueue -- the worker's later
     # call is a cache hit. Reporting from the worker therefore reported nothing, and the
     # first ten minutes of every rip stayed at "no idea". The row already exists by this
@@ -237,26 +259,7 @@ def enqueue(force=False, expect=None):
     if not force:
         known = db.get_disc(fp)
         if known and known.get("ripped_at"):
-            title = known.get("title") or pretty_label(label) or label
-            when = time.strftime("%d %b %Y", time.localtime(known["ripped_at"]))
-            log.info("Refused a duplicate: %s", title)
-            # Remembered *before* the physical signal, because the signal takes about
-            # ten seconds and the browser should already be on its way to the Discs
-            # page pointing at this film by the time the tray opens.
-            note_duplicate(fp, title, label, known.get("ripped_at"))
-            notify.send("duplicate", title=title,
-                        body="Already ripped on %s. Ejected without re-reading it." % when)
-            LED.announce("duplicate")
-            # Say it with the drive, for whoever is not looking at a browser. This
-            # blinks the drive's own light *before* ejecting, because it works by
-            # reading the disc and there is nothing to read once the tray is open.
-            r = P.duplicate_signal(d.get("device") or "/dev/sr0",
-                                   mode=_settings().get("duplicate_signal", "flash"))
-            log.info("Duplicate signal: %s", r.get("message"))
-            P.eject()
-            msg = "You've already ripped %s." % title
-            _abandon(msg)
-            return None, msg
+            return None, _refuse_duplicate(known, d, label, _abandon)
         # Exclude the row just created, which now carries this same fingerprint.
         existing = db.job_for_fingerprint(fp, states=db.ACTIVE_STATES)
         if existing and existing["id"] != job_id:
@@ -314,6 +317,35 @@ def ack_duplicate():
     if isinstance(got, dict):
         got["seen"] = True
         db.set("last_duplicate", got)
+
+
+def _refuse_duplicate(known, drive, label, abandon):
+    """Give the disc back, and say so in every way the box can. Returns the message.
+
+    One function for both the fast path and the post-scan one, because the two must be
+    indistinguishable from outside: the same record, the same notification, the same
+    light, the same words.
+    """
+    title = known.get("title") or pretty_label(label) or label
+    when = time.strftime("%d %b %Y", time.localtime(known["ripped_at"]))
+    log.info("Refused a duplicate: %s", title)
+    # Written down *before* the physical signal, because the signal takes about ten
+    # seconds and the browser should already be on its way to the Discs page, pointing
+    # at this film, by the time the tray opens.
+    note_duplicate(known.get("fingerprint") or "", title, label, known.get("ripped_at"))
+    notify.send("duplicate", title=title,
+                body="Already ripped on %s. Ejected without re-reading it." % when)
+    LED.announce("duplicate")
+    # Say it with the drive too, for whoever is not looking at a browser. The light is
+    # blinked *before* the eject, because it works by reading the disc and there is
+    # nothing to read once the tray is open.
+    r = P.duplicate_signal(drive.get("device") or "/dev/sr0",
+                           mode=_settings().get("duplicate_signal", "flash"))
+    log.info("Duplicate signal: %s", r.get("message"))
+    P.eject()
+    msg = "You've already ripped %s." % title
+    abandon(msg)
+    return msg
 
 
 def cancel(job_id):
@@ -848,6 +880,10 @@ def _identify(job, s):
     db.update_job(job["id"], title=title_name, chosen_title=chosen["index"],
                   titles=titles, bytes_total=chosen.get("bytes") or 0,
                   warning=warning, disc_family=disc_family(d),
+                  # The whole disc, not the title. `bytes_total` is the film; this is
+                  # what the drive says is in the tray, and it is half of how the disc
+                  # gets recognised next time without a three-minute scan.
+                  disc_bytes=int(d.get("size_bytes") or 0),
                   disc_label=d.get("label") or job.get("disc_label"))
     job = db.get_job(job["id"])
     job["_title"] = chosen
@@ -887,6 +923,7 @@ def _rip(job, s, cancel_ev):
     if job.get("fingerprint"):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind="movie",
+                       size_bytes=job.get("disc_bytes") or 0,
                        title_index=job.get("chosen_title"))
     db.update_job(job["id"], state="ripping", phase="Reading the disc",
                   local_path=None, bytes_ripped=0, stage_pct=0)
@@ -1119,6 +1156,7 @@ def _finish(job, s, transport, name, local_path):
     if job.get("fingerprint"):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind="movie", ripped_at=now,
+                       size_bytes=job.get("disc_bytes") or 0,
                        title_index=job.get("chosen_title"), job_id=job["id"])
 
     # D6: a verified copy is kept until the space is needed, so a downstream problem
