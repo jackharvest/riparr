@@ -1177,14 +1177,18 @@ def reverify(job_id, mode="quick"):
         except Exception as e:
             r = {"ok": False, "error": str(e)}
         db.stage_end(job_id)
+        # `finished_at` is when the *rip* finished, and it is what History dates the row
+        # by. Re-checking a rip from last week does not make it a rip from just now, so
+        # this only fills it in when it was never set.
+        done_at = job.get("finished_at") or int(time.time())
         if r.get("ok"):
             db.update_job(job_id, state="done", phase=None, error=None,
                           verified_mode=r.get("mode") or mode,
-                          finished_at=int(time.time()), stage_pct=None)
+                          finished_at=done_at, stage_pct=None)
             log.info("Job %d re-verified (%s).", job_id, mode)
         else:
             db.update_job(job_id, state="failed", phase=None, stage_pct=None,
-                          finished_at=int(time.time()),
+                          finished_at=done_at,
                           error="Verification failed again: %s" % r.get("error"))
             log.warning("Job %d failed re-verification: %s", job_id, r.get("error"))
 
