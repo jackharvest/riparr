@@ -108,7 +108,7 @@ from it — the LED only helps if you are in the room.
 |---|---|
 | **Tell me when** | Which events are worth a notification. Four are on by default |
 | **ntfy** | Least work by far: pick an unguessable topic, install the app, subscribe. No account |
-| **Discord** | Paste a webhook URL from Server Settings → Integrations |
+| **Discord** | A webhook URL, plus your own user ID if you want it to ping you — see below |
 | **Email** | SMTP. The most configuration, and works everywhere |
 | **Webhook** | POSTs JSON — event, title, body, hostname — for Home Assistant, n8n, anything |
 
@@ -119,16 +119,68 @@ sends, so you are testing what you just typed.
 usual way a working box quietly stops working, and it always happens while you are not
 looking at the web page.
 
-## Disc history
+### Discord, if you want the box to tell *you*
 
-Every disc Riparr has seen, by fingerprint.
+A Discord webhook posts into a **channel**, which is a thing you find later. What
+makes a phone buzz is being **mentioned**. Riparr does both, and they are separate
+settings.
+
+1. **Somewhere to post.** In Discord, **+** at the bottom of the server list →
+   **Create My Own** → **For me and my friends**. Nobody else can see it, and a channel
+   in it is a private feed your phone treats like any other.
+2. **The webhook.** Hover the channel → the gear (**Edit Channel**) → **Integrations**
+   → **Create Webhook** → **Copy Webhook URL**. *That URL is a password* — anyone
+   holding it can post as Riparr.
+3. **Check it.** Press **Check this webhook**. Riparr asks Discord whether it is real
+   and tells you what it posts as. A URL that lost its tail in a clipboard otherwise
+   fails silently forever.
+4. **Mention me.** Turn on **Developer Mode** (User Settings → Advanced), right-click
+   your own name → **Copy User ID**, paste it in. For a household, use a *role* ID with
+   an `&` in front: `&123…`.
+
+**Ping me for** is deliberately not the same list as **Tell me when**. Everything you
+enable above still posts to the channel; only these light up your phone. *A rip
+finished* is off by default because it is good news, and good news can wait.
+
+## History
+
+Every attempt, newest first — one row per try, not one per film. If a disc took five
+goes, all five are here with what went wrong each time.
+
+| Column | Notes |
+|---|---|
+| **Attempt** | "try 3 of 5" — the other four are rows you can read |
+| **Size** | What actually landed |
+| **Took** | Work done, not wall clock: retrying a job a day later does not make it a day long |
+| **Where the time went** | The five stages, to scale. The bar under *Typical on this box* is the key |
+
+**Where the time went** is the interesting column. About half of a DVD rip happens
+before a single byte is written — MakeMKV decrypts in software and this class of board
+is the constraint — so a box that looks idle for ten minutes is a box working hard, and
+this is where you can see that.
+
+### The four retries
+
+Each one appears only when Riparr can actually do it.
+
+| Button | When it shows | What it costs |
+|---|---|---|
+| **Retry upload** | The rip is still on the card | A re-copy. Minutes, and the disc stays on the shelf |
+| **Retry fast verification** | The file is on your library | Seconds. Compares the size — catches a truncated transfer |
+| **Retry deep verification** | The file is on your library | As long as the upload took, plus as much free space again as the film. Reads it all back and hashes it |
+| **Retry rip** | The rip is gone or never finished | The whole thing. Put the disc back in the tray first |
+
+## Discs
+
+Every disc Riparr has seen, by fingerprint, with its poster.
 
 | Action | Effect |
 |---|---|
 | **Re-rip** | Put the disc back in the tray and rip it again, duplicate flag and all |
 | **Forget** | Drops Riparr's memory of the disc entirely, including any correction you made |
 
-This is what makes Riparr only ask you about a problem disc once, ever.
+This is what makes Riparr only ask you about a problem disc once, ever. A tile with a
+warning triangle is a disc Riparr has seen but never finished a verified rip of.
 
 ## System
 

@@ -37,6 +37,29 @@ A faster drive will not change these numbers. A faster **card** helps a little: 
 the film out runs at about 9 MB/s on the reference board, which is marginally slower than
 the Wi-Fi that sends it onward.
 
+### The five stages, and why two of them cannot show a percentage
+
+| Stage | What is happening | On the reference board, one DVD |
+|---|---|---|
+| **Reading the disc** | Cataloguing what is on it | ~9 min |
+| **Decrypting** | Unscrambling, in software. **Nothing is written yet** | ~7 min |
+| **Saving to the card** | The film comes off the disc onto the card | ~9 min |
+| **Uploading** | Card to your library | ~5 min |
+| **Verifying** | Proving it arrived | seconds, or as long as the upload if set to deep |
+
+The first two have **no percentage available, and never will**. MakeMKV reports none
+during the scan, and the reads go to the drive by a route the operating system cannot
+see — so there is no file growing and no disk counter moving to measure. This was checked
+rather than assumed.
+
+What Riparr does instead is count. It knows how long **this** box took the last few
+times, so the queue shows the stage you are in, how long you have been in it, and
+roughly when to come back. Until two rips have finished it says so plainly rather than
+guessing. If a stage runs long it says *"3 min over the usual"* — never "0 min left".
+
+**History** shows the same five stages for every finished rip, to scale, so you can see
+where your half hour actually went.
+
 ## What the eject actually means
 
 **The disc ejects when the file has landed in your library and been checked.** Eject means
@@ -107,6 +130,18 @@ want to know what.
 **Red LED — bad disc.** Riparr retried and couldn't read it. Clean the disc, try again.
 The web page says how far it got and where it failed. Nothing partial is left in your
 library.
+
+**Whatever went wrong, start at History.** Every attempt is a row with its own reason,
+and each row offers only the retries that would actually help:
+
+- **Retry upload** — the rip is still on the card, so this skips the disc entirely.
+  Minutes, not half an hour. This is the one you want after a network hiccup.
+- **Retry fast verification** / **Retry deep verification** — the file reached your
+  library but the check did not finish. Neither touches the disc.
+- **Retry rip** — the rip is gone. Put the disc back in the tray first.
+
+If only *Retry rip* is offered, the staged copy has been cleaned up and the disc is the
+only remaining source.
 
 **Purple LED — duplicate.** You've ripped this disc before. Ejected immediately rather
 than spending three hours doing it again. Force a re-rip from the web page if you meant it.
