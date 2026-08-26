@@ -1938,7 +1938,6 @@ settingsPages.connect = async (s) => {
    people clicked it again. Now the page appears immediately, this says "checking", and
    the answer arrives when it arrives. */
 function sitesPanel(mk) {
-  const advice = mk.key_advice || {};
   return `
   <div class="section" id="sites-panel"><h2>MakeMKV's website
     <span class="grow"></span>
@@ -1948,7 +1947,6 @@ function sitesPanel(mk) {
     <div id="sites-inner">${sitesBody(mk.sites, mk.sites_checking, mk.key_topic)}</div>
     <div class="btn-row"><button class="btn" id="sites-recheck">Check again</button>
       <span class="test-out" id="sites-out"></span></div>
-    ${advice.note ? `<p class="help site-note">${icon("clock")} ${esc(advice.note)}</p>` : ""}
   </div></div>`;
 }
 
