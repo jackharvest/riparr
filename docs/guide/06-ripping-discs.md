@@ -94,6 +94,34 @@ costs you ten seconds rather than forty minutes.
 The Queue page tags your drive with what it reads — `DVD` `Blu-ray` `4K UHD` — and
 **System → Status** says whether 4K will work on it, asking MakeMKV directly.
 
+## Putting a disc back in that you've already ripped
+
+Riparr recognises it and gives it straight back. It does not spend another half hour
+finding out what you already know.
+
+**If a browser is open**, the page jumps to **Discs**, names the film and when it landed
+in your library, and highlights it. The **Re-rip** button is right there on the tile: if
+you meant it — a bad rip, a changed setting, a better drive — press it. Leave the disc on
+the open tray and Riparr pulls the tray back in for you.
+
+**If nobody is looking at a browser**, the box has to say it out loud. Two ways, on
+**Settings → Ripping → Already-ripped discs**:
+
+| | |
+|---|---|
+| **The drive's own light** *(default)* | Three short flashes, three times |
+| **The tray** | Opens and closes twice — unmissable across a room |
+
+A word on the light, because it is not what it looks like. **Nothing can switch an
+optical drive's front light on.** There is no such command in any standard, and the
+handful of manufacturer-specific ones are guesses that have no business running on your
+drive. What that light reports is the drive *reading* — so Riparr reads the disc in a
+rhythm, and the light follows. It works on every drive and it asks nothing of yours.
+
+Riparr cannot see the result. **Try the light** and **Try the tray** on that settings
+page fire the signal on demand with any disc in the tray, so you can watch it once and
+decide which you prefer.
+
 ## Feeding it a stack
 
 Load discs back to back — rip, eject, next — as long as there is room on the card for the
@@ -144,7 +172,7 @@ If only *Retry rip* is offered, the staged copy has been cleaned up and the disc
 only remaining source.
 
 **Purple LED — duplicate.** You've ripped this disc before. Ejected immediately rather
-than spending three hours doing it again. Force a re-rip from the web page if you meant it.
+than spending three hours doing it again. See below.
 
 **Blinking amber — library unreachable.** NAS asleep, network down, credentials changed.
 The rip is safe and paused. Fix the share and it picks up where it stopped.

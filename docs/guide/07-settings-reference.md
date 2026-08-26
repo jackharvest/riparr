@@ -176,11 +176,26 @@ Every disc Riparr has seen, by fingerprint, with its poster.
 
 | Action | Effect |
 |---|---|
-| **Re-rip** | Put the disc back in the tray and rip it again, duplicate flag and all |
+| **Re-rip** | Rips it again, duplicate flag and all. Leave the disc on the tray — Riparr pulls the tray in itself |
 | **Forget** | Drops Riparr's memory of the disc entirely, including any correction you made |
 
 This is what makes Riparr only ask you about a problem disc once, ever. A tile with a
 warning triangle is a disc Riparr has seen but never finished a verified rip of.
+
+**Put an already-ripped disc back in** and this page is where you land, with the film
+highlighted and the date it went into your library. See
+[Ripping discs](06-ripping-discs.md#putting-a-disc-back-in-that-youve-already-ripped) for
+what the box does when no browser is open — including why the drive's front light can be
+blinked but never switched on.
+
+### Already-ripped discs
+
+On **Settings → Ripping**.
+
+| Setting | Notes |
+|---|---|
+| **Tell me with** | `The drive's own light` (default), `The tray`, `Both`, or `Nothing — just eject` |
+| **Try the light** / **Try the tray** | Fires the signal now, with whatever disc is in the tray. Riparr cannot see the result, so watching it is the only test |
 
 ## System
 
