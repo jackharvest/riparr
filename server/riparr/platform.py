@@ -137,6 +137,12 @@ def _capabilities(device, vendor, model):
     return _caps_cache[key]
 
 
+# Per-insertion cache of the things that cost a subprocess: media kind, volume label
+# and size. Cleared the moment the tray reports empty, which is the only way a disc can
+# be swapped. See the comment inside optical_drives().
+_disc_cache = {}
+
+
 def optical_drives():
     """Every optical drive, what it can read, and what is in it right now.
 
@@ -174,11 +180,27 @@ def optical_drives():
              "form": known["form"] if known else None}
 
         if present:
-            profile, _ = OPT.get_configuration(dev)
-            d["media"] = OPT.PROFILES.get(profile) if profile else None
-            d["media_kind"] = OPT.profile_kind(profile) if profile else None
-            d["label"] = OPT.volume_label(dev) or None
-            d["size_bytes"] = OPT.disc_size_bytes(dev)
+            # Read the disc's identity once per insertion, not once per call. The
+            # label lookup shells out to `blkid`, which opens the drive -- and this
+            # function is called by the 3s disc watcher AND by every /api/status, which
+            # the browser polls once a second while a rip runs. That had `blkid`
+            # reopening the drive underneath MakeMKV continuously: makemkvcon spent
+            # two minutes spinning on futexes having read 6 MB, and it looked like
+            # "reading the disc is slow". A closed tray cannot change discs, so the
+            # answer cannot go stale; `present` going False is the invalidation.
+            cached = _disc_cache.get(dev)
+            if cached is None:
+                profile, _ = OPT.get_configuration(dev)
+                cached = {
+                    "media": OPT.PROFILES.get(profile) if profile else None,
+                    "media_kind": OPT.profile_kind(profile) if profile else None,
+                    "label": OPT.volume_label(dev) or None,
+                    "size_bytes": OPT.disc_size_bytes(dev),
+                }
+                _disc_cache[dev] = cached
+            d.update(cached)
+        else:
+            _disc_cache.pop(dev, None)
         out.append(d)
     return out
 

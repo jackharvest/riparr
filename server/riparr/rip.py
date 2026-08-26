@@ -156,7 +156,7 @@ def enqueue(force=False):
     # interface already renders ("Reading the disc"), so this costs no new UI.
     job_id = db.create_job(
         title=None, disc_label=label, kind="movie", fingerprint="",
-        state="identifying", phase="Reading the disc",
+        state="identifying", phase="Reading the disc \u2014 a few minutes on an encrypted DVD",
         mode=None, bytes_total=int(d.get("size_bytes") or 0))
 
     def _abandon(reason):
@@ -359,6 +359,8 @@ def _seconds(text):
 # cheap signature the disc watcher uses, so swapping discs invalidates it.
 _titles_cache = {"key": None, "titles": None, "at": 0.0}
 TITLES_TTL = 1800
+# Ceiling for one `makemkvcon info` scan. See the note at the subprocess call.
+TITLES_TIMEOUT = 1800
 
 
 def _titles_key(disc):
@@ -397,8 +399,14 @@ def read_titles(device, disc=None):
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     if not os.path.exists(binary):
         return []
+    # 300s was killing real discs mid-scan. An encrypted retail DVD makes MakeMKV do
+    # the decryption work in software, and on four A53 cores that is CPU-bound for
+    # minutes -- measured on the reference board with nothing else touching the drive:
+    # over two minutes of user CPU and still adding titles. The scan is interruptible
+    # from the interface, so a generous ceiling costs nothing and a tight one cost
+    # every rip attempted on this box.
     p = subprocess.run([binary, "-r", "--cache=1", "info", _disc_arg(device)],
-                       capture_output=True, text=True, timeout=300)
+                       capture_output=True, text=True, timeout=TITLES_TIMEOUT)
     titles = {}
     for line in (p.stdout or "").splitlines():
         m = TINFO.match(line)
@@ -596,7 +604,8 @@ def _split_year(name):
 # ── stage 1: work out what this disc is ──
 
 def _identify(job, s):
-    db.update_job(job["id"], state="identifying", phase="Reading the disc",
+    db.update_job(job["id"], state="identifying",
+                  phase="Reading the disc \u2014 a few minutes on an encrypted DVD",
                   started_at=job.get("started_at") or int(time.time()))
     drives = P.optical_drives()
     d = next((x for x in drives if x.get("present")), None)
