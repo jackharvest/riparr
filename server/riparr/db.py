@@ -133,6 +133,7 @@ DEFAULTS = {
     # gigabytes per disc through flash. The cost is that a rip now depends on the
     # network for its whole length instead of only at the end.
     "transfer_mode": "auto",
+    "card_speed": {},              # last measured card throughput; see /api/storage/speedtest
     # "quick" | "deep" | "off". Quick compares the size the share reports against the
     # file that was sent -- nearly free, and it catches the failure that actually
     # happens (a truncated or refused transfer). Deep reads the whole file back and
@@ -545,6 +546,18 @@ STAGE_LABEL = {
     "verify":   "Verifying",
 }
 
+# In direct mode the film never touches the card and the upload is a rename, so both
+# of those labels are false. Not a cosmetic problem: "Saving to the card" is the
+# sentence somebody reads while deciding whether the box is doing what they asked.
+STAGE_LABEL_DIRECT = dict(STAGE_LABEL, **{
+    "save":   "Writing to your library",
+    "upload": "Filing it in your library",
+})
+
+
+def stage_labels(direct=False):
+    return STAGE_LABEL_DIRECT if direct else STAGE_LABEL
+
 
 def _stages(job):
     try:
@@ -610,6 +623,7 @@ def job_stages(job):
     Repeated stages are summed -- a job whose upload was retried three times uploaded
     three times, and the honest answer to "how long did the upload take" is all of it.
     """
+    labels = stage_labels(job.get("mode") == "direct")
     totals = {}
     for st in _stages(job):
         name = st.get("name")
@@ -620,7 +634,7 @@ def job_stages(job):
         if end < start:
             continue
         row = totals.setdefault(name, {"name": name, "seconds": 0, "runs": 0,
-                                       "label": STAGE_LABEL.get(name, name)})
+                                       "label": labels.get(name, name)})
         row["seconds"] += end - start
         row["runs"] += 1
     return [totals[n] for n in STAGE_ORDER if n in totals] + \

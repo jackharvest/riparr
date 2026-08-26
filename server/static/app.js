@@ -899,6 +899,50 @@ function stageClock(j) {
        style="width:${Math.min(100, (elapsed / mine) * 100).toFixed(1)}%"></i></div>`;
 }
 
+/* ── where the film goes ──
+   The choice belongs here, next to the Auto Rip switch, because "insert a disc and
+   walk away" is the sentence it changes the meaning of. Both options are real and the
+   honest pitch for each is different, so neither is described as the obvious one. */
+function ripRoute() {
+  const s = state.settings || {};
+  const lib = (state.status && state.status.library) || {};
+  const direct = s.transfer_mode === "direct";
+  const card = s.card_speed || {};
+  return `
+    <div class="ar-route">
+      Each rip goes:
+      <select id="ar-route" title="Applies to every rip, automatic or started by hand"
+              ${lib.mounted ? "" : "data-nolib=1"}>
+        ${opt("direct", "straight to your library", s.transfer_mode)}
+        ${opt("auto", "onto the card, then sent", s.transfer_mode)}
+      </select>
+      <span class="ar-verify-note">${
+        direct
+          ? `Nothing is staged on the card — no size limit, so a Blu-ray fits whatever
+             card you have, and the card stops wearing out.${
+               card.write_mbs ? ` Yours writes at about ${card.write_mbs} MB/s.` : ""}`
+          : `The rip is safe on the card before anything is sent, so a network that
+             drops out mid-disc costs a re-send rather than a re-rip — and there are
+             two copies to compare, which is what deep checking needs.`}</span>
+      ${!lib.mounted && direct ? `<span class="ar-warn">${icon("triangle-exclamation")}
+        Your library isn't mounted, so rips will stage on the card until it is.</span>` : ""}
+      <button class="btn sm" id="ar-speedtest" title="Measures your card and says which suits it">Test my card</button>
+      <span class="test-out" id="ar-speed-out"></span>
+    </div>`;
+}
+
+function verifyNote() {
+  const s = state.settings || {};
+  if (s.transfer_mode === "direct" && s.verify_mode === "deep") {
+    return "Writing straight to your library leaves only one copy, so there is nothing to hash it against — Riparr will check the size instead.";
+  }
+  return s.verify_mode === "deep"
+    ? "Reads the whole film back off the share — roughly doubles the time and needs as much free space again."
+    : s.verify_mode === "off"
+    ? "Nothing is checked after the upload."
+    : "Compares the size on your library with what was sent.";
+}
+
 const leg = (p) => (p >= 100 ? "\u2713" : p > 0 ? `${Math.round(p)}%` : "");
 
 /* Time, not bytes. concept.md says the user should never see a gigabyte and says the
@@ -1105,6 +1149,7 @@ function autoRipPanel(ar) {
           : ar.ready ? "Turn this on and Riparr starts ripping the moment a disc is inserted."
           : "Not available yet \u2014 see below."}</div>
         ${checkList(checks, fails, warns)}
+        ${ripRoute()}
         <div class="ar-verify">
           After each rip:
           <select id="ar-verify" title="Applies to every rip, automatic or started by hand">
@@ -1112,12 +1157,7 @@ function autoRipPanel(ar) {
             ${opt("deep", "deep check (slow)", state.settings && state.settings.verify_mode)}
             ${opt("off", "no check", state.settings && state.settings.verify_mode)}
           </select>
-          <span class="ar-verify-note">${
-            (state.settings && state.settings.verify_mode) === "deep"
-              ? "Reads the whole film back off the share — roughly doubles the time and needs as much free space again."
-              : (state.settings && state.settings.verify_mode) === "off"
-              ? "Nothing is checked after the upload."
-              : "Compares the size on your library with what was sent."}</span>
+          <span class="ar-verify-note">${verifyNote()}</span>
         </div>
       </div>
     </div>`;
@@ -1188,6 +1228,10 @@ views.history = async () => {
     j._tries = tally.get(k);
   }
 
+  // Per family. A Blu-ray is four times the data of a DVD, so one blended median
+  // describes neither -- each row is compared against its own kind.
+  const byKind = h.typical_by_kind || {};
+  const typicalFor = (j) => byKind[j.disc_family] || h.typical_stages || {};
   const typical = h.typical_stages || {};
   const row = (j) => {
     // data-label carries each cell's column heading, so the narrow layout can put the
@@ -1217,7 +1261,8 @@ views.history = async () => {
         : `<span class="muted">1</span>`}</td>
       <td class="num" data-label="Size">${size ? esc(filesize(size)) : `<span class="muted">—</span>`}</td>
       <td class="num" data-label="Took">${took != null ? esc(duration(took)) : `<span class="muted">—</span>`}</td>
-      <td class="hist-stages" data-label="Where the time went">${stageBar(j.stages, typical)}</td>
+      <td class="hist-stages" data-label="Where the time went">${
+        stageBar(j.stages, typicalFor(j))}</td>
       <td class="num" data-label="When"><span title="${esc(when(j.finished_at))}">${esc(ago(j.finished_at))}</span></td>
       <td class="act">${(j.retries || []).map(r =>
         `<button class="btn tiny" data-hretry="${j.id}" data-haction="${esc(r.action)}"
@@ -1240,7 +1285,7 @@ views.history = async () => {
       </tr></thead>
       <tbody>${jobs.map(row).join("")}</tbody>
     </table></div>
-    ${stageNote(typical)}`;
+    ${stageNote(byKind)}`;
 };
 
 /* A proportional bar of the stages, because the interesting fact about a rip is not
@@ -1289,16 +1334,29 @@ function stageLegend(typical, order, labels) {
   </div>`;
 }
 
-/* The caveat that does not fit in a header chip, and only needs saying once. */
-function stageNote(typical) {
-  const have = Object.keys(typical || {}).length;
-  return `<p class="muted stage-note">${have
-    ? `Times above the colours are medians over this box's own finished rips.`
-    : `Riparr needs two finished rips before it can say what is normal for this box.
-       Until then the queue counts up rather than down.`}
-    MakeMKV cannot report progress during the disc scan at all — the reads go through
-    <code>/dev/sg0</code>, where neither the file accounting nor the block layer can see
-    them — so what this machine did last time is the only honest estimate there is.</p>`;
+/* The caveat that does not fit in a header chip, and the per-family numbers, which are
+   the honest form of "how long does this take" -- a Blu-ray and a DVD are not the same
+   job wearing different labels. */
+function stageNote(byKind) {
+  const kinds = Object.entries(byKind || {}).filter(([, v]) => Object.keys(v).length);
+  const order = ["identify", "decrypt", "save", "upload", "verify"];
+  return `
+    ${kinds.length ? `<div class="card stage-key-full"><h3>Typical on this box</h3>
+      ${kinds.map(([k, v]) => `<div class="kind-row">
+        ${familyTag(k)}
+        <span class="kind-times">${order.filter(n => v[n]).map(n =>
+          `<span><i class="sg-${esc(n)}"></i>${esc(duration(v[n].seconds))}
+            <span class="muted">${v[n].samples}&times;</span></span>`).join("")}</span>
+      </div>`).join("")}</div>` : ""}
+    <p class="muted stage-note">${kinds.length
+      ? `Medians over this box's own finished rips, kept separate per kind of disc —
+         a Blu-ray is several times the data of a DVD, so one blended number would be
+         wrong about both.`
+      : `Riparr needs two finished rips <b>of the same kind of disc</b> before it can say
+         what is normal. Until then the queue counts up rather than down.`}
+      MakeMKV cannot report progress during the disc scan at all — the reads go through
+      <code>/dev/sg0</code>, where neither the file accounting nor the block layer can see
+      them — so what this machine did last time is the only honest estimate there is.</p>`;
 }
 
 function when(ts) {
@@ -2617,6 +2675,47 @@ function wireContent(section, sub) {
   }
   const dupeX = $("#dupe-dismiss");
   if (dupeX) dupeX.onclick = () => { location.hash = "#/discs"; };
+
+  const arRoute = $("#ar-route");
+  if (arRoute) arRoute.onchange = async () => {
+    try {
+      await api.put("/api/settings", { transfer_mode: arRoute.value });
+      if (state.settings) state.settings.transfer_mode = arRoute.value;
+      toast(arRoute.value === "direct" ? "Rips go straight to your library"
+                                       : "Rips are cached on the card first", "ok");
+      route();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+
+  // Measured, not asserted. The recommendation is only worth showing because it comes
+  // from this card rather than from an opinion about cards in general.
+  const speed = $("#ar-speedtest");
+  if (speed) speed.onclick = async () => {
+    const out = $("#ar-speed-out");
+    speed.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Writing 64 MB…";
+    try {
+      const r = await api.post("/api/storage/speedtest", {});
+      const c = r.card || {};
+      out.className = "test-out " + (r.recommend === "direct" ? "warn" : "ok");
+      out.textContent = `${c.write_mbs ?? "?"} MB/s write, ${c.read_mbs ?? "?"} read. ${r.why || ""}`;
+      if (state.settings) state.settings.card_speed = c;
+      if (r.recommend && r.recommend !== (state.settings || {}).transfer_mode) {
+        if (confirm(`${r.why}\n\nSwitch to ${
+            r.recommend === "direct" ? "writing straight to your library" : "caching on the card"}?`)) {
+          await api.put("/api/settings", { transfer_mode: r.recommend });
+          if (state.settings) state.settings.transfer_mode = r.recommend;
+          route();
+          return;
+        }
+      }
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    speed.disabled = false;
+  };
 
   const arVerify = $("#ar-verify");
   if (arVerify) arVerify.onchange = async () => {

@@ -390,6 +390,52 @@ def drive_close(user=Depends(require_user)):
     return {"ok": True, "message": message}
 
 
+class SpeedTest(BaseModel):
+    pass
+
+
+@app.post("/api/storage/speedtest")
+def storage_speedtest(body: SpeedTest = SpeedTest(), user=Depends(require_user)):
+    """Measure the card, and recommend a transfer mode from what comes back.
+
+    The recommendation is the point. "Direct is probably better" is an opinion; "your
+    card writes at 9.4 MB/s and your library takes 18, so staging on the card makes
+    every rip slower" is a reason. Somebody with a fast card and a weak link gets the
+    opposite advice from the same code.
+    """
+    if db.active_job():
+        raise HTTPException(status_code=400,
+                            detail="Riparr is working on a disc — this would fight it "
+                                   "for the card. Try again when it has finished.")
+    card = P.card_speed()
+    lib = P.library_status()
+    result = {"card": card, "library": lib}
+    db.set("card_speed", card)
+
+    w = card.get("write_mbs")
+    if not w:
+        result["recommend"] = None
+        result["why"] = "Riparr couldn't measure the card."
+        return result
+    if not lib.get("mounted"):
+        result["recommend"] = "auto"
+        result["why"] = ("Your card writes at about %s MB/s. Writing straight to your "
+                         "library needs the share mounted, which it isn't yet." % w)
+        return result
+    # No network measurement here: it would mean writing a test file into somebody's
+    # library, and the honest comparison is against what this box has actually done.
+    result["recommend"] = "direct" if w < 15 else "auto"
+    result["why"] = (
+        ("Your card writes at about %s MB/s, which is slower than this box's network. "
+         "Writing straight to your library will be faster, and it removes the card as "
+         "a size limit." % w)
+        if w < 15 else
+        ("Your card writes at about %s MB/s, which is quick enough that staging on it "
+         "costs little — and caching means a rip survives the network dropping out "
+         "mid-disc." % w))
+    return result
+
+
 @app.post("/api/duplicate/ack")
 def duplicate_ack(user=Depends(require_user)):
     """The interface has shown the user their already-ripped disc. Stop pointing."""
@@ -864,13 +910,31 @@ def queue(user=Depends(require_user)):
     # slow half of a rip cannot report progress at all -- see db.typical_job_seconds --
     # so a fuzzy "usually done by" beats an empty space, provided it is labelled as the
     # guess it is and only offered once there is something to average.
-    typical, samples = db.typical_job_seconds()
+    # Estimates are per disc family. A Blu-ray and a DVD are not the same job wearing
+    # different labels -- Megamind saved for 10m40s and Arthur Christmas is four times
+    # the data -- so a median that mixes them describes neither. `kind` is taken from
+    # whatever is in flight, falling back to the tray, so the numbers on screen are
+    # about the disc on screen.
+    active = next((j for j in jobs if j.get("disc_family")), None)
+    kind = active.get("disc_family") if active else _tray_family()
+    typical, samples = db.typical_job_seconds(kind=kind)
+    stages = db.typical_stage_seconds(kind=kind)
     # Per-stage medians as well as the total. The total answers "when will this be
     # done"; the stages answer "should the fact that nothing has moved for six minutes
     # worry me", which is the question that actually gets asked.
     return {"jobs": jobs, "typical_seconds": typical, "typical_samples": samples,
-            "typical_stages": db.typical_stage_seconds(),
-            "stage_labels": db.STAGE_LABEL, "stage_order": db.STAGE_ORDER}
+            "typical_stages": stages, "typical_kind": kind,
+            "stage_labels": db.stage_labels(db.get("transfer_mode") == "direct"),
+            "stage_order": db.STAGE_ORDER}
+
+
+def _tray_family():
+    """What kind of disc is loaded, so an idle queue still estimates the right thing."""
+    try:
+        d = next((x for x in P.optical_drives() if x.get("present")), None)
+        return RIP.disc_family(d) if d else None
+    except Exception:
+        return None
 
 
 class RipRequest(BaseModel):
@@ -1021,7 +1085,12 @@ def history(user=Depends(require_user)):
         j["local_exists"] = bool(local and os.path.exists(local))
         j["retries"] = _retries_for(j)
         jobs.append(j)
-    return {"jobs": jobs, "typical_stages": db.typical_stage_seconds(),
+    # History spans every kind of disc, so its key is per family rather than one
+    # blended median that is wrong about all of them.
+    return {"jobs": jobs,
+            "typical_by_kind": {k: db.typical_stage_seconds(kind=k)
+                                for k in ("dvd", "bluray", "uhd")},
+            "typical_stages": db.typical_stage_seconds(),
             "stage_order": db.STAGE_ORDER, "stage_labels": db.STAGE_LABEL}
 
 

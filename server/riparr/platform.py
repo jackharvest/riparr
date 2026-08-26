@@ -609,6 +609,67 @@ def library_status():
     return {"mount": LIBRARY_MOUNT, "mounted": mounted, "free_bytes": free}
 
 
+# ─────────────────────── how fast is this card, really? ───────────────────────
+#
+# SD cards lie on the packaging and vary by an order of magnitude, and the difference
+# decides how Riparr should work: on the reference board the card manages 9.4 MB/s
+# while the network manages 18, so staging a rip on the card makes it *slower*. That is
+# not a thing to assume in either direction -- somebody with a good A2 card and a
+# flaky 2.4 GHz link is in the opposite situation. So measure it, once, and let the
+# measurement pick the default.
+
+SPEED_SAMPLE = 64 * 1024 * 1024          # big enough to outrun the write cache
+
+
+def card_speed(sample=SPEED_SAMPLE):
+    """Write then read a scratch file on the staging partition. MB/s, or None.
+
+    `conv=fsync` in spirit: the file is flushed and fsync'd before the clock stops,
+    because a card that accepts 64 MB into RAM instantly and then spends ten seconds
+    writing it is exactly the card this is trying to catch.
+    """
+    if MOCK:
+        return {"write_mbs": 9.4, "read_mbs": 11.0, "sample_bytes": sample,
+                "measured_at": int(time.time()), "note": "simulated"}
+    path = os.path.join(STAGING, ".riparr-speedtest")
+    chunk = b"\0" * (1024 * 1024)
+    try:
+        os.makedirs(STAGING, exist_ok=True)
+        started = time.time()
+        with open(path, "wb") as f:
+            for _ in range(sample // len(chunk)):
+                f.write(chunk)
+            f.flush()
+            os.fsync(f.fileno())
+        write_s = time.time() - started
+
+        # Drop what we can of the cache, so the read measures the card and not RAM.
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            os.close(fd)
+        except (OSError, AttributeError):
+            pass
+
+        started = time.time()
+        with open(path, "rb") as f:
+            while f.read(len(chunk)):
+                pass
+        read_s = time.time() - started
+    except OSError as e:
+        return {"write_mbs": None, "read_mbs": None, "error": str(e)}
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    mb = sample / 1e6
+    return {"write_mbs": round(mb / write_s, 1) if write_s > 0 else None,
+            "read_mbs": round(mb / read_s, 1) if read_s > 0 else None,
+            "sample_bytes": sample, "measured_at": int(time.time())}
+
+
 # ─────────────────── saying something with the drive itself ───────────────────
 #
 # The status LED on the board is the documented way the box speaks without a browser,
