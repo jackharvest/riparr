@@ -1930,21 +1930,45 @@ settingsPages.connect = async (s) => {
    on the *forum*, which is a different host and is usually fine. "The site is down but
    the forum is up" is the difference between "you are stuck" and "go here, copy the
    key, paste it above" -- so the two are tracked separately and each says what its
-   being down actually costs the person reading. */
+   being down actually costs the person reading.
+
+   The panel draws before the answer exists. It used to draw *after*, which meant
+   opening General waited on two of somebody else's web servers -- and a host that is
+   down burns the whole timeout, so the sidebar link looked broken for ten seconds and
+   people clicked it again. Now the page appears immediately, this says "checking", and
+   the answer arrives when it arrives. */
 function sitesPanel(mk) {
-  const sites = mk.sites || [];
-  if (!sites.length) return "";
-  const down = sites.filter(x => !x.up);
   const advice = mk.key_advice || {};
   return `
-  <div class="section"><h2>MakeMKV's website
+  <div class="section" id="sites-panel"><h2>MakeMKV's website
     <span class="grow"></span>
-    <span class="badge ${down.length ? "warn" : "ok"}">${
-      down.length === 0 ? "both reachable"
-      : down.length === sites.length ? "both unreachable"
-      : `${down.length} unreachable`}</span></h2><div>
+    ${sitesBadge(mk.sites, mk.sites_checking)}</h2><div>
     <p class="muted">Riparr checks these because they are how MakeMKV gets installed and
       how its free key gets renewed. Neither affects a copy that is already working.</p>
+    <div id="sites-inner">${sitesBody(mk.sites, mk.sites_checking, mk.key_topic)}</div>
+    <div class="btn-row"><button class="btn" id="sites-recheck">Check again</button>
+      <span class="test-out" id="sites-out"></span></div>
+    ${advice.note ? `<p class="help site-note">${icon("clock")} ${esc(advice.note)}</p>` : ""}
+  </div></div>`;
+}
+
+function sitesBadge(sites, checking) {
+  if (!sites || !sites.length)
+    return `<span class="badge" id="sites-badge">${checking ? "checking…" : "not checked"}</span>`;
+  const down = sites.filter(x => !x.up).length;
+  return `<span class="badge ${down ? "warn" : "ok"}" id="sites-badge">${
+    down === 0 ? "both reachable"
+    : down === sites.length ? "both unreachable"
+    : `${down} unreachable`}</span>`;
+}
+
+function sitesBody(sites, checking, keyTopic) {
+  if (!sites || !sites.length)
+    return `<div class="sites-wait">${checking
+      ? `<span class="spin"></span>Asking makemkv.com and its forum whether they are
+         answering. A host that is down takes a few seconds to admit it.`
+      : `Nothing checked yet.`}</div>`;
+  return `
     <div class="sites">
       ${sites.map(x => `
         <div class="site ${x.up ? "up" : "down"}">
@@ -1966,14 +1990,34 @@ function sitesPanel(mk) {
                 key lives. If it is down and your key has lapsed, Blu-ray decryption
                 will stop until it comes back. DVDs are unaffected.</span></div>` : ""}
           </div>
-          ${x.key === "forum" && x.up ? `<a class="btn" href="${esc(mk.key_topic)}"
+          ${x.key === "forum" && x.up ? `<a class="btn" href="${esc(keyTopic)}"
              target="_blank" rel="noopener">Get the current key</a>` : ""}
         </div>`).join("")}
-    </div>
-    <div class="btn-row"><button class="btn" id="sites-recheck">Check again</button>
-      <span class="test-out" id="sites-out"></span></div>
-    ${advice.note ? `<p class="help site-note">${icon("clock")} ${esc(advice.note)}</p>` : ""}
-  </div></div>`;
+    </div>`;
+}
+
+/* Replace the panel's contents in place rather than re-rendering the page. General
+   holds a key field and a password field; blowing the page away underneath somebody
+   who is halfway through typing one is not an acceptable price for a status dot. */
+function paintSites(r, keyTopic) {
+  const inner = $("#sites-inner"), badge = $("#sites-badge");
+  if (!inner) return false;
+  inner.innerHTML = sitesBody(r.sites, r.checking, keyTopic);
+  if (badge) badge.outerHTML = sitesBadge(r.sites, r.checking);
+  return true;
+}
+
+/* Poll until the probe finishes. Bounded: after a minute something is wrong with the
+   probe itself, and a page that polls forever is a page that keeps a dead box busy. */
+async function followSites(keyTopic) {
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    if (!$("#sites-inner")) return;            // navigated away
+    let r;
+    try { r = await api.get("/api/makemkv/sites"); } catch (e) { return; }
+    if (!paintSites(r, keyTopic)) return;
+    if (!r.checking) return;
+  }
 }
 
 /* Save first, then send. A test button that tests the values already stored rather
@@ -2017,6 +2061,7 @@ settingsPages.network = async () => {
 settingsPages.general = async (s) => {
   const mk = await api.get("/api/makemkv");
   const st = mk.status;
+  state.mkKeyTopic = mk.key_topic;
   const expiringSoon = st.days_left != null && st.days_left < 8;
   const themes = ["servarr", "organizr", "dark", "nord", "dracula", "plex",
                   "space-gray", "aquamarine", "hotline", "hotpink", "maroon", "overseerr"];
@@ -3055,6 +3100,10 @@ function wireContent(section, sub) {
   // the page is on screen rather than blocking it.
   if ($("#mk-key-offer")) offerBetaKey("#mk-key-offer", "#mk-key-input");
 
+  /* The panel was drawn from whatever was already known, which on a first visit is
+     nothing. Follow the probe that the page load kicked off. */
+  if ($("#sites-inner")) followSites(state.mkKeyTopic);
+
   const recheck = $("#sites-recheck");
   if (recheck) recheck.onclick = async () => {
     const out = $("#sites-out");
@@ -3062,13 +3111,15 @@ function wireContent(section, sub) {
     out.className = "test-out";
     out.textContent = "Checking…";
     try {
-      await api.post("/api/makemkv/sites", {});
-      route();                       // re-render with the fresh answer
+      // The one call that is allowed to wait: the user asked for it by pressing this.
+      const r = await api.post("/api/makemkv/sites", {});
+      paintSites(r, state.mkKeyTopic);
+      out.textContent = "";
     } catch (e) {
       out.className = "test-out bad";
       out.textContent = e.message;
-      recheck.disabled = false;
     }
+    recheck.disabled = false;
   };
 
   const mkAccept = $("#mk-accept");

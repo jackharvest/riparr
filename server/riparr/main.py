@@ -1165,10 +1165,26 @@ def makemkv(user=Depends(require_user)):
     return MK.info()
 
 
+@app.get("/api/makemkv/sites")
+def makemkv_sites_state(user=Depends(require_user)):
+    """Whatever is known right now, without waiting for anything.
+
+    The General settings page draws before this has an answer and polls here until it
+    does, so this must never block -- that is the whole point of the split.
+    """
+    sites, checking = MK.site_status()
+    return {"sites": sites, "checking": checking}
+
+
 @app.post("/api/makemkv/sites")
 def makemkv_sites(user=Depends(require_user)):
-    """Re-probe MakeMKV's site and forum now, rather than serving the cached answer."""
-    return {"sites": MK.site_status(force=True)}
+    """Re-probe now and wait for the result.
+
+    The only path that is allowed to block on somebody else's web server, because it
+    is the one the user asked for by pressing "Check again".
+    """
+    sites, checking = MK.site_status(force=True, wait=True)
+    return {"sites": sites, "checking": checking}
 
 
 @app.post("/api/makemkv/install")

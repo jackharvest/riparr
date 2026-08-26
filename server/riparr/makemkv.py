@@ -64,11 +64,13 @@ SITES = [
             "often up when the site is not."},
 ]
 
-_SITE_CACHE = {"at": 0, "results": None}
+_SITE_CACHE = {"at": 0, "results": None, "checking": False}
+_SITE_LOCK = threading.Lock()
 SITE_CACHE_SECONDS = 300
+PROBE_TIMEOUT = 5
 
 
-def _probe(url, timeout=6):
+def _probe(url, timeout=PROBE_TIMEOUT):
     """Is this host answering? Any HTTP reply counts, including an error page.
 
     A 500 or a 403 means the server is there and talking, which is what a user needs to
@@ -93,24 +95,69 @@ def _probe(url, timeout=6):
                 "note": str(e)[:120]}
 
 
-def site_status(force=False):
-    """Both MakeMKV hosts, cached, so opening Settings does not hammer them.
+def _probe_all():
+    """Every site at once. Serially this was two five-second waits, one after the other."""
+    out = [dict(site) for site in SITES]
+    threads = []
+    for r in out:
+        t = threading.Thread(target=lambda d=r: d.update(_probe(d["url"])),
+                             name="riparr-probe", daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join(timeout=PROBE_TIMEOUT + 3)
+    return out
 
-    Never raises and never blocks anything important -- this is decoration on a page,
-    and a box whose settings will not load because somebody else's web server is slow
-    is a worse box.
+
+def _refresh_sites():
+    try:
+        results = _probe_all()
+    except Exception:
+        results = _SITE_CACHE["results"]
+    with _SITE_LOCK:
+        if results is not None:
+            _SITE_CACHE["results"] = results
+            _SITE_CACHE["at"] = time.time()
+        _SITE_CACHE["checking"] = False
+
+
+def site_status(force=False, wait=False):
+    """Both MakeMKV hosts. Returns immediately unless explicitly told to wait.
+
+    This used to probe inline, and `/api/makemkv` is what the General settings page
+    fetches before it draws a single pixel. So opening General meant waiting on two of
+    somebody else's web servers -- one of which has been down for weeks and therefore
+    burns the whole timeout every time. The page took as long as the slowest host to
+    appear, the sidebar link looked broken for ten seconds, and people clicked it
+    again.
+
+    The rule now: a settings page never waits on a network probe. The last known answer
+    comes back instantly, a refresh runs on a thread behind it, and the interface says
+    "checking" until it lands. Only the explicit "Check again" button passes wait=True,
+    because there the waiting *is* the interaction.
+
+    Returns (results, checking). `results` is a list, empty when nothing has ever been
+    probed -- never None, so no caller has to defend against it.
     """
     now = time.time()
-    if not force and _SITE_CACHE["results"] and now - _SITE_CACHE["at"] < SITE_CACHE_SECONDS:
-        return _SITE_CACHE["results"]
-    out = []
-    for site in SITES:
-        r = dict(site)
-        r.update(_probe(site["url"]))
-        out.append(r)
-    _SITE_CACHE["at"] = now
-    _SITE_CACHE["results"] = out
-    return out
+    with _SITE_LOCK:
+        fresh = (_SITE_CACHE["results"] is not None
+                 and now - _SITE_CACHE["at"] < SITE_CACHE_SECONDS)
+        if fresh and not force:
+            return _SITE_CACHE["results"], False
+        already = _SITE_CACHE["checking"]
+        _SITE_CACHE["checking"] = True
+
+    if wait:
+        _refresh_sites()
+        with _SITE_LOCK:
+            return _SITE_CACHE["results"] or [], False
+
+    if not already:
+        threading.Thread(target=_refresh_sites, name="riparr-sites",
+                         daemon=True).start()
+    with _SITE_LOCK:
+        return _SITE_CACHE["results"] or [], True
 
 
 # ─────────────────────── what a beta key's expiry means ───────────────────────
@@ -195,6 +242,7 @@ _lock = threading.Lock()
 def info():
     st = P.makemkv_status()
     local = find_local_source()
+    sites, checking = site_status()
     return {
         "status": st,
         "local_source": local,
@@ -205,7 +253,8 @@ def info():
         "key_topic": FORUM_KEY_TOPIC,
         "install": dict(_state),
         "installable": can_install()[0],
-        "sites": site_status(),
+        "sites": sites,
+        "sites_checking": checking,
         "key_advice": key_advice(),
     }
 

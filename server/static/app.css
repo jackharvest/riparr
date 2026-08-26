@@ -765,6 +765,13 @@ td.stat .ic { font-size: var(--ic-nav); }
  * down actually costs, rather than showing a red dot and leaving them to guess.
  */
 .sites { display: grid; gap: 10px; margin: 4px 0 14px; }
+/* The panel before the probe has answered. Same vertical space the two rows will take,
+   so the button below it does not jump when the answer lands. */
+.sites-wait {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 76px; margin: 4px 0 14px; padding: 0 2px;
+  font-size: 13px; line-height: 19px; color: var(--fg-muted);
+}
 .site {
   display: flex; align-items: flex-start; gap: 12px;
   padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius);
