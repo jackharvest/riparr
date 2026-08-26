@@ -1603,6 +1603,16 @@ def reverify(job_id, mode="quick"):
             db.update_job(job_id, state="done", phase=None, error=None,
                           verified_mode=r.get("mode") or mode,
                           finished_at=done_at, stage_pct=None)
+            # Reaching `done` has to mean the same thing however a job got here.
+            # `_finish` marks the disc as ripped and this did not, so a job rescued by
+            # Retry verification left its disc recorded but never *ripped* -- and
+            # putting that disc back in would have started the whole rip again instead
+            # of being refused. Found on the Blu-ray of Arthur Christmas, which spent
+            # 26 minutes ripping and was still offering to do it a second time.
+            if job.get("fingerprint"):
+                db.record_disc(job["fingerprint"], ripped_at=done_at,
+                               job_id=job_id, title=job.get("title"),
+                               label=job.get("disc_label"))
             log.info("Job %d re-verified (%s).", job_id, mode)
         else:
             db.update_job(job_id, state="failed", phase=None, stage_pct=None,
