@@ -648,6 +648,69 @@ td.stat .ic { font-size: var(--ic-nav); }
 
 @media (prefers-reduced-motion: reduce) { .step.now .pip { animation: none; } }
 
+/* ── two steps that are really one ──
+ * Writing straight to the library means the bytes coming off the disc land on the
+ * share as they are read: rip and upload are the same operation. Two lit pills side by
+ * side would read as a bug, so they are joined into one shape and labelled "at once".
+ * The pulses share a timing origin, so they breathe together rather than beating
+ * against each other.
+ */
+.job-steps.paired .step.pair-a {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  border-right-color: transparent; padding-right: 9px;
+}
+.job-steps.paired .step.pair-b {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  margin-left: -8px; padding-left: 9px;
+}
+/* The seam: a hairline where the two pills meet, only while both are live. */
+.job-steps.paired .step.pair-b.now { border-left-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+.job-steps.paired .step.pair-a.now { border-right-color: transparent; }
+.job-steps.paired .step.pair-a .pip,
+.job-steps.paired .step.pair-b .pip { animation-delay: 0s; }
+.pair-note {
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); opacity: .75; margin-left: -2px;
+}
+
+/* ── how every rip behaves ──
+ * Two matched cards: the control on the top line, the consequence underneath. The same
+ * shape twice is what makes a panel read as designed rather than accumulated -- these
+ * settings had been bolted onto the end of the Auto Rip blurb one at a time until it
+ * was a paragraph with form controls buried in it.
+ */
+.rip-opts {
+  display: grid; gap: 12px; margin-top: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.ropt {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: rgba(255,255,255,.02); padding: 13px 15px;
+}
+.ropt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ropt-k {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12.5px; font-weight: 600; color: var(--fg-strong);
+}
+.ropt-k .ic { width: 14px; height: 14px; color: var(--fg-muted); }
+.ropt-head select { width: auto; min-width: 190px; margin-left: auto; }
+.ropt-why {
+  margin: 9px 0 0; font-size: 12px; line-height: 18px; color: var(--fg-muted);
+}
+.ropt-why b { color: var(--fg); font-weight: 600; }
+.ropt-warn {
+  display: flex; gap: 7px; align-items: flex-start;
+  margin: 9px 0 0; padding: 7px 9px; border-radius: var(--radius);
+  background: rgba(255,159,26,.09); color: var(--fg);
+  font-size: 12px; line-height: 18px;
+}
+.ropt-warn .ic { color: var(--warn); flex: 0 0 auto; margin-top: 2px; width: 13px; height: 13px; }
+.ropt-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 11px; }
+.ropt-foot .test-out { flex: 1 1 100%; }
+@media (max-width: 620px) {
+  .ropt-head select { margin-left: 0; width: 100%; }
+}
+
 /* ── the rips gallery ───────────────────────────────────
  * A shelf of films, not a spreadsheet. The poster is the index; the words are the
  * detail you look for second. Tiles are a fixed 2:3 so a wall of them lines up
@@ -920,22 +983,8 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .clock-bar i { display: block; height: 100%; opacity: .8;
                transition: width .6s linear; }
 
-/* Where the film goes, and what happens after it gets there — both belong next to the
-   Auto Rip switch, because "insert a disc and walk away" is the sentence they change
-   the meaning of. */
-.ar-route {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-top: 12px; font-size: 12px; color: var(--fg-muted);
-}
-.ar-route select { width: auto; min-width: 200px; max-width: 100%; flex: 0 0 auto; }
-.ar-route .ar-verify-note { flex: 1 1 100%; margin: 2px 0 0; }
-.ar-warn {
-  flex: 1 1 100%; display: flex; gap: 6px; align-items: flex-start;
-  color: var(--warn); font-size: 12px; margin-top: 2px;
-}
-.ar-warn .ic { flex: 0 0 auto; margin-top: 2px; }
-.ar-route .test-out { flex: 1 1 100%; margin-top: 2px; }
-
+/* The verify choice used to live here; both it and the route now sit in .rip-opts
+   below the switch. This rule is kept for the row that still uses it. */
 .ar-verify {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 10px; font-size: 12px; color: var(--fg-muted);

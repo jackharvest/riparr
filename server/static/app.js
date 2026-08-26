@@ -772,9 +772,16 @@ function jobRow(j) {
   // and the user can see what is still to come. The old version was three spans of
   // 11.5px muted text distinguished only by colour -- the active one was technically
   // marked and practically invisible.
+  // In direct mode the bytes coming off the disc are going onto the share *as they
+  // are read* -- there is no separate upload, only a rename at the end. So Rip and
+  // Upload are genuinely one operation and the stepper says so: both light together,
+  // joined, and both carry the same number, because it is the same number. This is
+  // what D11 promised and the mount delivered by another route.
+  const together = j.mode === "direct";
   const steps = [
     { key: "ripping", label: "Rip", pct: ripPct },
-    { key: "transferring", label: "Upload", pct: sentPct },
+    { key: "transferring", label: together ? "To library" : "Upload",
+      pct: together ? ripPct : sentPct },
     { key: "verifying", label: "Verify", pct: verPct },
   ];
   const order = ["queued", "identifying", "ripping", "transferring", "verifying"];
@@ -786,18 +793,23 @@ function jobRow(j) {
   const stageOf = { queued: "ripping", identifying: "ripping", ripping: "ripping",
                     transferring: "transferring", verifying: "verifying" };
   const nowKey = stageOf[j.state];
-  const stepHtml = steps.map((st) => {
+  const stepHtml = steps.map((st, i) => {
     const mine = order.indexOf(st.key);
-    const isNow = nowKey === st.key;
+    // Direct mode: while the disc is being read the film is already landing on the
+    // share, so "ripping" lights the transfer step too.
+    const isNow = nowKey === st.key
+      || (together && st.key === "transferring" && nowKey === "ripping")
+      || (together && st.key === "ripping" && nowKey === "transferring");
     const done = st.pct >= 100 || (at > mine && at !== -1);
-    const cls = isNow ? "now" : done ? "done" : "todo";
+    const cls = [isNow ? "now" : done ? "done" : "todo"];
+    if (together && i < 2) cls.push(i === 0 ? "pair-a" : "pair-b");
     const mark = done ? icon("circle-check") : isNow ? `<span class="pip"></span>`
                                                      : `<span class="pip hollow"></span>`;
     // The live pill shows the stage's own number, which during identification is the
     // only number there is.
     const live = isNow && stage !== null ? stage : st.pct;
     const val = isNow && live > 0 ? `${Math.round(live)}%` : "";
-    return `<div class="step ${cls}">${mark}<span class="step-l">${st.label}</span>
+    return `<div class="step ${cls.join(" ")}">${mark}<span class="step-l">${st.label}</span>
       ${val ? `<span class="step-v">${val}</span>` : ""}</div>`;
   }).join("");
 
@@ -834,7 +846,8 @@ function jobRow(j) {
             : ""}
         </div>
       </div>
-      <div class="job-steps">${stepHtml}</div>
+      <div class="job-steps${together ? " paired" : ""}">${stepHtml}${
+        together ? `<span class="pair-note">at once</span>` : ""}</div>
       ${stageClock(j)}
     </div>`;
 }
@@ -899,43 +912,8 @@ function stageClock(j) {
        style="width:${Math.min(100, (elapsed / mine) * 100).toFixed(1)}%"></i></div>`;
 }
 
-/* ── where the film goes ──
-   The choice belongs here, next to the Auto Rip switch, because "insert a disc and
-   walk away" is the sentence it changes the meaning of. Both options are real and the
-   honest pitch for each is different, so neither is described as the obvious one. */
-function ripRoute() {
-  const s = state.settings || {};
-  const lib = (state.status && state.status.library) || {};
-  const direct = s.transfer_mode === "direct";
-  const card = s.card_speed || {};
-  return `
-    <div class="ar-route">
-      Each rip goes:
-      <select id="ar-route" title="Applies to every rip, automatic or started by hand"
-              ${lib.mounted ? "" : "data-nolib=1"}>
-        ${opt("direct", "straight to your library", s.transfer_mode)}
-        ${opt("auto", "onto the card, then sent", s.transfer_mode)}
-      </select>
-      <span class="ar-verify-note">${
-        direct
-          ? `Nothing is staged on the card — no size limit, so a Blu-ray fits whatever
-             card you have, and the card stops wearing out.${
-               card.write_mbs ? ` Yours writes at about ${card.write_mbs} MB/s.` : ""}`
-          : `The rip is safe on the card before anything is sent, so a network that
-             drops out mid-disc costs a re-send rather than a re-rip — and there are
-             two copies to compare, which is what deep checking needs.`}</span>
-      ${!lib.mounted && direct ? `<span class="ar-warn">${icon("triangle-exclamation")}
-        Your library isn't mounted, so rips will stage on the card until it is.</span>` : ""}
-      <button class="btn sm" id="ar-speedtest" title="Measures your card and says which suits it">Test my card</button>
-      <span class="test-out" id="ar-speed-out"></span>
-    </div>`;
-}
-
 function verifyNote() {
   const s = state.settings || {};
-  if (s.transfer_mode === "direct" && s.verify_mode === "deep") {
-    return "Writing straight to your library leaves only one copy, so there is nothing to hash it against — Riparr will check the size instead.";
-  }
   return s.verify_mode === "deep"
     ? "Reads the whole film back off the share — roughly doubles the time and needs as much free space again."
     : s.verify_mode === "off"
@@ -1149,18 +1127,63 @@ function autoRipPanel(ar) {
           : ar.ready ? "Turn this on and Riparr starts ripping the moment a disc is inserted."
           : "Not available yet \u2014 see below."}</div>
         ${checkList(checks, fails, warns)}
-        ${ripRoute()}
-        <div class="ar-verify">
-          After each rip:
-          <select id="ar-verify" title="Applies to every rip, automatic or started by hand">
-            ${opt("quick", "quick check", state.settings && state.settings.verify_mode)}
-            ${opt("deep", "deep check (slow)", state.settings && state.settings.verify_mode)}
-            ${opt("off", "no check", state.settings && state.settings.verify_mode)}
-          </select>
-          <span class="ar-verify-note">${verifyNote()}</span>
-        </div>
       </div>
-    </div>`;
+    </div>
+    ${ripOptions()}`;
+}
+
+/* ── how every rip behaves ──
+   These two settings kept being bolted onto the end of the Auto Rip blurb until it was
+   a paragraph with form controls buried in it. They are not part of the switch: they
+   govern a rip started by hand too. So they get their own strip, two matched cards,
+   each with its control on the top line and the consequence underneath -- the same
+   shape twice, which is what makes a panel read as designed rather than accumulated. */
+function ripOptions() {
+  const s = state.settings || {};
+  const lib = (state.status && state.status.library) || {};
+  const direct = s.transfer_mode === "direct";
+  const card = s.card_speed || {};
+  const deepOnDirect = direct && s.verify_mode === "deep";
+  return `
+  <div class="rip-opts">
+    <div class="ropt">
+      <div class="ropt-head">
+        <span class="ropt-k">${icon("hard-drive")} Each rip goes</span>
+        <select id="ar-route" title="Applies to every rip, automatic or started by hand">
+          ${opt("direct", "straight to your library", s.transfer_mode)}
+          ${opt("auto", "onto the card, then sent", s.transfer_mode)}
+        </select>
+      </div>
+      <p class="ropt-why">${
+        direct
+          ? `No size limit, so a Blu-ray fits whatever card you have, and the card stops
+             wearing out.${card.write_mbs
+               ? ` Yours writes at about <b>${esc(String(card.write_mbs))} MB/s</b>.` : ""}`
+          : `The rip is safe on the card before anything is sent, so a network that drops
+             mid-disc costs a re-send rather than a re-rip.`}</p>
+      ${!lib.mounted && direct ? `<p class="ropt-warn">${icon("triangle-exclamation")}
+        <span>Your library isn't mounted, so rips will stage on the card until it is.</span></p>` : ""}
+      <div class="ropt-foot">
+        <button class="btn sm" id="ar-speedtest">Test my card</button>
+        <span class="test-out" id="ar-speed-out"></span>
+      </div>
+    </div>
+
+    <div class="ropt">
+      <div class="ropt-head">
+        <span class="ropt-k">${icon("circle-check")} After each rip</span>
+        <select id="ar-verify" title="Applies to every rip, automatic or started by hand">
+          ${opt("quick", "quick check", s.verify_mode)}
+          ${opt("deep", "deep check (slow)", s.verify_mode)}
+          ${opt("off", "no check", s.verify_mode)}
+        </select>
+      </div>
+      <p class="ropt-why">${verifyNote()}</p>
+      ${deepOnDirect ? `<p class="ropt-warn">${icon("triangle-exclamation")}
+        <span>Deep checking needs two copies. Straight-to-library leaves one, so Riparr
+        will check the size instead.</span></p>` : ""}
+    </div>
+  </div>`;
 }
 
 function checkList(checks, fails, warns) {
