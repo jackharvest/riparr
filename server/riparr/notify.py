@@ -33,6 +33,9 @@ TIMEOUT = 10
 # things you would want to know at the shops; the rest are for people who want a log.
 EVENTS = [
     ("done",        "A rip finished",            True),
+    # Distinct from "done" on purpose: this one is actionable. The disc is out and the
+    # next one can go in, while the last is still crossing the network.
+    ("ripped",      "A disc is read and ejected — ready for the next", True),
     ("needs_you",   "A disc needs your input",   True),
     ("failed",      "A rip failed",              True),
     ("share_lost",  "Your library went away",    True),
@@ -46,6 +49,7 @@ DEFAULT_EVENTS = [k for k, _, on in EVENTS if on]
 # rather than dumped.
 _TAGS = {
     "done": ("white_check_mark", 3),
+    "ripped": ("eject", 3),
     "needs_you": ("raising_hand", 4),
     "failed": ("rotating_light", 4),
     "share_lost": ("warning", 4),

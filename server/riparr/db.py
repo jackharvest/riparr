@@ -156,7 +156,8 @@ DEFAULTS = {
     "watch_folder": "",
     # Notifications. The box's whole promise is "walk away", so these are the only way
     # it can reach someone who did.
-    "notify_events": ["done", "needs_you", "failed", "share_lost", "key_expiring"],
+    "notify_events": ["done", "ripped", "needs_you", "failed", "share_lost",
+                      "key_expiring"],
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": "",
     "ntfy_token": "",
@@ -426,6 +427,16 @@ def forget_disc(fingerprint):
 
 ACTIVE_STATES = ["queued", "identifying", "ripping", "transferring", "verifying",
                  "needs_input"]
+
+# The states that hold the *drive*. Everything else a job does -- uploading it,
+# checking it -- happens from the card, with the tray already open and the disc back in
+# the user's hand. Distinguishing the two is what lets the next disc go in while the
+# last one is still travelling over Wi-Fi (D11's "burst"), and it is the only reason
+# `active_job()` is not the same question as "is the drive busy".
+DRIVE_STATES = ["queued", "identifying", "ripping", "needs_input"]
+
+# Jobs whose remaining work needs no disc: they can run alongside a rip.
+SENDING_STATES = ["transferring", "verifying"]
 FINAL_STATES = ["done", "failed", "cancelled"]
 
 # States a rip is physically mid-flight in. Anything found in one of these at boot was
@@ -478,6 +489,35 @@ def active_job():
         "SELECT * FROM jobs WHERE state IN (%s) ORDER BY id LIMIT 1"
         % ",".join("?" * len(INTERRUPTIBLE)), INTERRUPTIBLE).fetchone()
     return dict(row) if row else None
+
+
+def drive_busy():
+    """A job that still needs the disc in the tray, if there is one.
+
+    `active_job()` answers "is anything in flight", which used to be the same question.
+    It is not any more: a rip that has finished reading the disc has given the disc
+    back, and what it is doing now -- pushing bytes at a NAS -- has no claim on the
+    drive at all.
+    """
+    row = conn().execute(
+        "SELECT * FROM jobs WHERE state IN (%s) ORDER BY id LIMIT 1"
+        % ",".join("?" * len(DRIVE_STATES)), DRIVE_STATES).fetchone()
+    return dict(row) if row else None
+
+
+def next_sending_job():
+    """The oldest job waiting to be pushed to the library, for the sender thread."""
+    row = conn().execute(
+        "SELECT * FROM jobs WHERE state='transferring' AND local_path IS NOT NULL "
+        "AND bytes_sent=0 ORDER BY id LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
+def sending_jobs():
+    row = conn().execute(
+        "SELECT * FROM jobs WHERE state IN (%s) ORDER BY id"
+        % ",".join("?" * len(SENDING_STATES)), SENDING_STATES).fetchall()
+    return [dict(r) for r in row]
 
 
 def job_for_fingerprint(fingerprint, states=None):

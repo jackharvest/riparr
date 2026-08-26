@@ -52,6 +52,7 @@ WINDOW_BYTES = 4 * 2 ** 30
 DEFAULT_MIN_TITLE = 120
 
 _wake = threading.Event()
+_send_wake = threading.Event()
 _stop = threading.Event()
 _cancel = {}                    # job id -> threading.Event, for a cancel mid-flight
 
@@ -162,7 +163,10 @@ def enqueue(force=False, expect=None):
     if not d:
         return None, "There's no disc in the tray."
 
-    if db.active_job():
+    # The *drive*, not "anything in flight". A previous rip that is still uploading
+    # from the card has already given the disc back, and holding the tray shut for it
+    # would waste the very minutes early eject exists to reclaim.
+    if db.drive_busy():
         return None, "Riparr is already working on a disc."
 
     # Before anything expensive: can this drive read this disc at all? Refused here
@@ -1430,7 +1434,7 @@ def _verify(job, s, transport, name, local_path):
 
 # ── stage 5: tidy up ──
 
-def _finish(job, s, transport, name, local_path):
+def _finish(job, s, transport, name, local_path, sent_from_card=False):
     now = int(time.time())
     db.stage_end(job["id"], at=now)
     if job.get("fingerprint"):
@@ -1450,7 +1454,11 @@ def _finish(job, s, transport, name, local_path):
                   eta_seconds=None, error=None,
                   dest_path=transport.describe(name))
     LED.announce("done")
-    P.eject()
+    # In cache mode the tray was opened the moment the disc was read, and the disc is
+    # very likely already back on a shelf -- or replaced by the next one, which would
+    # be spat out by an eject that thinks it is being helpful.
+    if not sent_from_card:
+        P.eject()
     log.info("Job %d finished: %s", job["id"], transport.describe(name))
     notify.send("done", title=job.get("title") or job.get("disc_label") or "A disc",
                 body="Ripped and verified. It's in your library at %s."
@@ -1482,6 +1490,27 @@ def _run_job(job):
         job["mode"] = mode
 
         local_path = _rip(job, s, cancel_ev)
+
+        # The disc has been read. In cache mode everything left to do happens from the
+        # card, so the tray opens *now* rather than twenty minutes from now -- the user
+        # can load the next disc while this one is still crossing the Wi-Fi. That is
+        # D11's "burst", and it is the whole reason burst was ever a mode.
+        #
+        # Direct mode gets no such moment: the film is being written to the library as
+        # it is read, so there is nothing to hand off and `_finish` ejects as before.
+        if not use_direct(s):
+            db.update_job(job["id"], state="transferring", bytes_sent=0,
+                          phase="Waiting to send to your library")
+            LED.announce("done")
+            P.eject()
+            log.info("Job %d: disc read and ejected; sending in the background.",
+                     job["id"])
+            notify.send("ripped", title=job.get("title") or "A disc",
+                        body="Read and ejected. It's crossing to your library now — "
+                             "you can put the next disc in.")
+            _send_wake.set()
+            return
+
         transport, name, local_path = _transfer(job, s, local_path, cancel_ev)
         _verify(job, s, transport, name, local_path)
         _finish(job, s, transport, name, local_path)
@@ -1527,8 +1556,10 @@ def recover():
     for job in db.list_jobs(states=db.INTERRUPTIBLE, limit=50):
         local = job.get("local_path")
         if job["state"] in ("transferring", "verifying") and local and os.path.exists(local):
-            log.info("Job %d was interrupted mid-transfer; requeueing it.", job["id"])
-            db.update_job(job["id"], state="queued", phase="Waiting to start",
+            log.info("Job %d was interrupted mid-transfer; the sender will pick it up.",
+                     job["id"])
+            db.update_job(job["id"], state="transferring",
+                          phase="Waiting to send to your library",
                           bytes_sent=0, bytes_verified=0,
                           attempts=(job.get("attempts") or 0) + 1)
             continue
@@ -1548,10 +1579,12 @@ def resume_transfer(job_id):
     local = job.get("local_path")
     if not local or not os.path.exists(local):
         return False, "That rip is no longer on the card, so it has to be re-ripped."
-    db.update_job(job_id, state="queued", phase="Waiting to start", error=None,
-                  bytes_sent=0, bytes_verified=0, finished_at=None,
+    # Straight to the sender. Routing this through the rip worker's queue would make
+    # a re-send block the drive, which is exactly what early eject exists to prevent.
+    db.update_job(job_id, state="transferring", phase="Waiting to send to your library",
+                  error=None, bytes_sent=0, bytes_verified=0, finished_at=None,
                   attempts=(job.get("attempts") or 0) + 1)
-    _wake.set()
+    _send_wake.set()
     return True, "Retrying the transfer."
 
 
@@ -1655,32 +1688,61 @@ def _loop():
             _wake.clear()
             continue
         try:
-            # A requeued transfer skips straight past the disc.
-            if job.get("local_path") and os.path.exists(job["local_path"]):
-                _rerun_transfer(job)
-            else:
-                _run_job(job)
+            _run_job(job)
         except Exception as e:
             log.exception("Worker error on job %s: %s", job.get("id"), e)
             db.update_job(job["id"], state="failed", finished_at=int(time.time()),
                           error="Something went wrong: %s" % e)
 
 
-def _rerun_transfer(job):
+def _send_loop():
+    """Push finished rips from the card to the library, alongside whatever is ripping.
+
+    A second worker, and only a second one: the drive can read one disc at a time and
+    the network can sensibly push one file at a time, but those are different
+    resources and tying them together is what made a user wait twenty minutes with
+    their next disc in hand. The rip worker hands over here the moment the tray opens.
+    """
+    while not _stop.is_set():
+        job = db.next_sending_job()
+        if not job:
+            _send_wake.wait(5)
+            _send_wake.clear()
+            continue
+        _send_one(job)
+
+
+def _send_one(job):
     s = _settings()
     cancel_ev = threading.Event()
     _cancel[job["id"]] = cancel_ev
+    local = job.get("local_path")
     try:
+        if not local or not os.path.exists(local):
+            raise RipFailed("The rip is no longer on the card, so it has to be "
+                            "re-ripped.")
         job["_year"] = _split_year(job.get("title") or "")[1]
-        transport, name, local_path = _transfer(job, s, job["local_path"], cancel_ev)
-        _verify(job, s, transport, name, local_path)
-        _finish(job, s, transport, name, local_path)
+        transport, name, local = _transfer(job, s, local, cancel_ev)
+        _verify(job, s, transport, name, local)
+        _finish(job, s, transport, name, local, sent_from_card=True)
     except Cancelled:
-        db.update_job(job["id"], state="cancelled", finished_at=int(time.time()),
-                      error="Cancelled")
+        log.info("Job %d cancelled while sending.", job["id"])
+        db.stage_end(job["id"])
+        db.update_job(job["id"], state="cancelled", phase=None,
+                      finished_at=int(time.time()), error="Cancelled")
     except RipFailed as e:
-        db.update_job(job["id"], state="failed", finished_at=int(time.time()),
-                      error=str(e))
+        log.error("Job %d failed while sending: %s", job["id"], e)
+        db.stage_end(job["id"])
+        db.update_job(job["id"], state="failed", phase=None,
+                      finished_at=int(time.time()), error=str(e))
+        LED.announce("failed")
+        notify.send("failed", title=job.get("title") or "A disc", body=str(e))
+    except Exception as e:
+        log.exception("Job %d hit an unexpected error while sending", job["id"])
+        db.stage_end(job["id"])
+        db.update_job(job["id"], state="failed", phase=None,
+                      finished_at=int(time.time()),
+                      error="Something went wrong: %s" % e)
         notify.send("failed", title=job.get("title") or "A disc", body=str(e))
     finally:
         _cancel.pop(job["id"], None)
@@ -1690,6 +1752,7 @@ def start():
     os.makedirs(STAGING, exist_ok=True)
     recover()
     threading.Thread(target=_loop, name="riparr-rip", daemon=True).start()
+    threading.Thread(target=_send_loop, name="riparr-send", daemon=True).start()
     threading.Thread(target=_watch_discs, name="riparr-disc-watch", daemon=True).start()
     log.info("Rip engine started.")
 
@@ -1697,3 +1760,4 @@ def start():
 def stop():
     _stop.set()
     _wake.set()
+    _send_wake.set()

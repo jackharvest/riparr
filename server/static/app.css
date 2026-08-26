@@ -795,6 +795,46 @@ td.stat .ic { font-size: var(--ic-nav); }
   .site .btn { width: 100%; margin-top: 8px; }
 }
 
+/* ── still crossing the network ──
+ * The disc is already back in the user's hand and the next one may be spinning. These
+ * are finished as far as anyone is concerned; they just are not *there* yet. So: a
+ * quiet strip under the drive, not a panel competing with the disc in the machine.
+ */
+.sending {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: rgba(255,255,255,.02); padding: 11px 14px; margin-bottom: 16px;
+}
+.sending-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--fg-strong); margin-bottom: 9px;
+}
+.sending-head .ic { width: 14px; height: 14px; color: var(--accent); }
+.sending-head .muted { font-size: 11.5px; font-weight: 400; }
+.send-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 0; font-size: 12px;
+}
+.send-name {
+  color: var(--fg); flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 26ch;
+}
+.send-bar {
+  flex: 1 1 90px; height: 5px; border-radius: 3px;
+  background: var(--panel); overflow: hidden; min-width: 60px;
+}
+.send-bar i {
+  display: block; height: 100%; background: var(--accent);
+  transition: width .6s linear;
+}
+.send-pct { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--fg-muted);
+            min-width: 4.5ch; text-align: right; }
+.send-size { flex: 0 0 auto; font-size: 11.5px; }
+.send-row .icon-btn { flex: 0 0 auto; font-size: var(--ic-row); padding: 3px 5px; }
+@media (max-width: 560px) {
+  .send-size { display: none; }
+  .send-name { max-width: 14ch; }
+}
+
 /* ── which disc is this ──
  * The same chip in the same three colours on the Queue, on History and on a poster.
  * Two copies of one film -- the DVD and the Blu-ray -- are the case this exists for,

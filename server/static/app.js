@@ -695,6 +695,7 @@ views.queue = async () => {
       <p>Taking you to it…</p></div></div>`;
   }
   const jobs = q.jobs;
+  const sending = q.sending || [];
   state.typical = q.typical_seconds;
   state.typicalN = q.typical_samples;
   state.typicalStages = q.typical_stages || {};
@@ -718,7 +719,8 @@ views.queue = async () => {
       ${jobs.length ? `${jobs.map(jobRow).join("")}
         ${trayStrip(drives, state.status.optical)}`
       : tray(drives, state.status.optical, loaded && !busy)}
-    </div>`;
+    </div>
+    ${sendingStrip(sending)}`;
 };
 
 /* ── a job in flight ──
@@ -747,6 +749,37 @@ const STATE_LABEL = {
   queued: "Waiting", identifying: "Reading the disc", ripping: "Ripping",
   transferring: "Uploading", verifying: "Verifying", needs_input: "Needs you",
 };
+
+/* ── still crossing the network ──
+   A disc whose rip is on the card has already been handed back, and the next one may
+   well be spinning. These jobs are finished as far as the user is concerned -- they
+   just are not *there* yet -- so they get a quiet strip under the drive rather than a
+   panel competing with the disc actually in the machine. */
+function sendingStrip(sending) {
+  if (!sending.length) return "";
+  return `<div class="sending">
+    <div class="sending-head">${icon("upload")}
+      <span>${sending.length === 1 ? "Still crossing to your library"
+                                   : `${sending.length} still crossing to your library`}</span>
+      <span class="grow"></span>
+      <span class="muted">the drive is free — put the next disc in</span></div>
+    ${sending.map(j => {
+      const done = j.state === "verifying" ? 100 : Number(pct(j.bytes_sent, j.bytes_total));
+      return `<div class="send-row">
+        <span class="send-name" title="${esc(j.title || j.disc_label || "")}">${
+          esc(j.title || j.disc_label || "Unknown disc")}</span>
+        ${familyTag(j.disc_family)}
+        <div class="send-bar"><i style="width:${done}%"></i></div>
+        <span class="send-pct">${
+          j.state === "verifying" ? "checking"
+          : done > 0 ? `${Math.round(done)}%` : "waiting"}</span>
+        <span class="send-size muted">${esc(filesize(j.bytes_total))}</span>
+        <button class="icon-btn" data-cancel="${j.id}" title="Cancel">${icon("xmark")}</button>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
 
 function jobRow(j) {
   if (j.state === "needs_input") return identifyPrompt(j);

@@ -915,6 +915,10 @@ def queue(user=Depends(require_user)):
     # the data -- so a median that mixes them describes neither. `kind` is taken from
     # whatever is in flight, falling back to the tray, so the numbers on screen are
     # about the disc on screen.
+    # Jobs that have given the disc back and are still crossing the network. Split out
+    # so the page can show them as a quiet strip rather than as competing rip panels --
+    # the user is watching the disc that is in the drive now, not the one on its way.
+    sending = [j for j in jobs if j.get("state") in db.SENDING_STATES]
     active = next((j for j in jobs if j.get("disc_family")), None)
     kind = active.get("disc_family") if active else _tray_family()
     typical, samples = db.typical_job_seconds(kind=kind)
@@ -922,7 +926,10 @@ def queue(user=Depends(require_user)):
     # Per-stage medians as well as the total. The total answers "when will this be
     # done"; the stages answer "should the fact that nothing has moved for six minutes
     # worry me", which is the question that actually gets asked.
-    return {"jobs": jobs, "typical_seconds": typical, "typical_samples": samples,
+    return {"jobs": [j for j in jobs if j.get("state") not in db.SENDING_STATES],
+            "sending": sending,
+            "drive_busy": bool(db.drive_busy()),
+            "typical_seconds": typical, "typical_samples": samples,
             "typical_stages": stages, "typical_kind": kind,
             "stage_labels": db.stage_labels(db.get("transfer_mode") == "direct"),
             "stage_order": db.STAGE_ORDER}
