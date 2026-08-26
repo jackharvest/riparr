@@ -894,6 +894,20 @@ def system_power(body: PowerAction, user=Depends(require_user)):
     return {"ok": True, "action": body.action, "message": message}
 
 
+@app.post("/api/system/usb-host")
+def system_usb_host(user=Depends(require_user)):
+    """Make both USB-C sockets able to host the drive, then restart.
+
+    The board has two sockets that look identical and only one can host. The other
+    enumerates nothing and logs nothing, so it reads as a dead drive rather than a
+    wrong port. Rather than explain that, offer to fix it.
+    """
+    ok, message = P.usb_host_fix()
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message}
+
+
 @app.get("/api/makemkv/beta-key")
 def makemkv_beta_key(refresh: bool = False, user=Depends(require_user)):
     """The beta key GuinpinSoft publishes, fetched so the user does not have to.

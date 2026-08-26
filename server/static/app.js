@@ -274,6 +274,12 @@ const wizard = {
   async makemkv() {
     const i = await api.get("/api/makemkv");
     const st = i.status;
+    // The drive belongs on this step. Setup used to run to completion without ever
+    // mentioning it, so someone whose drive was in the socket that cannot host got
+    // five green steps and an empty tray at the end -- with the explanation sitting on
+    // a dashboard they had not reached yet.
+    let opt = null;
+    try { opt = (await api.get("/api/status")).optical; } catch (e) {}
     const ready = st.installed && st.eula_accepted;
     $("#wz-body").innerHTML = `
       <div class="wz-step">Step 2 of 5</div>
@@ -314,6 +320,30 @@ const wizard = {
         </div>
       </div>
 
+      ${opt ? `<div class="section"><h2>Your drive
+        <span class="grow"></span>
+        <span class="badge ${opt.drives && opt.drives.length ? "ok" : "warn"}">${
+          opt.drives && opt.drives.length ? "Found" : "Not found"}</span></h2>
+        <div>${opt.drives && opt.drives.length
+          ? `<div class="kv">
+               <div class="k">Drive</div><div class="v">${esc(
+                 [opt.drives[0].vendor, opt.drives[0].model].filter(Boolean).join(" ")
+                 || opt.drives[0].device)}</div>
+               <div class="k">Reads</div><div class="v">${esc(
+                 opt.drives[0].reads || "—")}</div>
+             </div>`
+          : `<p class="muted">Riparr can't see an optical drive yet. You can finish
+               setting up and come back to this — but nothing can be ripped until a
+               drive appears.</p>
+             ${opt.hint ? `<p class="why">${mdBold(opt.hint)}</p>` : ""}
+             ${opt.fixable === "usb-host" ? `<div class="btn-row">
+               <button class="btn" id="wz-usb-fix">Make both USB-C sockets work</button>
+             </div>
+             <p class="help">Reconfigures the second socket and restarts the box, so it
+                stops mattering which one you used.</p>` : ""}`}
+        </div>
+      </div>` : ""}
+
       <div class="section"><h2>Key</h2><div>
         <div class="f"><span></span><div class="grow" id="wz-key-offer"></div></div>
         <label class="f"><span>MakeMKV key</span>
@@ -332,6 +362,19 @@ const wizard = {
       </div>`;
 
     offerBetaKey("#wz-key-offer", "#w-key");
+
+    const wzUsbFix = $("#wz-usb-fix");
+    if (wzUsbFix) wzUsbFix.onclick = async () => {
+      if (!confirm("Make both USB-C sockets work?\n\nThe box will restart and setup "
+                   + "will pick up where it left off.")) return;
+      wzUsbFix.disabled = true;
+      showWaiting("Reconfiguring the USB-C sockets\u2026");
+      try { await api.post("/api/system/usb-host", {}); }
+      catch (e) { showWaiting(e.message, { retry: true, spin: false }); return; }
+      showWaiting("Restarting. This page will come back on its own in a minute or two.",
+                  { spin: true });
+      waitForBoxBack();
+    };
 
     const accept = $("#mk-accept");
     if (accept) {
@@ -780,17 +823,32 @@ function driveLine(d) {
     <span class="dev">${esc(d.device)}</span>${driveTags(d)}</p>`;
 }
 
+// The diagnosis hints mark their single actionable sentence with **bold**. Escape
+// first, then promote -- never the other way round.
+function mdBold(text) {
+  return esc(text).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+}
+
 function tray(drives, optical, canRip) {
   if (!drives.length) {
     // An empty card used to render as nothing at all, so "no drive" was communicated
     // by absence -- the one case where the user most needs to be told something.
     const hint = optical && optical.hint;
+    // When the box can put it right itself, offer the button instead of asking the
+    // user to understand device trees. The wrong-socket case is the common one and it
+    // is invisible: that port logs nothing at all when you plug something into it.
+    const fixable = optical && optical.fixable === "usb-host";
     return `<div class="empty-state tray-none">
       <div class="big">${icon("triangle-exclamation")}</div>
       <h2>No optical drive detected</h2>
       <p>Riparr has nothing to read a disc with, so nothing else on this page can
          happen yet.</p>
-      ${hint ? `<p class="why">${esc(hint)}</p>` : ""}
+      ${hint ? `<p class="why">${mdBold(hint)}</p>` : ""}
+      ${fixable ? `<div class="btn-row" style="justify-content:center">
+        <button class="btn primary" id="usb-host-fix">Make both USB-C sockets work</button>
+      </div>
+      <p class="micro">This reconfigures the second socket and restarts the box, so it
+         stops mattering which one you used. About a minute.</p>` : ""}
     </div>`;
   }
   const d = drives.find(x => x.present) || drives[0];
@@ -1879,6 +1937,25 @@ function wireContent(section, sub) {
   if (eject) eject.onclick = async () => {
     const r = await api.post("/api/drive/eject");
     toast(r.message, r.ok ? "ok" : "bad");
+  };
+
+  // Offered when the diagnosis says the drive is probably in the socket that cannot
+  // host. Reboots, so it borrows the same full-screen overlay as restart.
+  const usbFix = $("#usb-host-fix");
+  if (usbFix) usbFix.onclick = async () => {
+    if (!confirm("Make both USB-C sockets work?\n\nThe box will restart. "
+                 + "Your drive can then be in either one.")) return;
+    usbFix.disabled = true;
+    showWaiting("Reconfiguring the USB-C sockets\u2026");
+    try {
+      await api.post("/api/system/usb-host", {});
+    } catch (e) {
+      showWaiting(e.message, { retry: true, spin: false });
+      return;
+    }
+    showWaiting("Restarting. This page will come back on its own in a minute or two.",
+                { spin: true });
+    waitForBoxBack();
   };
 
   const ripNow = $("#rip-now");

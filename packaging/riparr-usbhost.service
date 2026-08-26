@@ -1,0 +1,8 @@
+[Unit]
+Description=Make both USB-C sockets able to host a drive
+Documentation=https://github.com/jackharvest/riparr
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/rm -f /run/riparr/usbhost.request
+ExecStart=/usr/local/lib/riparr/usbhost-fix.sh

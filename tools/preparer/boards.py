@@ -44,7 +44,10 @@ BOARDS = [
         "os": "armbian",
         "armbian_slug": "orangepizero2w",
         "cost": "cheapest",
-        "note": "The reference board. This is the one Riparr is developed and tested on.",
+        "note": "The reference board. This is the one Riparr is developed and tested on. "
+                "Its two USB-C sockets look identical but only one can host the drive "
+                "\u2014 if the drive is not found, swap the power and data cables over. "
+                "Riparr can also reconfigure the second socket so either one works.",
     },
     {
         "id": "bananapim4zero",

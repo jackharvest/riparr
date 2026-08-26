@@ -336,40 +336,93 @@ def _usb_devices():
     return devs
 
 
+def usb_host_ports():
+    """What the USB controllers on this board are actually configured to do.
+
+    A controller with dr_mode=peripheral is a USB *device*: it never enumerates
+    anything plugged into it, supplies no VBUS, and -- the part that costs people a
+    day -- logs absolutely nothing when you plug something in. No error, no
+    over-current, silence. Reading it here is what turns "no drive detected" from a
+    dead end into an instruction.
+    """
+    host, peripheral = [], []
+    for node in sorted(_glob("/proc/device-tree/soc/usb@*")):
+        mode = _read(os.path.join(node, "dr_mode")).replace("\0", "").strip()
+        status = _read(os.path.join(node, "status")).replace("\0", "").strip()
+        if status and status != "okay":
+            continue
+        name = os.path.basename(node)
+        (peripheral if mode == "peripheral" else host).append(name)
+    return {"host": host, "peripheral": peripheral,
+            "overlay_applied": "usb-otg-host" in _read_boot_env().get("user_overlays", "")}
+
+
+def _read_boot_env():
+    """armbianEnv.txt as a dict, or empty when this is not an Armbian board."""
+    d = boot_dir()
+    env = {}
+    if not d:
+        return env
+    for line in _read(os.path.join(d, "armbianEnv.txt")).splitlines():
+        if "=" in line and not line.strip().startswith("#"):
+            k, _, v = line.partition("=")
+            env[k.strip()] = v.strip()
+    return env
+
+
 def optical_diagnosis():
     """Why there is no drive — not merely that there isn't one.
 
     "No optical drive detected" is true and unhelpful: it cannot distinguish a drive
     that is unplugged from a drive plugged into a port that physically cannot host it.
     On this board that distinction is the whole answer, because one of the two USB-C
-    ports is wired dr_mode=peripheral and will never enumerate anything.
+    sockets is wired dr_mode=peripheral and will never enumerate anything.
+
+    `fixable` says the box can do something about it itself, and the interface offers a
+    button rather than a paragraph.
     """
     drives = optical_drives()
+    ports = usb_host_ports()
     if drives:
-        return {"drives": drives, "usb": [], "hint": None}
+        return {"drives": drives, "usb": [], "hint": None, "ports": ports,
+                "fixable": None}
 
     usb = _usb_devices()
+    fixable = None
     if usb:
         hint = ("Something is attached to USB, but nothing is presenting itself as an "
                 "optical drive: %s. If that is the drive's adapter, it may need its own "
                 "power, or it may be in a mode that hides the disc."
                 % ", ".join("%s (%s)" % (d["name"], d["id"]) for d in usb))
     else:
-        gadget = bool(_glob("/sys/class/udc/*"))
         hint = ("Nothing at all is attached to the USB bus — not the drive, not "
                 "anything else. The drive having power and a working tray does not mean "
-                "the data connection is up.")
-        if gadget:
+                "the data connection is up: a USB-to-SATA adapter announces itself even "
+                "with no drive attached, so silence here is about the cable or the "
+                "socket, never about the drive.")
+        if ports["peripheral"] and not ports["overlay_applied"]:
+            # The single most likely cause on this board, and the one with a real fix.
             hint += (
-                " In order of likelihood: the cable or the USB-to-SATA adapter is not "
-                "carrying data — a charge-only USB-C cable is extremely common and "
-                "looks exactly like a dead drive, and a working adapter announces "
-                "itself even with no drive attached, so if nothing appears the adapter "
-                "itself is not running. Then the port: only one of the two USB-C "
-                "sockets is a host (the one further from the board edge), and it has "
-                "both CC pins tied to ground, so a USB-C-to-USB-C cable reads it as a "
-                "device — a USB-A adapter in the middle is what makes that work.")
-    return {"drives": drives, "usb": usb, "hint": hint}
+                " **Most likely: the data cable is in the wrong USB-C socket.** This "
+                "board has two that look identical, and only one of them can host a "
+                "device — the other is wired as a USB peripheral and stays silent no "
+                "matter what you plug in. There are only two, so swap them: put power "
+                "where the data cable is and the data cable where power was. Riparr can "
+                "also reconfigure the second socket so that either one works.")
+            fixable = "usb-host"
+        elif ports["peripheral"]:
+            hint += (
+                " The second USB-C socket has already been reconfigured to host, so "
+                "either socket should work. That points at the cable or the adapter: a "
+                "charge-only USB-C cable carries no data and looks exactly like a dead "
+                "drive, and a USB-C-to-USB-C cable can read as a device — a USB-A "
+                "adapter in the middle is what makes that work.")
+        else:
+            hint += (
+                " Check the cable first: a charge-only USB-C cable carries no data and "
+                "looks exactly like a dead drive.")
+    return {"drives": drives, "usb": usb, "hint": hint, "ports": ports,
+            "fixable": fixable}
 
 
 # Restart and shut down go through the same request-file bridge the MakeMKV install
@@ -451,6 +504,35 @@ def power_action(action):
     except OSError as e:
         return False, "Could not ask the system to %s: %s" % (action, e)
     return True, ("Restarting" if action == "reboot" else "Shutting down")
+
+
+USBHOST_REQUEST = "/run/riparr/usbhost.request"
+
+
+def usb_host_available():
+    return (os.path.exists("/etc/systemd/system/riparr-usbhost.path")
+            and os.access("/run/riparr", os.W_OK))
+
+
+def usb_host_fix():
+    """Ask the root side to make both USB-C sockets host a drive. (ok, message).
+
+    Same one-way door as `power_action`: this process cannot edit the boot
+    configuration, but it can create one file that a root path unit is watching.
+    """
+    if MOCK:
+        return True, "Reconfiguring both USB-C sockets (simulated)"
+    if not usb_host_available():
+        return False, ("This copy of Riparr was installed before the USB-C fix existed. "
+                       "Re-run sudo bash /opt/riparr/tools/install.sh to add it.")
+    if not usb_host_ports()["peripheral"]:
+        return False, "Both sockets can already host a drive — nothing to change."
+    try:
+        with open(USBHOST_REQUEST, "w") as f:
+            f.write("%d\n" % int(time.time()))
+    except OSError as e:
+        return False, "Could not ask the system to change the socket: %s" % e
+    return True, "Reconfiguring the second USB-C socket, then restarting"
 
 
 def eject(device="/dev/sr0"):

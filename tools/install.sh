@@ -230,14 +230,24 @@ for act in reboot poweroff; do
           "/etc/systemd/system/riparr-$act.service"
 done
 
+# "Make both USB-C sockets host a drive", through the same door. This board has two
+# identical-looking sockets and only one can host; the other enumerates nothing and
+# logs nothing, which reads as a dead drive. One button beats one paragraph.
+install -o root -g root -m 0755 "$INSTALL_DIR/packaging/usbhost-fix.sh" \
+        /usr/local/lib/riparr/usbhost-fix.sh
+install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.path" \
+        /etc/systemd/system/riparr-usbhost.path
+install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.service" \
+        /etc/systemd/system/riparr-usbhost.service
+
 systemctl daemon-reload
 systemctl enable --quiet riparr-makemkv.path
 systemctl start riparr-makemkv.path
-for act in reboot poweroff; do
+for act in reboot poweroff usbhost; do
   systemctl enable --quiet "riparr-$act.path"
   systemctl start "riparr-$act.path"
 done
-ok "MakeMKV, restart and shut down all work from the web interface"
+ok "MakeMKV, restart, shut down and the USB-C fix all work from the web interface"
 systemctl enable --quiet "$SERVICE"
 systemctl restart "$SERVICE"
 ok "riparr.service enabled and started"

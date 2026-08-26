@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for a Riparr request to make both USB-C sockets host
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# Same one-way door as reboot, poweroff and the MakeMKV install: the unprivileged web
+# service can create exactly this file and nothing else. The action is fixed by which
+# path unit fired, so there is nothing in the file for the root side to parse or trust.
+PathExists=/run/riparr/usbhost.request
+
+[Install]
+WantedBy=multi-user.target
