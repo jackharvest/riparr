@@ -539,7 +539,14 @@ def eject(device="/dev/sr0"):
     """Give the user their disc back. There is no physical button on the enclosure."""
     if MOCK:
         return {"ok": True, "message": "Tray ejected (simulated)"}
-    p = subprocess.run(["eject", device], capture_output=True, text=True)
+    try:
+        p = subprocess.run(["eject", device], capture_output=True, text=True)
+    except OSError as e:
+        # Giving the disc back is a courtesy; it is never the point of the job. This
+        # used to raise straight through the failure handler that called it, so a box
+        # without /usr/bin/eject reported "No such file or directory: 'eject'" as the
+        # reason a rip failed -- masking the real error entirely and costing a session.
+        return {"ok": False, "message": "Riparr could not open the tray (%s)." % e}
     return {"ok": p.returncode == 0,
             "message": (p.stderr or p.stdout).strip() or "Tray ejected"}
 

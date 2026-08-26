@@ -54,8 +54,12 @@ MISSING=()
 # smbclient and cifs-utils are how the box talks to a network share -- the first to
 # browse and test it, the second to mount it. Neither is installed by default, and
 # without smbclient the share step of the first-run wizard fails with a bare 500.
+# eject is how the box gives a disc back -- there is no button on the enclosure. It is
+# NOT part of a minimal Debian: without it every failure path that returns the disc
+# raised FileNotFoundError straight through the handler that called it, so a rip failed
+# with "No such file or directory: 'eject'" and the real reason was never recorded.
 for pkg in python3-venv python3-pip git ca-certificates avahi-daemon avahi-utils \
-           smbclient cifs-utils; do
+           smbclient cifs-utils eject; do
   dpkg -s "$pkg" >/dev/null 2>&1 || MISSING+=("$pkg")
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
@@ -239,6 +243,33 @@ install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.path" \
         /etc/systemd/system/riparr-usbhost.path
 install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.service" \
         /etc/systemd/system/riparr-usbhost.service
+
+# ── a dead host must not cost two minutes ──
+# MakeMKV contacts its own server on every invocation. That server has been returning
+# 525, and the IP it dials black-holes, so connect() sat in SYN-SENT through all six
+# default SYN retries -- about 130 seconds -- before MakeMKV would look at the disc.
+# A rip paid it twice, and it read as "reading the disc is slow". Measured on the
+# reference board: 130s before, 7.2s after.
+install -d -m 0755 /etc/sysctl.d
+cat > /etc/sysctl.d/60-riparr-fastfail.conf <<'SYSCTL'
+# Written by Riparr's installer. 2 retries is about 7 seconds: long enough to ride out
+# a blip on a LAN, short enough that an unreachable host is an inconvenience, not a hang.
+net.ipv4.tcp_syn_retries = 2
+SYSCTL
+sysctl -q -p /etc/sysctl.d/60-riparr-fastfail.conf 2>/dev/null || true
+
+# Belt and braces: ask MakeMKV not to make the call at all. This is also the file its
+# registration key belongs in, which is why it is created here and not left to chance.
+install -d -o "$RIPARR_USER" -g "$RIPARR_USER" -m 0755 "$DATA_DIR/.MakeMKV"
+if [ ! -f "$DATA_DIR/.MakeMKV/settings.conf" ]; then
+  cat > "$DATA_DIR/.MakeMKV/settings.conf" <<'MKSET'
+#
+# Written by Riparr's installer.
+#
+app_UpdateEnabled = "0"
+MKSET
+  chown "$RIPARR_USER":"$RIPARR_USER" "$DATA_DIR/.MakeMKV/settings.conf"
+fi
 
 systemctl daemon-reload
 systemctl enable --quiet riparr-makemkv.path
