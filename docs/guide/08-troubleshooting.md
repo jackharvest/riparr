@@ -104,11 +104,25 @@ The web page says how far it got and why.
 
 Nothing partial is written to your library — you won't get a broken file.
 
-## Purple LED — it ejected immediately
+## It ejected immediately — three flashes, or the tray twice
 
-Not an error. You've ripped this disc before, and Riparr saved you three hours.
+Not an error, and not the disc. You have ripped this one before, and Riparr saved you
+half an hour.
 
-To rip it anyway: **Settings → Disc history → Force re-rip**.
+**With a browser open** you will already be looking at the answer: the page jumps to
+**Discs** and highlights the film, with the date it went into your library.
+
+**Without one**, that is what the signal was. Three short flashes of the drive's own
+light, three times — or two tray cycles, if you set it that way. Purple on the status
+LED means the same thing. Change it on **Settings → Ripping → Already-ripped discs**,
+where **Try the light** and **Try the tray** let you see each one on demand.
+
+**To rip it anyway:** the **Re-rip** button on that film's tile in **Discs**. Leave the
+disc on the open tray — Riparr pulls the tray back in itself.
+
+**If it says this about a disc you have never ripped**, Riparr has matched it to
+something else by mistake. **Forget** on the same tile clears its memory of it, and the
+next insertion is treated as new.
 
 ## Blinking amber — paused
 
