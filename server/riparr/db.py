@@ -119,6 +119,11 @@ DEFAULTS = {
                    "{Title} - S{Season:00}E{Episode:00} - {EpisodeTitle}.mkv",
     "movie_folder": "Movies",
     "tv_folder": "TV",
+    # Which share each kind is written to. None means "whichever share is the default",
+    # which is the right answer for the overwhelmingly common one-share setup and means
+    # nothing has to be chosen before the box works. See db.destination().
+    "movie_share_id": None,
+    "tv_share_id": None,
     "on_unknown_disc": "ask",
     "audio_languages": ["eng"],
     "subtitle_languages": ["eng"],
@@ -333,8 +338,18 @@ def list_shares():
         "ORDER BY is_default DESC, name")]
 
 
-def add_share(name, host, path, username, password, make_default=True):
+def add_share(name, host, path, username, password, make_default=None):
+    """Add a share. The first one becomes the default; later ones do not.
+
+    `make_default=True` used to be unconditional, which was harmless when one share was
+    all there was. Now that films and television can name different shares, adding a
+    second one silently moved the default -- and the default is what every destination
+    that has not been explicitly pointed somewhere falls back to. So adding a share for
+    box sets would have quietly redirected films to it as well.
+    """
     c = conn()
+    if make_default is None:
+        make_default = c.execute("SELECT COUNT(*) n FROM shares").fetchone()["n"] == 0
     if make_default:
         c.execute("UPDATE shares SET is_default=0")
     cur = c.execute(
@@ -349,6 +364,73 @@ def default_share():
     row = conn().execute(
         "SELECT * FROM shares ORDER BY is_default DESC, id LIMIT 1").fetchone()
     return dict(row) if row else None
+
+
+def share_by_id(share_id):
+    if not share_id:
+        return None
+    row = conn().execute("SELECT * FROM shares WHERE id=?", (share_id,)).fetchone()
+    return dict(row) if row else None
+
+
+# ── where each kind of disc goes ──
+#
+# Films and television usually do not belong in the same folder, and often do not belong
+# on the same machine: a household with a NAS for films and a spare drive for box sets
+# is ordinary. So each kind names its own share and its own folder inside it, and the
+# two are independent -- two folders on one share works exactly as well as two shares.
+#
+# The share is stored by id and may be missing (never set, or the share was removed).
+# Both fall back to the default share rather than failing, because a rip that has
+# finished must land somewhere, and the default share is the one the box has proved it
+# can write to.
+
+KINDS = {
+    "movie": ("movie_share_id", "movie_folder", "Movies"),
+    "tv":    ("tv_share_id",    "tv_folder",    "TV"),
+}
+
+
+def destination(kind="movie"):
+    """(share, folder) for this kind of disc. Folder may be empty; share may be None."""
+    share_key, folder_key, _ = KINDS.get(kind) or KINDS["movie"]
+    share = share_by_id(get(share_key)) or default_share()
+    folder = (get(folder_key) or "").strip("/")
+    return share, folder
+
+
+def destinations():
+    """Every kind, resolved, for the settings page and the health checks."""
+    out = {}
+    for kind, (share_key, folder_key, label) in KINDS.items():
+        share, folder = destination(kind)
+        out[kind] = {
+            "kind": kind, "label": label, "folder": folder,
+            "share_id": share["id"] if share else None,
+            # Whether the *stored* choice was explicit, as opposed to falling through to
+            # the default. The page has to be able to say "same as Movies" rather than
+            # silently showing a share nobody picked.
+            "explicit": bool(get(share_key)),
+        }
+    return out
+
+
+def shares_in_use():
+    """Every share id something is actually configured to write to.
+
+    Used by the mount script: mounting a share nothing points at is pointless, and
+    mounting only the default one is how a second destination silently loses the fast
+    path.
+    """
+    # No set(): this module defines its own `set` (the settings writer), which shadows
+    # the builtin. A list is the right shape anyway -- the order is the order kinds are
+    # declared in, which is stable.
+    ids = []
+    for kind in KINDS:
+        share, _ = destination(kind)
+        if share and share["id"] not in ids:
+            ids.append(share["id"])
+    return ids
 
 
 def mark_share_verified(share_id):

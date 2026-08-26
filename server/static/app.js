@@ -1554,38 +1554,84 @@ views.settings = async (sub = "library") => {
 
 const settingsPages = {};
 
-/* Library — where finished rips go and what they are called. */
+/* Library — where finished rips go and what they are called.
+
+   Two destinations, not one. Films and box sets do not usually belong in the same
+   folder and often do not belong on the same machine: a NAS for films and a spare
+   drive for television is an ordinary household. Each kind therefore names its own
+   share *and* its own folder, which makes "two folders on one share" and "two
+   different machines" the same control rather than two features. */
 settingsPages.library = async (s) => {
-  const { shares } = await api.get("/api/shares");
+  const { shares, destinations, library } = await api.get("/api/shares");
+  state.libShares = shares;
+  const dest = (kind) => destinations[kind] || {};
+  const shareOf = (id) => shares.find(sh => sh.id === id);
+
+  const row = (kind, label, folderKey, shareKey) => {
+    const d = dest(kind);
+    const sh = shareOf(d.share_id);
+    const lib = (library || {})[kind] || {};
+    return `
+      <div class="dest" data-dest="${kind}">
+        <div class="dest-h">${label}</div>
+        <div class="dest-f">
+          <label class="f"><span>Share</span>
+            <select data-set="${shareKey}" data-dest-share="${kind}" data-int>
+              ${shares.map(x => `<option value="${x.id}" ${
+                x.id === d.share_id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}
+            </select></label>
+          <label class="f"><span>Folder</span>
+            <input data-set="${folderKey}" data-dest-folder="${kind}"
+                   value="${esc(s[folderKey] || "")}" placeholder="${
+                     kind === "tv" ? "TV" : "Movies"}"></label>
+        </div>
+        <div class="dest-path" data-dest-path="${kind}">${
+          sh ? esc(destPath(sh, s[folderKey])) : "no share configured"}</div>
+        <div class="dest-note">${
+          !sh ? ""
+          : lib.mounted
+            ? `${icon("circle-check", "ok")} Mounted at <code>${esc(lib.mount)}</code>,
+               so <b>Straight to your library</b> works for this one.`
+            : `${icon("circle-info")} Not mounted, so these rips stage on the card
+               first. A share added since the last restart is mounted on the next one.`}
+        </div>
+      </div>`;
+  };
+
   return `
-    <div class="section"><h2>Share
+    <div class="section"><h2>Where things go</h2><div>
+      <p class="muted">Each kind of disc has its own share and its own folder inside
+        it. Pick the same share twice to keep everything on one machine in two folders,
+        or two different shares to split them.</p>
+      ${shares.length ? `<div class="dests">
+          ${row("movie", "Films", "movie_folder", "movie_share_id")}
+          ${row("tv", "Television", "tv_folder", "tv_share_id")}
+        </div>`
+      : `<div class="empty-state"><div class="big">${icon("hard-drive")}</div>
+          <h2>No share configured</h2>
+          <p>Finished rips have nowhere to go until you add one below.</p></div>`}
+    </div></div>
+
+    <div class="section"><h2>Shares
       <span class="grow"></span>
       <button class="btn" id="add-share">Add a share</button></h2>
       <div>
-      ${shares.length ? shares.map(sh => `
+      ${shares.length ? `<div class="shares">${shares.map(sh => `
         <div class="rowitem">
           <div class="grow">
-            <div class="t">${esc(sh.name)} ${sh.is_default ? '<span class="badge ok">default</span>' : ""}</div>
-            <div class="s">//${esc(sh.host)}/${esc(sh.path)} · last verified ${ago(sh.verified_at)}</div>
+            <div class="t">${esc(sh.name)} ${
+              sh.is_default ? '<span class="badge ok">default</span>' : ""}</div>
+            <div class="s">//${esc(sh.host)}/${esc(sh.path)}
+              · ${sh.username ? `as ${esc(sh.username)}` : "as a guest"}
+              · last verified ${ago(sh.verified_at)}</div>
           </div>
-          <button class="btn danger" data-del-share="${sh.id}">Remove</button>
-        </div>`).join("")
-      : `<div class="empty-state"><div class="big">${icon("hard-drive")}</div><h2>No share configured</h2>
-          <p>Finished rips have nowhere to go until you add one.</p></div>`}
+          <button class="btn quiet-danger" data-del-share="${sh.id}">Remove</button>
+        </div>`).join("")}</div>` : ""}
       <div id="share-add"></div>
     </div></div>
 
-    <div class="section"><h2>Folders</h2><div>
-      <div class="grid2">
-        <label class="f"><span>Movies</span>
-          <input data-set="movie_folder" value="${esc(s.movie_folder)}"></label>
-        <label class="f"><span>TV</span>
-          <input data-set="tv_folder" value="${esc(s.tv_folder)}"></label>
-      </div>
-    </div></div>
-
     <div class="section"><h2>Naming</h2><div>
-      <label class="f"><span>Movie file name</span>
+      <label class="f"><span>Film file name</span>
         <input data-set="movie_template" value="${esc(s.movie_template)}"></label>
       <label class="f"><span>Episode file name</span>
         <input data-set="tv_template" value="${esc(s.tv_template)}"></label>
@@ -1599,6 +1645,15 @@ settingsPages.library = async (s) => {
           worse than one waiting ten seconds for your attention.</span></label>
     </div></div>${saveBar()}`;
 };
+
+/* The full path a destination adds up to. Shown under the two fields because "share"
+   and "folder" are only meaningful together, and because seeing the whole thing is how
+   somebody notices they have typed the share name into the folder box. */
+function destPath(share, folder) {
+  const parts = [String(share.path || "").replace(/^\/+|\/+$/g, ""),
+                 String(folder || "").replace(/^\/+|\/+$/g, "")].filter(Boolean);
+  return `//${share.host}/${parts.join("/")}`;
+}
 
 /* Ripping — what comes off the disc, and how it gets out. */
 settingsPages.ripping = (s) => `
@@ -2856,6 +2911,10 @@ function collectSettings() {
     else if (el.dataset.list !== undefined)
       out[k] = el.value.split(",").map(s => s.trim()).filter(Boolean);
     else if (el.type === "number") out[k] = Number(el.value);
+    // A <select> whose values are row ids. Without this the share id is saved as the
+    // string "2", which never equals the integer 2 the database hands back, so the
+    // destination silently fell through to the default share.
+    else if (el.dataset.int !== undefined) out[k] = el.value === "" ? null : Number(el.value);
     else out[k] = el.value;
   });
   return out;
@@ -3474,32 +3533,106 @@ function wireContent(section, sub) {
     };
   }
 
+  /* The destination path preview. "Share" and "folder" only mean anything together,
+     and seeing the whole thing is how somebody notices they have typed the share name
+     into the folder box. */
+  const dests = $$("[data-dest]");
+  if (dests.length) {
+    const shares = state.libShares || [];
+    const paint = (kind) => {
+      const el = $(`[data-dest-path="${kind}"]`);
+      const sel = $(`[data-dest-share="${kind}"]`);
+      const fld = $(`[data-dest-folder="${kind}"]`);
+      if (!el || !sel) return;
+      const sh = shares.find(x => String(x.id) === sel.value);
+      el.textContent = sh ? destPath(sh, fld ? fld.value : "") : "no share configured";
+    };
+    dests.forEach(d => {
+      const kind = d.dataset.dest;
+      const sel = $(`[data-dest-share="${kind}"]`);
+      const fld = $(`[data-dest-folder="${kind}"]`);
+      if (sel) sel.onchange = () => paint(kind);
+      if (fld) fld.oninput = () => paint(kind);
+    });
+  }
+
   const addShare = $("#add-share");
   if (addShare) addShare.onclick = () => {
-    $("#share-add").innerHTML = `<div class="section"><h2>Add a share</h2><div>
-      <p class="muted">Riparr writes a test file and reads it back before saving.</p>
+    $("#share-add").innerHTML = `<div class="share-add"><h3>Add a share</h3>
+      <p class="muted">Riparr writes a test file into the folder and reads it back
+        before saving. A share it cannot write to is a share that fails at 3am on the
+        first rip instead of now.</p>
       <div class="grid2">
-        <label class="f"><span>Server</span><input id="a-host" placeholder="tower.local"></label>
-        <label class="f"><span>Share</span><input id="a-share" placeholder="Media"></label>
-        <label class="f"><span>Folder</span><input id="a-path" placeholder="Movies"></label>
-        <label class="f"><span>Username</span><input id="a-user"></label>
-        <label class="f"><span>Password</span><input id="a-pass" type="password"></label>
+        <label class="f"><span>Server</span>
+          <input id="a-host" placeholder="tower.local">
+          <span class="help">A name or an address. <code>.local</code> names work if
+            your NAS advertises one.</span></label>
+        <label class="f"><span>Share</span>
+          <input id="a-share" placeholder="Media">
+          <span class="help">Just the top-level name your server publishes — one word,
+            no slashes. Anything deeper goes in the next box.</span></label>
+        <label class="f"><span>Folder</span>
+          <input id="a-path" placeholder="Movies/4K">
+          <span class="help">Optional, and it may be several levels deep —
+            <code>Movies/4K/Marvel</code>. Riparr creates it if it isn't there.
+            Backslashes are fine; they get converted.</span></label>
+        <label class="f"><span>Name</span>
+          <input id="a-name" placeholder="optional — shown in the list">
+          <span class="help">Only for your own benefit when you have more than
+            one.</span></label>
+        <label class="f"><span>Username</span>
+          <input id="a-user" placeholder="leave empty for a guest share">
+          <span class="help">A domain account goes in as <code>DOMAIN&#92;name</code>,
+            <code>DOMAIN/name</code> or <code>name@domain</code>.</span></label>
+        <label class="f"><span>Password</span>
+          <input id="a-pass" type="password"></label>
       </div>
-      <div class="btn-row"><button class="btn primary" id="a-go">Test and save</button></div>
-      <div id="a-res"></div></div></div>`;
+      <div class="dest-path" id="a-preview">//server/share</div>
+      <div class="btn-row">
+        <button class="btn primary" id="a-go">Test and save</button>
+        <button class="btn" id="a-cancel">Cancel</button></div>
+      <div id="a-res"></div></div>`;
+
+    // Show what the three boxes add up to. The single most common way this goes wrong
+    // is a whole path pasted into "Share", and the preview is where that becomes
+    // obvious before the server answers with something about a logon failure.
+    const preview = () => {
+      const host = $("#a-host").value.trim() || "server";
+      const parts = ($("#a-share").value + "/" + $("#a-path").value)
+        .replace(/\\/g, "/").split("/").map(x => x.trim()).filter(Boolean);
+      $("#a-preview").textContent = `//${host}/${parts.join("/") || "share"}`;
+    };
+    ["#a-host", "#a-share", "#a-path"].forEach(sel => { $(sel).oninput = preview; });
+    preview();
+
+    $("#a-cancel").onclick = () => { $("#share-add").innerHTML = ""; };
     $("#a-go").onclick = async () => {
       const body = {
         host: $("#a-host").value.trim(), share: $("#a-share").value.trim(),
         path: $("#a-path").value.trim(), username: $("#a-user").value.trim(),
-        password: $("#a-pass").value, name: "",
+        password: $("#a-pass").value, name: $("#a-name").value.trim(),
       };
       const res = $("#a-res");
-      res.innerHTML = `<div class="result busy"><span class="spin"></span>Testing…</div>`;
+      if (!body.host) {
+        res.innerHTML = `<div class="result bad">Which server?</div>`;
+        return;
+      }
+      $("#a-go").disabled = true;
+      res.innerHTML = `<div class="result busy"><span class="spin"></span>
+        Writing a test file and reading it back…</div>`;
       try {
-        await api.post("/api/shares", body);
+        const r = await api.post("/api/shares", body);
         toast("Share added", "ok"); route();
-      } catch (e) { res.innerHTML = `<div class="result bad">${esc(e.message)}</div>`; }
+      } catch (e) {
+        // The server's message is several sentences and often has the SMB code on its
+        // own line, so it is rendered as text rather than squeezed onto one line.
+        const [first, ...rest] = e.message.split("\n\n");
+        res.innerHTML = `<div class="result bad"><b>That didn't work</b>${esc(first)}
+          ${rest.length ? `<div class="why">${esc(rest.join("\n\n"))}</div>` : ""}</div>`;
+      }
+      $("#a-go").disabled = false;
     };
+    $("#a-host").focus();
   };
 
   $$("[data-test-share]").forEach(b => b.onclick = async () => {

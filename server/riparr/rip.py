@@ -733,17 +733,26 @@ def purge_staging(need_bytes=0, keep_newest=0):
 
     Returns (freed_bytes, [descriptions]).
     """
-    share = db.default_share()
-    if not share:
-        return 0, []
-    try:
-        transport = SH.Transport(share)
-        if not transport.reachable():
-            log.info("Not purging: the share is not answering, so nothing can be "
-                     "confirmed as safely stored.")
-            return 0, []
-    except Exception as e:
-        log.warning("Not purging: %s", e)
+    # One transport per destination share, opened once and reused. A job is only
+    # purged if *its own* destination confirms the copy, so a sleeping TV share cannot
+    # cause a film to be deleted off the card on the strength of the film share saying
+    # yes.
+    transports = {}
+    for kind in db.KINDS:
+        share, _ = db.destination(kind)
+        if not share or share["id"] in transports:
+            continue
+        try:
+            t = SH.Transport(share)
+            if not t.reachable():
+                log.info("Not purging anything bound for %s: it is not answering, so "
+                         "nothing there can be confirmed as safely stored.",
+                         share["host"])
+                continue
+            transports[share["id"]] = t
+        except Exception as e:
+            log.warning("Not purging anything bound for %s: %s", share["host"], e)
+    if not transports:
         return 0, []
 
     # Oldest first: the least recently finished rip is the one least likely to be
@@ -764,6 +773,10 @@ def purge_staging(need_bytes=0, keep_newest=0):
         # is nothing here to free and everything to lose.
         if local.startswith(P.LIBRARY_MOUNT):
             continue
+        share, _ = db.destination(job.get("kind") or "movie")
+        transport = transports.get(share["id"]) if share else None
+        if not transport:
+            continue                       # its destination could not be confirmed
         name = _remote_name(job)
         try:
             size = os.path.getsize(local)
@@ -783,7 +796,7 @@ def purge_staging(need_bytes=0, keep_newest=0):
     return freed, notes
 
 
-def _plan_transfer(needed_bytes):
+def _plan_transfer(needed_bytes, kind="movie"):
     """Mode selection (D11), honest about what this build can actually do.
 
     With follow-copy unavailable the whole title has to fit in staging, so this is
@@ -798,10 +811,11 @@ def _plan_transfer(needed_bytes):
     # This is the branch D10's refusal was always waiting for -- not D11's follow-copy,
     # but the simpler answer that the destination is already a filesystem we can write
     # to, and on this hardware it is twice as fast as the card as well.
-    if use_direct():
+    if use_direct(kind=kind):
         free = 0
         try:
-            free = P.library_status().get("free_bytes") or 0
+            share, _ = db.destination(kind)
+            free = P.library_status(share).get("free_bytes") or 0
         except Exception:
             pass
         if needed_bytes and free and free < needed_bytes:
@@ -829,33 +843,39 @@ def _plan_transfer(needed_bytes):
     return "burst", None
 
 
-def use_direct(s=None):
+def use_direct(s=None, kind="movie"):
     """Should this rip be written straight to the library instead of to the card?
 
-    Three things have to be true: the user asked for it, the share is mounted, and it
-    is writable *now*. The third is checked per job rather than trusted, because a NAS
-    that went away leaves the mount point behind as an ordinary directory -- and
-    writing 22 GiB into what is really the root filesystem is how the appliance fills
-    its own card and dies.
+    Three things have to be true: the user asked for it, the share this *kind* of disc
+    goes to is mounted, and it is writable *now*. The third is checked per job rather
+    than trusted, because a NAS that went away leaves the mount point behind as an
+    ordinary directory -- and writing 22 GiB into what is really the root filesystem is
+    how the appliance fills its own card and dies.
+
+    Per kind, because films and television can be on different machines. One of them
+    being unreachable is not a reason to stage the other on the card.
     """
     s = s or _settings()
     if s.get("transfer_mode") != "direct":
         return False
-    return P.library_mounted()
+    share, _ = db.destination(kind)
+    return P.library_mounted(share)
 
 
-def _library_root(s=None):
-    """Where finished films live, as a local path through the mount.
+def _library_root(kind="movie"):
+    """Where finished files of this kind live, as a local path through the mount.
 
     The share row's `path` is "SHARE/subdir"; the mount is the share, so everything
     after the first segment is a directory inside it.
     """
-    share = db.default_share() or {}
+    share, _ = db.destination(kind)
+    share = share or {}
     sub = (share.get("path") or "").strip("/").partition("/")[2]
-    return os.path.join(P.LIBRARY_MOUNT, sub) if sub else P.LIBRARY_MOUNT
+    root = P.library_mount(share)
+    return os.path.join(root, sub) if sub else root
 
 
-def _job_dir(job_id, direct=False):
+def _job_dir(job_id, direct=False, kind="movie"):
     """Where MakeMKV writes. On the card normally; on the share in direct mode.
 
     In direct mode this is still a scratch directory rather than the film's final
@@ -864,7 +884,7 @@ def _job_dir(job_id, direct=False):
     at the end and is a rename within one filesystem, so it is instant.
     """
     if direct:
-        d = os.path.join(_library_root(), ".riparr-incoming", "job-%d" % job_id)
+        d = os.path.join(_library_root(kind), ".riparr-incoming", "job-%d" % job_id)
     else:
         d = os.path.join(STAGING, "job-%d" % job_id)
     os.makedirs(d, exist_ok=True)
@@ -878,7 +898,9 @@ def _cleanup_staging(job):
     change between a rip starting and this running, and the one thing that must not
     happen is leaving a half-written MKV inside somebody's library.
     """
-    for base in (STAGING, os.path.join(_library_root(), ".riparr-incoming")):
+    bases = [STAGING] + [os.path.join(_library_root(k), ".riparr-incoming")
+                         for k in db.KINDS]
+    for base in bases:
         d = os.path.join(base, "job-%d" % job["id"])
         if os.path.isdir(d):
             shutil.rmtree(d, ignore_errors=True)
@@ -1073,8 +1095,9 @@ def _output_size(out_dir):
 
 
 def _rip(job, s, cancel_ev):
-    direct = use_direct(s)
-    out_dir = _job_dir(job["id"], direct=direct)
+    kind = job.get("kind") or "movie"
+    direct = use_direct(s, kind)
+    out_dir = _job_dir(job["id"], direct=direct, kind=kind)
     title = job["_title"]
     # Remember the disc now that we know what it is. record_disc used to happen only in
     # _finish(), after verification -- so a disc that ripped, uploaded and landed in the
@@ -1223,16 +1246,27 @@ def _mock_rip(job, out_dir, cancel_ev):
 
 # ── stage 3: get it onto the share ──
 
+# Which template and which default folder each kind uses. The share and the folder
+# come from db.destination(); this is only the naming half.
+_TEMPLATES = {
+    "movie": ("movie_template", "{Title} ({Year})/{Title} ({Year}).mkv"),
+    "tv":    ("tv_template",
+              "{Title} ({Year})/Season {Season:00}/"
+              "{Title} - S{Season:00}E{Episode:00} - {EpisodeTitle}.mkv"),
+}
+
+
 def _transfer(job, s, local_path, cancel_ev):
-    share = db.default_share()
+    kind = job.get("kind") or "movie"
+    share, folder = db.destination(kind)
     if not share:
         raise RipFailed("There's no library share configured, so the rip has nowhere "
                         "to go. It's still on the card.")
 
     title = job.get("title") or job.get("disc_label") or "Unknown"
     year = job.get("_year")
-    folder = (s.get("movie_folder") or "Movies").strip("/")
-    rel = _render_template(s.get("movie_template") or "{Title} ({Year})/{Title} ({Year}).mkv",
+    key, fallback = _TEMPLATES.get(kind) or _TEMPLATES["movie"]
+    rel = _render_template(s.get(key) or fallback,
                            title, year, source=job.get("disc_family"))
     name = "%s/%s" % (folder, rel) if folder else rel
 
@@ -1240,9 +1274,11 @@ def _transfer(job, s, local_path, cancel_ev):
 
     # Direct mode: the film is already on the share -- MakeMKV wrote it there. What is
     # left is a rename inside one filesystem, which is instant, instead of pushing 22
-    # gigabytes back over a network they are already on.
-    if use_direct(s) and local_path.startswith(_library_root()):
-        return _place_directly(job, s, local_path, name, transport)
+    # gigabytes back over a network they are already on. `_library_root(kind)` has to
+    # be the same root `_job_dir` wrote into, or this silently falls through to a full
+    # re-upload of a file that is already where it needs to be.
+    if use_direct(s, kind) and local_path.startswith(_library_root(kind)):
+        return _place_directly(job, s, local_path, name, transport, kind)
 
 
     name, warning = _avoid_clobbering(transport, name, job, s)
@@ -1344,7 +1380,7 @@ def _avoid_clobbering(transport, name, job, s):
                     % (prior_what, os.path.basename(tagged)))
 
 
-def _place_directly(job, s, local_path, name, transport):
+def _place_directly(job, s, local_path, name, transport, kind="movie"):
     """Move a rip that is already on the share into its final folder.
 
     The whole transfer stage collapses to a rename, so this reports the truth about
@@ -1367,7 +1403,7 @@ def _place_directly(job, s, local_path, name, transport):
     # Blu-ray landed in //host/OTHER/Movies instead of //host/OTHER/RiparrDumps/Movies,
     # next to the user's own folders. `_library_root()` is the same path `_job_dir`
     # writes into, which is why the two must agree.
-    dest = os.path.join(_library_root(), name)
+    dest = os.path.join(_library_root(kind), name)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     try:
         os.replace(local_path, dest)
@@ -1483,7 +1519,8 @@ def _run_job(job):
         if job is None:
             return                       # needs_input, skipped, or ejected
 
-        mode, refusal = _plan_transfer(job.get("bytes_total") or 0)
+        mode, refusal = _plan_transfer(job.get("bytes_total") or 0,
+                                       job.get("kind") or "movie")
         if refusal:
             raise RipFailed(refusal)
         db.update_job(job["id"], mode=mode)
@@ -1603,7 +1640,7 @@ def reverify(job_id, mode="quick"):
     if not local or not os.path.exists(local):
         return False, ("The staged copy is gone, so there is nothing to compare "
                        "against. Re-rip the disc to check it.")
-    share = db.default_share()
+    share, _ = db.destination(job.get("kind") or "movie")
     if not share:
         return False, "There's no library share configured."
     name = _remote_name(job)
@@ -1672,8 +1709,7 @@ def _remote_name(job):
     if name:
         return name
     dest = job.get("dest_path") or ""
-    s = _settings()
-    folder = (s.get("movie_folder") or "Movies").strip("/")
+    _, folder = db.destination(job.get("kind") or "movie")
     at = dest.find("/%s/" % folder) if folder else -1
     return dest[at + 1:] if at >= 0 else None
 

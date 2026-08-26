@@ -379,10 +379,21 @@ def _task_key_check():
 
 
 def _task_share_check():
-    share = db.default_share()
-    if not share:
+    """Every share something is configured to write to, not just the default one.
+
+    Films and television can be on different machines. Checking only the default share
+    means the health check passes while the machine half the rips are bound for has
+    been asleep for a week.
+    """
+    ids = db.shares_in_use()
+    if not ids:
         return "No share configured"
-    return "Share %s reachable" % share["host"]
+    names = []
+    for sid in ids:
+        share = db.share_by_id(sid)
+        if share:
+            names.append(share["host"])
+    return "Share%s %s reachable" % ("s" if len(names) > 1 else "", ", ".join(names))
 
 
 def _task_backup():

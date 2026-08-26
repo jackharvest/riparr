@@ -813,7 +813,15 @@ def _smb_tool_missing(request, exc):
 
 @app.get("/api/shares")
 def shares_list(user=Depends(require_user)):
-    return {"shares": db.list_shares()}
+    """Every share, and what each kind of disc is currently pointed at.
+
+    Returned together because the Library page draws them together: a share list with
+    no indication of what writes to it is a list of network paths, and the question
+    people actually have is "where do my films go".
+    """
+    return {"shares": db.list_shares(),
+            "destinations": db.destinations(),
+            "library": {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}}
 
 
 @app.post("/api/shares/discover")
@@ -824,6 +832,12 @@ def shares_discover(user=Depends(require_user)):
 @app.post("/api/shares/browse")
 def shares_browse(body: ShareQuery, user=Depends(require_user)):
     return SH.list_shares(body.host, body.username, body.password)
+
+
+@app.exception_handler(SH.BadPath)
+def _bad_share_path(request, exc):
+    """A share or folder that cannot be used. The user's typing, not a server fault."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.post("/api/shares/test")
@@ -838,8 +852,13 @@ def shares_create(body: ShareCreate, user=Depends(require_user)):
     if not result.get("ok"):
         raise HTTPException(status_code=400,
                             detail=result.get("error", "The write test failed"))
-    sid = db.add_share(body.name or ("%s/%s" % (body.host, body.share)),
-                       body.host, "%s/%s" % (body.share, body.path.strip("/")),
+    # Store what was proved, not what was typed. Normalisation can move a segment from
+    # the share box into the folder box -- somebody pasting `Media/Movies` into "Share"
+    # gets share `Media`, folder `Movies` -- and storing the typed version would save a
+    # path the write test never used.
+    share, path = result["share"], result["path"]
+    sid = db.add_share(body.name or SH.describe(body.host, share, path).lstrip("/"),
+                       body.host, "/".join(x for x in (share, path) if x),
                        body.username, body.password)
     db.mark_share_verified(sid)
     return {"ok": True, "id": sid, "test": result}
@@ -847,7 +866,16 @@ def shares_create(body: ShareCreate, user=Depends(require_user)):
 
 @app.delete("/api/shares/{share_id}")
 def shares_delete(share_id: int, user=Depends(require_user)):
+    """Remove a share, and stop anything pointing at it.
+
+    A destination naming a share that no longer exists falls back to the default one
+    anyway, but leaving the dead id in settings means the page shows a blank selection
+    and the next share to be given that id inherits somebody else's films.
+    """
     db.delete_share(share_id)
+    for kind, (share_key, _, _) in db.KINDS.items():
+        if db.get(share_key) == share_id:
+            db.set(share_key, None)
     return {"ok": True}
 
 

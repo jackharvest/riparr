@@ -471,6 +471,14 @@ select option { background: var(--dropdown); }
 .btn.danger { border-color: var(--bad); background: var(--bad); color: #fff; }
 .btn.danger:hover:not(:disabled) { filter: brightness(.92); }
 
+/* A solid red button per row turns a list of two shares into a wall of alarm. This is
+   the same action, drawn as an ordinary button until the pointer is on it -- the
+   colour arrives at the moment it means something. */
+.btn.quiet-danger { color: var(--fg-muted); }
+.btn.quiet-danger:hover:not(:disabled) {
+  border-color: var(--bad); background: var(--bad); color: #fff;
+}
+
 .btn-row { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
 
 /* Side-by-side fields have no room for a 150px label column, so they stack. */
@@ -1093,6 +1101,52 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .ni-title .ni-dur { color: var(--fg-strong); font-variant-numeric: tabular-nums; }
 .ni-title .ni-size { font-size: 11.5px; }
 .notify-events { display: grid; gap: 2px; margin-bottom: 4px; }
+
+/* ── where each kind of disc goes ──
+   Two blocks, each pairing a share with a folder and showing the path they add up to.
+   The path line is the load-bearing part: "share" and "folder" only mean anything
+   together, and seeing the whole thing is how somebody notices they have pasted a
+   whole path into the share box -- the mistake that produces an SMB logon failure and
+   sends them off to check a password that was never wrong. */
+.dests { display: grid; gap: 16px; }
+.dest {
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  padding: 14px 16px 4px;
+}
+.dest-h {
+  font-size: 14px; font-weight: 700; color: var(--fg-strong);
+  margin-bottom: 12px;
+}
+.dest-f { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 16px; }
+.dest-f .f { display: block; max-width: none; }
+.dest-f .f > span:first-child {
+  display: block; flex: none; text-align: start;
+  min-height: 0; padding-top: 0; margin: 0 0 5px;
+}
+.dest-f .f > input, .dest-f .f > select { width: 100%; }
+.dest-path {
+  font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+  color: var(--fg-strong); background: rgba(0,0,0,.22);
+  border-radius: var(--radius); padding: 8px 11px;
+  word-break: break-all; margin-bottom: 10px;
+}
+.dest-note {
+  font-size: 12.5px; line-height: 18px; color: var(--fg-muted);
+  padding-bottom: 12px;
+}
+.dest-note code { font-size: 12px; }
+
+.shares { border: 1px solid var(--line-2); border-radius: var(--radius);
+          overflow: hidden; margin-bottom: 14px; }
+.shares .rowitem { cursor: default; }
+.share-add {
+  margin-top: 4px; padding: 16px 16px 6px;
+  border: 1px solid var(--line-2); border-radius: var(--radius);
+  background: rgba(255,255,255,.03);
+}
+.share-add h3 { font-size: 15px; color: var(--fg-strong); margin-bottom: 6px; }
+.share-add .muted { margin-bottom: 16px; }
+.share-add .result .why { white-space: pre-wrap; }
 
 /* ── the saved Wi-Fi list ──
    Ordered, because wpa_supplicant joins the best network it can see and this list is

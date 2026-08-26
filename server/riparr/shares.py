@@ -44,12 +44,17 @@ def _auth_file(username, password):
     wizard would be visible to `ps` for the life of the call.
 
     An authentication file also gives somewhere to put the domain, which matters:
-    accounts are commonly given as DOMAIN\\user or user@domain, and the domain has to be
-    split out rather than passed through as part of the username.
+    accounts are commonly given as DOMAIN\\user, DOMAIN/user or user@domain, and the
+    domain has to be split out rather than passed through as part of the username. A
+    forward slash was missing from that list, which meant `WORKGROUP/jack` was sent as
+    a username literally containing a slash -- and every server answers that with
+    NT_STATUS_LOGON_FAILURE, which reads as "wrong password". mount-library.sh already
+    split on both; this did not.
     """
     domain = ""
-    if username and "\\" in username:
-        domain, username = username.split("\\", 1)
+    if username and ("\\" in username or "/" in username):
+        sep = "\\" if "\\" in username else "/"
+        domain, username = username.split(sep, 1)
     elif username and "@" in username:
         username, domain = username.split("@", 1)
 
@@ -77,6 +82,51 @@ def _forget(path):
         os.unlink(path)
     except OSError:
         pass
+
+
+class BadPath(ValueError):
+    """A share or folder that cannot be turned into somewhere to write."""
+
+
+def normalise(share, path=""):
+    """Turn whatever somebody typed into (share, folder) that smbclient can use.
+
+    Three things go wrong here and all of them used to end in a bare SMB error code.
+
+    **Backslashes.** Everyone types Windows paths with them, because that is how
+    Windows shows them. smbclient wants forward slashes.
+
+    **Everything in one box.** People paste `Media/Movies/4K` -- or the whole
+    `\\tower\Media\Movies` -- into "Share". smbclient then tries to connect to a
+    *share* called `Media/Movies/4K`, and a NAS that does not want to confirm which
+    shares exist answers an unknown share name with NT_STATUS_LOGON_FAILURE. Which
+    reads as "your password is wrong", sends the user off to check their password, and
+    is nothing to do with the password. So the first segment is the share and the rest
+    is folder, wherever it was typed.
+
+    **`..`** is refused outright rather than normalised away: nothing on this box has a
+    reason to write above the folder the user named, and quietly reinterpreting it
+    would be worse than saying no.
+    """
+    def clean(v):
+        v = (v or "").replace("\\", "/").strip()
+        # A pasted UNC path: //host/share/folder. The host is already its own field, so
+        # dropping it here is what makes pasting one work at all.
+        v = re.sub(r"^/{2,}[^/]+/", "", v)
+        return [seg for seg in v.split("/") if seg and seg != "."]
+
+    parts = clean(share) + clean(path)
+    if any(seg == ".." for seg in parts):
+        raise BadPath("A folder path can't contain '..'.")
+    if not parts:
+        raise BadPath("Which share should Riparr write to?")
+    return parts[0], "/".join(parts[1:])
+
+
+def describe(host, share, path=""):
+    """The UNC path a share and folder add up to, for showing back to the user."""
+    tail = "/".join(x for x in (share, path) if x)
+    return "//%s/%s" % (host, tail) if tail else "//%s" % host
 
 
 def discover(timeout=2.5):
@@ -163,37 +213,71 @@ def test_write(host, share, path, username="", password=""):
 
     An SMB write that returns success is not proof of a good file (D6). The read-back
     is the point of this function; without it the check is theatre.
+
+    Returns the normalised (share, path) it actually used, because the caller has to
+    store the same thing this proved -- and normalisation can move a segment from one
+    field to the other.
     """
+    share, path = normalise(share, path)
     token = "riparr-write-test-%d" % int(time.time())
     body = "Riparr write test. Safe to delete.\n%s\n" % token
 
     if P.MOCK:
         time.sleep(0.9)
+        # Two named failures, so the interface's error rendering is exercisable off
+        # hardware. They go through `_explain` like a real one -- a mock that returns a
+        # tidier error than production is a mock that hides the thing being tested.
+        if "logon" in (share or "").lower() or "logon" in (path or "").lower():
+            return {"ok": False, "stage": "write",
+                    "error": _explain("session setup failed: NT_STATUS_LOGON_FAILURE",
+                                      host, share, path, username)}
         if "bad" in (share or "").lower() or "bad" in (path or "").lower():
             return {"ok": False, "stage": "write",
-                    "error": "NT_STATUS_ACCESS_DENIED writing to //%s/%s" % (host, share)}
-        return {"ok": True, "wrote": token, "verified": True,
-                "target": "//%s/%s/%s" % (host, share, path.strip("/"))}
+                    "error": _explain("NT_STATUS_ACCESS_DENIED",
+                                      host, share, path, username)}
+        return {"ok": True, "wrote": token, "verified": True, "share": share,
+                "path": path, "target": describe(host, share, path)}
 
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write(body)
         local = f.name
-    remote_dir = (path or "").strip("/")
+    remote_dir = path
     remote = "%s/%s.txt" % (remote_dir, token) if remote_dir else "%s.txt" % token
     auth, authfile = _auth_args(username, password)
     base = [SMBCLIENT, "//%s/%s" % (host, share)] + auth + ["-c"]
 
     try:
+        # Make the folder before writing into it. smbclient's `mkdir` is not recursive
+        # and errors on a directory that already exists, so every segment is attempted
+        # and no result is inspected -- "it is already there" and "I just made it" are
+        # the same outcome, and a genuine failure surfaces on the put a line later with
+        # a much better message than mkdir would have given.
+        #
+        # Without this, naming a folder a few levels down -- `Movies/4K/Marvel` -- got
+        # NT_STATUS_OBJECT_PATH_NOT_FOUND from the put, which reads as "your path is
+        # wrong" when the path was right and simply did not exist yet.
+        if remote_dir:
+            walk, cmds = "", []
+            for seg in remote_dir.split("/"):
+                walk = "%s/%s" % (walk, seg) if walk else seg
+                cmds.append('mkdir "%s"' % walk)
+            subprocess.run(base + [";".join(cmds)],
+                           capture_output=True, text=True, timeout=45)
+
         p = subprocess.run(base + ['put "%s" "%s"' % (local, remote)],
                            capture_output=True, text=True, timeout=45)
         if p.returncode != 0:
-            return {"ok": False, "stage": "write", "error": _clean(p.stderr or p.stdout)}
+            return {"ok": False, "stage": "write",
+                    "error": _explain(p.stderr or p.stdout, host, share, remote_dir,
+                                      username)}
 
         back = local + ".back"
         p = subprocess.run(base + ['get "%s" "%s"' % (remote, back)],
                            capture_output=True, text=True, timeout=45)
         if p.returncode != 0:
-            return {"ok": False, "stage": "readback", "error": _clean(p.stderr or p.stdout)}
+            return {"ok": False, "stage": "readback",
+                    "error": _explain(p.stderr or p.stdout, host, share, remote_dir,
+                                      username)}
         verified = os.path.exists(back) and open(back).read() == body
 
         subprocess.run(base + ['del "%s"' % remote], capture_output=True, timeout=30)
@@ -206,8 +290,8 @@ def test_write(host, share, path, username="", password=""):
         if not verified:
             return {"ok": False, "stage": "verify",
                     "error": "The file read back different from what was written."}
-        return {"ok": True, "wrote": token, "verified": True,
-                "target": "//%s/%s/%s" % (host, share, remote_dir)}
+        return {"ok": True, "wrote": token, "verified": True, "share": share,
+                "path": remote_dir, "target": describe(host, share, remote_dir)}
     except FileNotFoundError:
         raise SmbToolMissing()
     except subprocess.TimeoutExpired:
@@ -224,6 +308,57 @@ def test_write(host, share, path, username="", password=""):
 def _clean(s):
     s = re.sub(r"\s+", " ", (s or "")).strip()
     return s[:300] or "unknown error"
+
+
+# What smbclient says, and what it means to somebody who just typed a server name into
+# a box. These codes are the entire failure surface of setting up a share, and left raw
+# they send people to fix the wrong thing -- NT_STATUS_LOGON_FAILURE in particular is
+# the answer many NAS boxes give for a *share name* they do not recognise, because
+# admitting which shares exist is an enumeration they would rather not allow.
+_MEANINGS = [
+    ("NT_STATUS_LOGON_FAILURE",
+     "The server refused the username and password — or it doesn't have a share by "
+     "that name. Some NAS boxes give this same answer for both, rather than admit "
+     "which shares exist. Check the share name as well as the password, and note that "
+     "a domain account goes in as DOMAIN\\name."),
+    ("NT_STATUS_ACCESS_DENIED",
+     "The account signed in, but isn't allowed to write there. Give it write "
+     "permission on the share, or point Riparr at a folder it owns."),
+    ("NT_STATUS_BAD_NETWORK_NAME",
+     "There's no share by that name on this server. The share is the top-level name "
+     "the server publishes; anything below it goes in the folder box."),
+    ("NT_STATUS_OBJECT_PATH_NOT_FOUND",
+     "That folder isn't on the share and couldn't be created. Usually the account has "
+     "no permission to make folders there."),
+    ("NT_STATUS_OBJECT_NAME_COLLISION",
+     "Something with that name is already there and isn't a folder."),
+    ("NT_STATUS_DISK_FULL", "The share is full."),
+    ("NT_STATUS_ACCOUNT_LOCKED_OUT",
+     "The server has locked this account out, usually after repeated wrong passwords. "
+     "Unlock it on the server before trying again."),
+    ("NT_STATUS_PASSWORD_EXPIRED", "The account's password has expired on the server."),
+    ("NT_STATUS_CONNECTION_REFUSED",
+     "The server refused the connection. File sharing (SMB) may be turned off on it."),
+    ("NT_STATUS_HOST_UNREACHABLE",
+     "The box can't reach that server at all. Check the name or address."),
+    ("NT_STATUS_IO_TIMEOUT",
+     "The server stopped answering part way through. If it goes to sleep, wake it and "
+     "try again."),
+    ("NT_STATUS_INVALID_PARAMETER",
+     "The server rejected the request. This usually means it wants a newer or older "
+     "SMB version than was offered."),
+]
+
+
+def _explain(raw, host, share, path, username):
+    """The SMB error, with a sentence about what to do, and the target it applied to."""
+    text = _clean(raw)
+    for code, meaning in _MEANINGS:
+        if code in text:
+            return "%s\n\nRiparr was trying to write to %s%s.\n(%s)" % (
+                meaning, describe(host, share, path),
+                " as %s" % username if username else " as a guest", text)
+    return text
 
 
 # ─────────────────────────── moving a finished rip ───────────────────────────

@@ -580,35 +580,49 @@ def usb_host_fix():
 LIBRARY_MOUNT = os.environ.get("RIPARR_LIBRARY_MOUNT", "/srv/library")
 
 
-def library_mounted():
-    """Is the library mounted and writable by this process right now?
+def library_mount(share=None):
+    """The local path a given share is mounted at.
+
+    The default share keeps `/srv/library`, unchanged, because that path is baked into
+    an installed unit file and into every box already running. A second share -- films
+    on the NAS, box sets on the spare drive -- gets `/srv/library-<id>` beside it.
+    """
+    if not share or share.get("is_default"):
+        return LIBRARY_MOUNT
+    return "%s-%d" % (LIBRARY_MOUNT, int(share["id"]))
+
+
+def library_mounted(share=None):
+    """Is this share mounted and writable by this process right now?
 
     Checked rather than assumed on every job, because a NAS that went away leaves a
     mount point that still exists and a directory that is no longer the share. Writing
     a 22 GiB rip into what turns out to be the root filesystem is how an appliance
     fills its own card and dies, so this asks the kernel, not the path.
     """
+    mount = library_mount(share)
     if MOCK:
-        return os.path.isdir(LIBRARY_MOUNT) and os.access(LIBRARY_MOUNT, os.W_OK)
+        return os.path.isdir(mount) and os.access(mount, os.W_OK)
     try:
-        if not os.path.ismount(LIBRARY_MOUNT):
+        if not os.path.ismount(mount):
             return False
     except OSError:
         return False
-    return os.access(LIBRARY_MOUNT, os.W_OK)
+    return os.access(mount, os.W_OK)
 
 
-def library_status():
+def library_status(share=None):
     """What the interface needs to say about direct-to-library writing."""
-    mounted = library_mounted()
+    mount = library_mount(share)
+    mounted = library_mounted(share)
     free = None
     if mounted:
         try:
-            st = os.statvfs(LIBRARY_MOUNT)
+            st = os.statvfs(mount)
             free = st.f_bavail * st.f_frsize
         except OSError:
             free = None
-    return {"mount": LIBRARY_MOUNT, "mounted": mounted, "free_bytes": free}
+    return {"mount": mount, "mounted": mounted, "free_bytes": free}
 
 
 # ─────────────────────── how fast is this card, really? ───────────────────────
