@@ -14,7 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
-from . import (__version__, db, drives as DRV, led as LED, makemkv as MK,
+from . import (__version__, artwork as ART, db, drives as DRV, led as LED,
+               makemkv as MK,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
                updater)
 
@@ -892,6 +893,38 @@ def system_power(body: PowerAction, user=Depends(require_user)):
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"ok": True, "action": body.action, "message": message}
+
+
+@app.get("/api/artwork")
+def artwork_lookup(label: str = "", user=Depends(require_user)):
+    """Cover art for a disc label, only when the match is beyond doubt.
+
+    Returns `{"ok": false}` far more often than not, and that is the intended
+    behaviour: a confidently wrong poster is worse than a plain background.
+    """
+    if not db.get("disc_artwork", True):
+        return {"ok": False, "reason": "disabled"}
+    hit = ART.look_up(label)
+    if not hit:
+        return {"ok": False}
+    return {"ok": True, "title": hit["title"], "confidence": hit["confidence"],
+            "image": "/api/artwork/image/%s" % hit["token"]}
+
+
+@app.get("/api/artwork/image/{token}")
+def artwork_image(token: str, user=Depends(require_user)):
+    """Proxy the matched image.
+
+    The caller passes a token this process issued, never a URL: an endpoint that
+    fetches whatever it is handed is an open proxy sitting inside somebody's LAN.
+    Cached in the browser for a day -- it is decoration, and the disc will be gone
+    long before it goes stale.
+    """
+    blob, ctype = ART.image_bytes(token)
+    if not blob:
+        raise HTTPException(status_code=404, detail="No image for that token.")
+    return Response(content=blob, media_type=ctype,
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.post("/api/system/usb-host")

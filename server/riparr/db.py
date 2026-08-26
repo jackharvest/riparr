@@ -106,6 +106,10 @@ DEFAULTS = {
     "transfer_mode": "auto",
     "verify_after_transfer": True,
     "keep_local_copy": True,
+    # Looks the disc up on Wikipedia to put its poster faintly behind the page. It is
+    # the only feature that tells an outside server what you are ripping, so it is a
+    # setting rather than an assumption -- and purely decorative when off.
+    "disc_artwork": True,
     "webhook_url": "",
     "watch_folder": "",
     # Notifications. The box's whole promise is "walk away", so these are the only way

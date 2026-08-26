@@ -672,9 +672,19 @@ const views = {};
    the disc name the empty state had just said, which is the kind of duplication that
    reads as an interface describing its own data model. */
 views.queue = async () => {
-  const { jobs } = await api.get("/api/queue");
+  // Fetch the drive state rather than reading the snapshot boot() took. The tray is
+  // the one thing on this page that changes without the user doing anything -- a disc
+  // goes in and nothing on screen knew, and the Refresh button re-rendered the same
+  // stale snapshot, so it looked broken rather than slow.
+  const [{ jobs }, st, ar] = await Promise.all([
+    api.get("/api/queue"),
+    api.get("/api/status"),
+    api.get("/api/autorip"),
+  ]);
+  state.status = st;
   const drives = state.status.drives || [];
-  const ar = await api.get("/api/autorip");
+  const inTray = drives.find(d => d.present);
+  setDiscArt(inTray && inTray.label);       // fire and forget; never blocks the render
   const busy = jobs.some(j => j.state !== "needs_input");
   const loaded = drives.find(d => d.present);
   return `
@@ -1753,6 +1763,10 @@ async function route() {
   wireContent(section, sub);
   $("#sidebar").classList.remove("open");
   scheduleLiveRefresh(section);
+  // The backdrop belongs to the tray, so it goes quiet everywhere else rather than
+  // following the user into Settings. Kept in the DOM, only faded out, so coming back
+  // to the queue is instant instead of re-fetching and re-fading.
+  if (section !== "queue") { const a = $("#disc-art"); if (a) a.classList.remove("on"); }
 }
 
 /* ── live refresh ──
@@ -1765,12 +1779,65 @@ async function route() {
    worse bug than a stale page. */
 let liveTimer = null;
 
+/* ── disc artwork ──
+   Plex's trick: show the film's poster faintly behind the page, so the box visibly
+   knows what you put in. Deliberately quiet -- see .disc-art in app.css.
+
+   The element is created once and lives outside #content, because the queue re-renders
+   every 2.5 seconds while a rip runs and rebuilding it there would restart the fade on
+   every tick. Keyed by label so an unchanged disc never re-fetches. */
+let artLabel = null;
+
+function discArtEl() {
+  let el = $("#disc-art");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "disc-art";
+    el.className = "disc-art";
+    document.body.insertBefore(el, document.body.firstChild);
+  }
+  return el;
+}
+
+function clearDiscArt() {
+  artLabel = null;
+  const el = $("#disc-art");
+  if (el) { el.classList.remove("on"); el.style.backgroundImage = ""; }
+}
+
+async function setDiscArt(label) {
+  if (!label) return clearDiscArt();
+  if (label === artLabel) return;          // same disc, already decided
+  artLabel = label;
+  let hit;
+  try { hit = await api.get(`/api/artwork?label=${encodeURIComponent(label)}`); }
+  catch (e) { return; }                     // offline: no backdrop, no complaint
+  if (artLabel !== label) return;           // disc changed while we were asking
+  if (!hit || !hit.ok) { const el = $("#disc-art"); if (el) el.classList.remove("on"); return; }
+  const el = discArtEl();
+  // Decode before revealing, so it fades in complete rather than painting in bands.
+  const img = new Image();
+  img.onload = () => {
+    if (artLabel !== label) return;
+    el.style.backgroundImage = `url("${hit.image}")`;
+    el.classList.add("on");
+    el.title = hit.title;
+  };
+  img.src = hit.image;
+}
+
 function scheduleLiveRefresh(section) {
   clearTimeout(liveTimer);
   if (section !== "queue") return;
-  const moving = $$(".job").length && !$$(".job.needs").length;
-  if (!moving) return;
-  liveTimer = setTimeout(() => { if (!document.hidden) route(); }, 2500);
+  // Still true: a job waiting for input has a form in it, and re-rendering underneath
+  // somebody mid-sentence is worse than a stale page.
+  if ($$(".job.needs").length) return;
+  // An *idle* queue has to keep looking too. Putting a disc in is the one thing on this
+  // page that happens with no user action, and this used to return early whenever the
+  // queue was empty -- so the tray stayed empty until the user clicked something, and
+  // Refresh re-rendered the same stale snapshot. Slower when idle: nothing is racing.
+  const delay = $$(".job").length ? 2500 : 5000;
+  liveTimer = setTimeout(() => { if (!document.hidden) route(); }, delay);
 }
 
 function collectSettings() {
