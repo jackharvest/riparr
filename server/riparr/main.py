@@ -364,6 +364,7 @@ def status(user=Depends(require_user)):
         # A refused duplicate leaves no job and no file, so this is the only trace of
         # it. The page turns it into "you already ripped this, here it is".
         "duplicate": RIP.pending_duplicate(),
+        "library": P.library_status(),
         "led": {"detected": LED.available(), "state": LED.current_state(),
                 "device": LED.SPI_DEV},
     }

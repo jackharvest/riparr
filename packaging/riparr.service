@@ -3,6 +3,10 @@ Description=Riparr — disc ripping appliance
 Documentation=https://github.com/jackharvest/riparr
 After=network-online.target
 Wants=network-online.target
+# The library mount is a convenience, never a dependency: Wants= rather than Requires=,
+# so a sleeping NAS degrades rips to staging on the card instead of refusing to start.
+Wants=riparr-library.service
+After=riparr-library.service
 
 [Service]
 Type=simple
@@ -47,7 +51,7 @@ ProtectHome=yes
 # The leading '-' matters: on stock Raspberry Pi OS the dedicated staging partition (D4)
 # does not exist yet, and systemd refuses to start a unit whose ReadWritePaths= names a
 # missing directory. Without it, first boot ends with a service that never starts.
-ReadWritePaths=/var/lib/riparr -/srv/staging
+ReadWritePaths=/var/lib/riparr -/srv/staging -/srv/library
 StateDirectory=riparr
 # /run/riparr, owned by the service account. This is how the unprivileged service asks
 # the root-side MakeMKV installer to run (riparr-makemkv.path watches it), and where

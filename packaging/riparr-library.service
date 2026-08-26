@@ -1,0 +1,28 @@
+[Unit]
+# Mounts the library share so MakeMKV can write films straight to it.
+#
+# A separate unit, and not an ExecStartPre= on riparr.service, for a reason that costs
+# an hour to find: riparr.service sets PrivateTmp=, ProtectSystem= and ProtectHome=,
+# which give it a private mount namespace. A mount made from inside that namespace is
+# invisible to everything else and does not survive to ExecStart -- the helper reported
+# success and /srv/library was still the root filesystem.
+#
+# Mounting from a plain unit puts it in the host namespace, and because systemd creates
+# the service's namespace from the host's at start, a mount that already exists is
+# inherited. Hence Before=riparr.service.
+Description=Riparr — mount the library share
+Documentation=https://github.com/jackharvest/riparr
+After=network-online.target
+Wants=network-online.target
+Before=riparr.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/riparr/tools/mount-library.sh
+# Lazy: a NAS that has gone away must not leave a unit that cannot stop, because
+# riparr.service is ordered after this one and would never start again.
+ExecStop=/bin/sh -c '/bin/umount -l /srv/library 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

@@ -126,6 +126,12 @@ DEFAULTS = {
     "keep_commentary": False,
     "min_title_seconds": 120,
     "rip_mode": "main",
+    # "auto" | "burst" | "stream" | "direct". Direct points MakeMKV at the library
+    # share itself, so nothing is staged on the card. On the reference board that is
+    # ~18 MB/s against the card's ~9.4, it removes the card as a size limit (a 22 GiB
+    # Blu-ray does not fit on a 32 GB card, ever), and it stops writing tens of
+    # gigabytes per disc through flash. The cost is that a rip now depends on the
+    # network for its whole length instead of only at the end.
     "transfer_mode": "auto",
     # "quick" | "deep" | "off". Quick compares the size the share reports against the
     # file that was sent -- nearly free, and it catches the failure that actually

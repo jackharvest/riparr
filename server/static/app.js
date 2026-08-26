@@ -1502,12 +1502,20 @@ settingsPages.ripping = (s) => `
     <label class="f"><span>Mode</span>
       <select data-set="transfer_mode">
         ${opt("auto", "Automatic (recommended)", s.transfer_mode)}
+        ${opt("direct", "Straight to your library — skip the card", s.transfer_mode)}
         ${opt("burst", "Always burst", s.transfer_mode)}
         ${opt("stream", "Always stream", s.transfer_mode)}
       </select>
-      <span class="help">Automatic streams when space is tight and rips at full speed,
-        ejecting early, when there's room. Throughput is identical either way — Wi-Fi is
-        the binding constraint, not the drive.</span></label>
+      <span class="help"><b>Straight to your library</b> writes the film to your share
+        as it comes off the disc, so nothing is staged on the card. On the reference
+        board that is about <b>18 MB/s against the card's 9.4</b> — so it is roughly
+        twice as fast — and it removes the card as a size limit, which is the only
+        reason a 22 GB Blu-ray will not fit on a 32 GB card. It also stops writing tens
+        of gigabytes per disc through flash that wears out.
+        <br><br>The trade: the rip needs the network for its whole length rather than
+        only at the end, and there is no second copy, so verification checks the size
+        rather than hashing. If your NAS sleeps or your Wi-Fi is patchy, leave this
+        off.</span></label>
     <label class="f"><span>Verify after transfer</span>
       <select data-set="verify_mode">
         ${opt("quick", "Quick — check the size", s.verify_mode)}

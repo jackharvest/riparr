@@ -755,6 +755,11 @@ def purge_staging(need_bytes=0, keep_newest=0):
         if need_bytes and freed >= need_bytes:
             break
         local = job["local_path"]
+        # In direct mode the "local" copy *is* the library copy -- there is no second
+        # one to reclaim, and a size comparison would be the file against itself. There
+        # is nothing here to free and everything to lose.
+        if local.startswith(P.LIBRARY_MOUNT):
+            continue
         name = _remote_name(job)
         try:
             size = os.path.getsize(local)
@@ -785,6 +790,21 @@ def _plan_transfer(needed_bytes):
     Refusing is the last resort, not the first. Before saying no, take back the space
     that is only being held as a convenience -- see `purge_staging`.
     """
+    # Direct mode writes to the share, so the card's size stops being the question.
+    # This is the branch D10's refusal was always waiting for -- not D11's follow-copy,
+    # but the simpler answer that the destination is already a filesystem we can write
+    # to, and on this hardware it is twice as fast as the card as well.
+    if use_direct():
+        free = 0
+        try:
+            free = P.library_status().get("free_bytes") or 0
+        except Exception:
+            pass
+        if needed_bytes and free and free < needed_bytes:
+            return None, ("This disc needs about %d GB and your library has %d GB "
+                          "free." % (needed_bytes // 2 ** 30, free // 2 ** 30))
+        return "direct", None
+
     free = _staging_free()
     short = (needed_bytes + WINDOW_BYTES - free) if needed_bytes else (WINDOW_BYTES - free)
     if short > 0:
@@ -805,16 +825,59 @@ def _plan_transfer(needed_bytes):
     return "burst", None
 
 
-def _job_dir(job_id):
-    d = os.path.join(STAGING, "job-%d" % job_id)
+def use_direct(s=None):
+    """Should this rip be written straight to the library instead of to the card?
+
+    Three things have to be true: the user asked for it, the share is mounted, and it
+    is writable *now*. The third is checked per job rather than trusted, because a NAS
+    that went away leaves the mount point behind as an ordinary directory -- and
+    writing 22 GiB into what is really the root filesystem is how the appliance fills
+    its own card and dies.
+    """
+    s = s or _settings()
+    if s.get("transfer_mode") != "direct":
+        return False
+    return P.library_mounted()
+
+
+def _library_root(s=None):
+    """Where finished films live, as a local path through the mount.
+
+    The share row's `path` is "SHARE/subdir"; the mount is the share, so everything
+    after the first segment is a directory inside it.
+    """
+    share = db.default_share() or {}
+    sub = (share.get("path") or "").strip("/").partition("/")[2]
+    return os.path.join(P.LIBRARY_MOUNT, sub) if sub else P.LIBRARY_MOUNT
+
+
+def _job_dir(job_id, direct=False):
+    """Where MakeMKV writes. On the card normally; on the share in direct mode.
+
+    In direct mode this is still a scratch directory rather than the film's final
+    folder: MakeMKV names the file itself, and a half-written MKV must never appear in
+    somebody's library where a media server will index it. The move into place happens
+    at the end and is a rename within one filesystem, so it is instant.
+    """
+    if direct:
+        d = os.path.join(_library_root(), ".riparr-incoming", "job-%d" % job_id)
+    else:
+        d = os.path.join(STAGING, "job-%d" % job_id)
     os.makedirs(d, exist_ok=True)
     return d
 
 
 def _cleanup_staging(job):
-    d = os.path.join(STAGING, "job-%d" % job["id"])
-    if os.path.isdir(d):
-        shutil.rmtree(d, ignore_errors=True)
+    """Remove a job's scratch directory, wherever it was.
+
+    Both candidates are tried rather than deciding from settings: `transfer_mode` can
+    change between a rip starting and this running, and the one thing that must not
+    happen is leaving a half-written MKV inside somebody's library.
+    """
+    for base in (STAGING, os.path.join(_library_root(), ".riparr-incoming")):
+        d = os.path.join(base, "job-%d" % job["id"])
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
 
 
 # Characters SMB and NTFS refuse outright. A film called "Mission: Impossible" is not
@@ -1006,7 +1069,8 @@ def _output_size(out_dir):
 
 
 def _rip(job, s, cancel_ev):
-    out_dir = _job_dir(job["id"])
+    direct = use_direct(s)
+    out_dir = _job_dir(job["id"], direct=direct)
     title = job["_title"]
     # Remember the disc now that we know what it is. record_disc used to happen only in
     # _finish(), after verification -- so a disc that ripped, uploaded and landed in the
@@ -1019,7 +1083,8 @@ def _rip(job, s, cancel_ev):
                        size_bytes=job.get("disc_bytes") or 0,
                        disc_family=job.get("disc_family"),
                        title_index=job.get("chosen_title"))
-    db.update_job(job["id"], state="ripping", phase="Reading the disc",
+    db.update_job(job["id"], state="ripping",
+                  phase="Reading the disc",
                   local_path=None, bytes_ripped=0, stage_pct=0)
     # Two stages wearing one state. MakeMKV analyses and decrypts for minutes before it
     # opens the output file, and that silent stretch is the one users read as a hang --
@@ -1168,6 +1233,13 @@ def _transfer(job, s, local_path, cancel_ev):
     name = "%s/%s" % (folder, rel) if folder else rel
 
     transport = SH.Transport(share)
+
+    # Direct mode: the film is already on the share -- MakeMKV wrote it there. What is
+    # left is a rename inside one filesystem, which is instant, instead of pushing 22
+    # gigabytes back over a network they are already on.
+    if use_direct(s) and local_path.startswith(_library_root()):
+        return _place_directly(job, s, local_path, name, transport)
+
     name, warning = _avoid_clobbering(transport, name, job, s)
     if warning:
         log.warning("Job %d: %s", job["id"], warning)
@@ -1263,6 +1335,48 @@ def _avoid_clobbering(transport, name, job, s):
                     % (prior_what, os.path.basename(tagged)))
 
 
+def _place_directly(job, s, local_path, name, transport):
+    """Move a rip that is already on the share into its final folder.
+
+    The whole transfer stage collapses to a rename, so this reports the truth about
+    that -- an upload that takes no time is not a bug and the interface should not
+    claim six minutes of work that did not happen.
+    """
+    total = os.path.getsize(local_path)
+    db.stage_start(job["id"], "upload")
+    db.update_job(job["id"], state="transferring",
+                  phase="Filing it in your library", bytes_sent=0, bytes_total=total)
+
+    name, warning = _avoid_clobbering(transport, name, job, s)
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
+        db.update_job(job["id"], warning=warning)
+
+    # `name` is share-relative; the mount is the share.
+    dest = os.path.join(P.LIBRARY_MOUNT, name)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    try:
+        os.replace(local_path, dest)
+    except OSError as e:
+        # Different filesystems, or a share that went away mid-rename. Copying is the
+        # honest fallback and is still cheaper than a re-rip.
+        log.warning("Job %d: could not rename into place (%s); copying instead.",
+                    job["id"], e)
+        try:
+            shutil.move(local_path, dest)
+        except OSError as e2:
+            raise RipFailed("The rip finished but couldn't be filed in your library: %s"
+                            % e2)
+
+    db.stage_end(job["id"])
+    db.update_job(job["id"], bytes_sent=total, eta_seconds=None,
+                  local_path=dest, remote_name=name,
+                  dest_path=transport.describe(name))
+    _cleanup_staging(job)               # the empty .riparr-incoming/job-N
+    log.info("Job %d written straight to the library: %s", job["id"], dest)
+    return transport, name
+
+
 # ── stage 4: prove it arrived ──
 
 def _verify(job, s, transport, name, local_path):
@@ -1272,6 +1386,20 @@ def _verify(job, s, transport, name, local_path):
     if mode == "off":
         db.update_job(job["id"], verified_mode="off")
         return
+
+    # Direct mode has only one copy of the film, so "read it back and compare" has
+    # nothing to compare against -- deep verification would hash the file against
+    # itself and report a triumphant success it did not earn. The size check still
+    # means something, because smbclient asks the server independently of the mount
+    # the file was written through, so a truncated write shows up. Say which one
+    # actually ran rather than quietly doing less than was asked.
+    if local_path.startswith(P.LIBRARY_MOUNT) and mode == "deep":
+        log.info("Job %d: deep verification is not possible on a direct rip; "
+                 "checking the size instead.", job["id"])
+        db.update_job(job["id"], warning="Written straight to your library, so there "
+                                         "is no second copy to hash. Riparr checked "
+                                         "the size instead.")
+        mode = "quick"
 
     db.stage_start(job["id"], "verify")
     db.update_job(job["id"], state="verifying", bytes_verified=0,

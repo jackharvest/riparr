@@ -557,6 +557,58 @@ def usb_host_fix():
     return True, "Reconfiguring the second USB-C socket, then restarting"
 
 
+# ─────────────────────── the library, mounted ───────────────────────
+#
+# The SD card is the slowest thing in the pipeline on this class of board. Measured on
+# the reference box, 600 MB each way:
+#
+#     write to the card         9.4 MB/s
+#     write through the mount  18.0 MB/s
+#     read back through it     17.8 MB/s
+#
+# So pointing MakeMKV at the share directly is not a workaround for a small card --
+# it is roughly twice as fast, and it retires the card as a size limit, which is the
+# only thing that stopped a 22 GiB Blu-ray fitting on a 32 GB card. It also stops
+# writing tens of gigabytes per disc through flash that has a finite number of them.
+#
+# The mount itself is made by `tools/mount-library.sh`, run by systemd as root before
+# the service starts. Nothing here mounts anything: this process is unprivileged and
+# should stay that way.
+
+LIBRARY_MOUNT = os.environ.get("RIPARR_LIBRARY_MOUNT", "/srv/library")
+
+
+def library_mounted():
+    """Is the library mounted and writable by this process right now?
+
+    Checked rather than assumed on every job, because a NAS that went away leaves a
+    mount point that still exists and a directory that is no longer the share. Writing
+    a 22 GiB rip into what turns out to be the root filesystem is how an appliance
+    fills its own card and dies, so this asks the kernel, not the path.
+    """
+    if MOCK:
+        return os.path.isdir(LIBRARY_MOUNT) and os.access(LIBRARY_MOUNT, os.W_OK)
+    try:
+        if not os.path.ismount(LIBRARY_MOUNT):
+            return False
+    except OSError:
+        return False
+    return os.access(LIBRARY_MOUNT, os.W_OK)
+
+
+def library_status():
+    """What the interface needs to say about direct-to-library writing."""
+    mounted = library_mounted()
+    free = None
+    if mounted:
+        try:
+            st = os.statvfs(LIBRARY_MOUNT)
+            free = st.f_bavail * st.f_frsize
+        except OSError:
+            free = None
+    return {"mount": LIBRARY_MOUNT, "mounted": mounted, "free_bytes": free}
+
+
 # ─────────────────── saying something with the drive itself ───────────────────
 #
 # The status LED on the board is the documented way the box speaks without a browser,
