@@ -3481,7 +3481,8 @@ function wireContent(section, sub) {
         the <code>netdev</code> group — re-running the installer adds it.</div></div>`;
       return;
     }
-    box.innerHTML = `<p class="muted" style="margin-bottom:10px">${esc(r.note)}</p>` +
+    box.innerHTML = `<p class="muted" style="margin-bottom:10px">${esc(r.note)}</p>
+      <div class="shares">` +
       r.networks.map((n, i) => `
       <div class="rowitem" ${saved.has(n.ssid) ? "" : `data-join="${i}"`}>
         <span class="wifi-lock">${icon(n.secure ? "lock" : "wifi")}</span>
@@ -3491,7 +3492,7 @@ function wireContent(section, sub) {
             n.band ? ` · ${n.band} GHz` : ""}${n.secure ? "" : " · open"}</div>
         </div>
         <span class="badge ${saved.has(n.ssid) ? "ok" : ""}">${
-          saved.has(n.ssid) ? "saved" : "add"}</span></div>`).join("");
+          saved.has(n.ssid) ? "saved" : "add"}</span></div>`).join("") + `</div>`;
 
     $$("#wifi-results [data-join]").forEach(node => node.onclick = () => {
       const n = r.networks[+node.dataset.join];

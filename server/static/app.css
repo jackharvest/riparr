@@ -1255,8 +1255,18 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
    here as it is on any other settings page rather than stretching to the window. */
 .chan-body { padding: 4px 16px 2px; border-top: 1px solid var(--line); }
 .chan-body .steps { margin-top: 14px; }
-.chan-body .btn-row { margin-bottom: 16px; }
-.chan-body .dc-when { padding-left: 0; }
+/* Line the buttons up with the fields rather than the panel edge. A test button sitting
+   under a right-aligned label column, at the far left, reads as belonging to the panel
+   rather than to the form above it. Same indent #w-detail uses, and dropped at the same
+   breakpoint where the labels stop being a column. */
+.chan-body .btn-row {
+  margin-bottom: 16px;
+  margin-left: calc(var(--form-label-w) + var(--form-label-gap));
+}
+@media (max-width: 1200px) { .chan-body .btn-row { margin-left: 0; } }
+/* ...unless the panel used a stacked two-column grid, where the fields start at the
+   panel edge and there is no label column to line up with. Email is the one that does. */
+.chan-body .grid2 ~ .btn-row { margin-left: 0; }
 
 @media (max-width: 620px) {
   .chan-head { gap: 11px; padding: 11px 12px; }
