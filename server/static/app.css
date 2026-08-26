@@ -680,20 +680,29 @@ td.stat .ic { font-size: var(--ic-nav); }
  * was a paragraph with form controls buried in it.
  */
 .rip-opts {
-  display: grid; gap: 12px; margin-top: 16px;
+  display: grid; gap: 12px;
+  /* The Auto Rip panel above carries its own 20px, and the disc panel below is a
+     .card with 16px. Sitting between two things that each space themselves, this had
+     none of its own and butted straight into the rip panel. */
+  margin: -4px 0 20px;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 }
 .ropt {
   border: 1px solid var(--line); border-radius: var(--radius);
   background: rgba(255,255,255,.02); padding: 13px 15px;
 }
-.ropt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* Label, then the button, then the control -- all on one line, so the card is two
+   rows tall instead of three. The button sits *left* of the select because it is what
+   you press to find out which option to pick: it reads as leading into the choice
+   rather than as an afterthought under it. */
+.ropt-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .ropt-k {
-  display: inline-flex; align-items: center; gap: 7px;
+  display: inline-flex; align-items: center; gap: 7px; margin-right: auto;
   font-size: 12.5px; font-weight: 600; color: var(--fg-strong);
 }
 .ropt-k .ic { width: 14px; height: 14px; color: var(--fg-muted); }
-.ropt-head select { width: auto; min-width: 190px; margin-left: auto; }
+.ropt-head select { width: auto; min-width: 190px; }
+.ropt-head .btn.sm { flex: 0 0 auto; }
 .ropt-why {
   margin: 9px 0 0; font-size: 12px; line-height: 18px; color: var(--fg-muted);
 }
@@ -705,10 +714,12 @@ td.stat .ic { font-size: var(--ic-nav); }
   font-size: 12px; line-height: 18px;
 }
 .ropt-warn .ic { color: var(--warn); flex: 0 0 auto; margin-top: 2px; width: 13px; height: 13px; }
-.ropt-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 11px; }
-.ropt-foot .test-out { flex: 1 1 100%; }
+/* Only takes space once it has something to say. */
+.ropt-out { display: block; margin-top: 8px; line-height: 18px; }
+.ropt-out:empty { display: none; }
 @media (max-width: 620px) {
-  .ropt-head select { margin-left: 0; width: 100%; }
+  .ropt-k { margin-right: 0; flex: 1 1 100%; }
+  .ropt-head select { width: 100%; }
 }
 
 /* ── the rips gallery ───────────────────────────────────

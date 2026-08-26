@@ -1149,6 +1149,8 @@ function ripOptions() {
     <div class="ropt">
       <div class="ropt-head">
         <span class="ropt-k">${icon("hard-drive")} Each rip goes</span>
+        <button class="btn sm" id="ar-speedtest"
+                title="Measures your card and says which of these suits it">Test my card</button>
         <select id="ar-route" title="Applies to every rip, automatic or started by hand">
           ${opt("direct", "straight to your library", s.transfer_mode)}
           ${opt("auto", "onto the card, then sent", s.transfer_mode)}
@@ -1163,10 +1165,7 @@ function ripOptions() {
              mid-disc costs a re-send rather than a re-rip.`}</p>
       ${!lib.mounted && direct ? `<p class="ropt-warn">${icon("triangle-exclamation")}
         <span>Your library isn't mounted, so rips will stage on the card until it is.</span></p>` : ""}
-      <div class="ropt-foot">
-        <button class="btn sm" id="ar-speedtest">Test my card</button>
-        <span class="test-out" id="ar-speed-out"></span>
-      </div>
+      <span class="test-out ropt-out" id="ar-speed-out"></span>
     </div>
 
     <div class="ropt">
