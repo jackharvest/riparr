@@ -687,7 +687,12 @@ views.queue = async () => {
   // polling, and putting a disc in is the one thing that happens with no user action.
   if (st.duplicate && st.duplicate.fingerprint) {
     goToDuplicate(st.duplicate);
-    return "";
+    // Not an empty string. Acknowledging the duplicate is a round trip, and a page
+    // that goes blank for even a moment reads as a crash rather than as a redirect.
+    return `<div class="card"><div class="empty-state">
+      <div class="big">${icon("compact-disc")}</div>
+      <h2>You've already ripped ${esc(st.duplicate.title || "this disc")}</h2>
+      <p>Taking you to it…</p></div></div>`;
   }
   const jobs = q.jobs;
   state.typical = q.typical_seconds;
