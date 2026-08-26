@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from . import platform as P
@@ -43,6 +44,107 @@ MANIFEST = {
          "sha256": "cee56de0baa5531abed16bd862742d308d772b4ab4dae16ee865bf74f04a1608"},
     ],
 }
+
+# ─────────────────────── is MakeMKV's own infrastructure up? ───────────────────────
+#
+# This matters more than it should. As of 2026-08 `makemkv.com` has been down for
+# weeks, which means the installer cannot fetch and -- because beta keys are published
+# on the forum and rotate -- the way to get a working key is a forum post. The two are
+# on different hosts and fail independently, so they are tracked separately: "the site
+# is down but the forum is up" is the exact situation, and it is the difference between
+# "you are stuck" and "go here and copy the key".
+
+SITES = [
+    {"key": "site", "name": "makemkv.com", "url": HOMEPAGE,
+     "why": "Where MakeMKV itself is downloaded from. While it is down Riparr cannot "
+            "install or update MakeMKV — an installation you already have keeps working."},
+    {"key": "forum", "name": "forum.makemkv.com", "url": "https://forum.makemkv.com/",
+     "why": "Where the free beta key is published, and where its author posts when the "
+            "site is having trouble. A different host from the main site, so it is "
+            "often up when the site is not."},
+]
+
+_SITE_CACHE = {"at": 0, "results": None}
+SITE_CACHE_SECONDS = 300
+
+
+def _probe(url, timeout=6):
+    """Is this host answering? Any HTTP reply counts, including an error page.
+
+    A 500 or a 403 means the server is there and talking, which is what a user needs to
+    know before being sent to it. Only a connection that cannot be made at all, or one
+    that hangs, is "down". Deliberately generous: the question is "is it worth clicking
+    that link", not "is the service healthy".
+    """
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("User-Agent", "Riparr")
+    started = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return {"up": True, "status": r.status,
+                    "ms": int((time.time() - started) * 1000)}
+    except urllib.error.HTTPError as e:
+        # It answered. It answered badly, and that is still an answer.
+        return {"up": True, "status": e.code, "ms": int((time.time() - started) * 1000),
+                "note": "answering, but with an error (%s)" % e.code}
+    except Exception as e:
+        return {"up": False, "status": None,
+                "ms": int((time.time() - started) * 1000),
+                "note": str(e)[:120]}
+
+
+def site_status(force=False):
+    """Both MakeMKV hosts, cached, so opening Settings does not hammer them.
+
+    Never raises and never blocks anything important -- this is decoration on a page,
+    and a box whose settings will not load because somebody else's web server is slow
+    is a worse box.
+    """
+    now = time.time()
+    if not force and _SITE_CACHE["results"] and now - _SITE_CACHE["at"] < SITE_CACHE_SECONDS:
+        return _SITE_CACHE["results"]
+    out = []
+    for site in SITES:
+        r = dict(site)
+        r.update(_probe(site["url"]))
+        out.append(r)
+    _SITE_CACHE["at"] = now
+    _SITE_CACHE["results"] = out
+    return out
+
+
+# ─────────────────────── what a beta key's expiry means ───────────────────────
+#
+# Beta keys are not a 30-day timer that starts when you paste one in. They are
+# published on the forum and expire on a **month boundary** -- a key issued mid-month
+# dies at the end of that month, so the time you get from one is anywhere between a day
+# and about five weeks. Counting down "23 days left" from the day it was entered would
+# be a confident, wrong number.
+#
+# So Riparr says the true thing instead: which month this key is good for, and that
+# a new one is a copy and paste away.
+
+def key_advice(entered_at=None):
+    """A month-boundary-aware note about the beta key. Never a countdown."""
+    now = time.localtime()
+    # The last day of the current month, without importing calendar arithmetic.
+    if now.tm_mon == 12:
+        nxt = time.struct_time((now.tm_year + 1, 1, 1, 0, 0, 0, 0, 1, -1))
+    else:
+        nxt = time.struct_time((now.tm_year, now.tm_mon + 1, 1, 0, 0, 0, 0, 1, -1))
+    end = time.mktime(nxt) - 86400
+    days = max(0, int((end - time.time()) // 86400))
+    return {
+        "month": time.strftime("%B", now),
+        "ends": time.strftime("%d %b", time.localtime(end)),
+        "days_to_month_end": days,
+        "soon": days <= 5,
+        "note": ("Free beta keys expire at the end of the month rather than a fixed "
+                 "number of days after you enter one, so this one stops working on or "
+                 "around %s. Getting the next one is a copy and paste."
+                 % time.strftime("%d %B", time.localtime(end))),
+    }
+
 
 # Shown before consent. Paraphrased from makemkv-oss-1.18.4/License.txt; the full text is
 # always one click away, and the wizard links to it rather than relying on this summary.
@@ -103,6 +205,8 @@ def info():
         "key_topic": FORUM_KEY_TOPIC,
         "install": dict(_state),
         "installable": can_install()[0],
+        "sites": site_status(),
+        "key_advice": key_advice(),
     }
 
 

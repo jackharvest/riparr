@@ -1689,6 +1689,57 @@ settingsPages.connect = async (s) => {
   </div></div>${saveBar()}`;
 };
 
+/* ── is MakeMKV's own infrastructure up? ──
+   Not decoration. makemkv.com has been down for weeks, and the free key is published
+   on the *forum*, which is a different host and is usually fine. "The site is down but
+   the forum is up" is the difference between "you are stuck" and "go here, copy the
+   key, paste it above" -- so the two are tracked separately and each says what its
+   being down actually costs the person reading. */
+function sitesPanel(mk) {
+  const sites = mk.sites || [];
+  if (!sites.length) return "";
+  const down = sites.filter(x => !x.up);
+  const advice = mk.key_advice || {};
+  return `
+  <div class="section"><h2>MakeMKV's website
+    <span class="grow"></span>
+    <span class="badge ${down.length ? "warn" : "ok"}">${
+      down.length === 0 ? "both reachable"
+      : down.length === sites.length ? "both unreachable"
+      : `${down.length} unreachable`}</span></h2><div>
+    <p class="muted">Riparr checks these because they are how MakeMKV gets installed and
+      how its free key gets renewed. Neither affects a copy that is already working.</p>
+    <div class="sites">
+      ${sites.map(x => `
+        <div class="site ${x.up ? "up" : "down"}">
+          <span class="site-dot">${icon(x.up ? "circle-check" : "circle-exclamation")}</span>
+          <div class="grow">
+            <div class="site-name"><a href="${esc(x.url)}" target="_blank" rel="noopener">${
+              esc(x.name)}</a>
+              <span class="site-state">${x.up
+                ? (x.note ? esc(x.note) : `answering in ${x.ms} ms`)
+                : "not answering"}</span></div>
+            <div class="site-why">${esc(x.why)}</div>
+            ${!x.up && x.key === "site" ? `
+              <div class="site-do">${icon("circle-info")} <span>An installed MakeMKV
+                keeps working — this only stops Riparr <b>installing or updating</b> it.
+                If you need a key, the forum below is a separate machine and is usually
+                still up.</span></div>` : ""}
+            ${!x.up && x.key === "forum" ? `
+              <div class="site-do">${icon("circle-info")} <span>This is where the free
+                key lives. If it is down and your key has lapsed, Blu-ray decryption
+                will stop until it comes back. DVDs are unaffected.</span></div>` : ""}
+          </div>
+          ${x.key === "forum" && x.up ? `<a class="btn" href="${esc(mk.key_topic)}"
+             target="_blank" rel="noopener">Get the current key</a>` : ""}
+        </div>`).join("")}
+    </div>
+    <div class="btn-row"><button class="btn" id="sites-recheck">Check again</button>
+      <span class="test-out" id="sites-out"></span></div>
+    ${advice.note ? `<p class="help site-note">${icon("clock")} ${esc(advice.note)}</p>` : ""}
+  </div></div>`;
+}
+
 const chanBadge = (ok) =>
   `<span class="badge ${ok ? "ok" : ""}">${ok ? "configured" : "off"}</span>`;
 
@@ -1754,12 +1805,12 @@ settingsPages.general = async (s) => {
         <div id="mk-progress"></div>`}
       <label class="f" style="margin-top:${st.installed ? 0 : 16}px"><span>Key</span>
         <input data-set="makemkv_key" id="mk-key-input" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key">
-        <span class="help">MakeMKV is free while it is in beta, behind a key that
-          GuinpinSoft rolls over roughly monthly.</span></label>
+        <span class="help">MakeMKV is free while it is in beta, behind a key GuinpinSoft
+          publishes on the forum. ${esc((mk.key_advice || {}).note || "")}</span></label>
       <div class="f"><span></span><div class="grow" id="mk-key-offer"></div></div>
-      <label class="f"><span>Warn me this many days before it expires</span>
-        <input type="number" data-set="warn_key_days" value="${s.warn_key_days}"></label>
     </div></div>
+
+    ${sitesPanel(mk)}
 
     <div class="section"><h2>Appearance</h2><div>
       <p class="muted">Riparr uses the theme.park variable set, so a theme you already run
@@ -2707,6 +2758,22 @@ function wireContent(section, sub) {
   // Fetching is a network round trip to somebody else's forum, so it happens after
   // the page is on screen rather than blocking it.
   if ($("#mk-key-offer")) offerBetaKey("#mk-key-offer", "#mk-key-input");
+
+  const recheck = $("#sites-recheck");
+  if (recheck) recheck.onclick = async () => {
+    const out = $("#sites-out");
+    recheck.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Checking…";
+    try {
+      await api.post("/api/makemkv/sites", {});
+      route();                       // re-render with the fresh answer
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+      recheck.disabled = false;
+    }
+  };
 
   const mkAccept = $("#mk-accept");
   if (mkAccept) {

@@ -1089,6 +1089,12 @@ def makemkv(user=Depends(require_user)):
     return MK.info()
 
 
+@app.post("/api/makemkv/sites")
+def makemkv_sites(user=Depends(require_user)):
+    """Re-probe MakeMKV's site and forum now, rather than serving the cached answer."""
+    return {"sites": MK.site_status(force=True)}
+
+
 @app.post("/api/makemkv/install")
 def makemkv_install(body: MakeMKVInstall, user=Depends(require_user)):
     """Refuses without consent. MakeMKV's EULA is between the user and GuinpinSoft (D14)."""
