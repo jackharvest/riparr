@@ -2440,9 +2440,10 @@ function wireContent(section, sub) {
   const ripNow = $("#rip-now");
   if (ripNow) ripNow.onclick = async () => {
     // Say something immediately. Starting a rip reads the disc before the job exists,
-    // which takes a few seconds on a DVD and longer if the drive is busy -- and the
-    // button used only to go quietly disabled, so the box looked broken during exactly
-    // the window where the user is least sure they clicked anything.
+    // and on a real encrypted DVD that scan is *nine minutes*, not the few seconds
+    // this comment used to claim -- so `POST /api/rip` is a nine-minute request. The
+    // spinner is not what saves it; the queue's own poll is. The job row appears
+    // within a second or two and replaces this whole panel, button and all.
     ripNow.disabled = true;
     const was = ripNow.innerHTML;
     ripNow.innerHTML = `<span class="spin"></span> Starting\u2026`;
