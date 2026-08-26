@@ -693,7 +693,9 @@ views.queue = async () => {
             <button class="tool" id="t-eject" ${drives.length && !busy ? "" : "disabled"}>
               <span class="ti">${icon("eject")}</span>Eject</button>`)}
     ${autoRipPanel(ar)}
-    <div class="card">
+    <div class="card${artState.image ? " has-art" : ""}">
+      ${artState.image ? `<div class="tray-art" role="presentation"
+           style="background-image:url('${artState.image}')"></div>` : ""}
       ${jobs.length ? `${jobs.map(jobRow).join("")}
         ${trayStrip(drives, state.status.optical)}`
       : tray(drives, state.status.optical, loaded && !busy)}
@@ -1763,10 +1765,6 @@ async function route() {
   wireContent(section, sub);
   $("#sidebar").classList.remove("open");
   scheduleLiveRefresh(section);
-  // The backdrop belongs to the tray, so it goes quiet everywhere else rather than
-  // following the user into Settings. Kept in the DOM, only faded out, so coming back
-  // to the queue is instant instead of re-fetching and re-fading.
-  if (section !== "queue") { const a = $("#disc-art"); if (a) a.classList.remove("on"); }
 }
 
 /* ── live refresh ──
@@ -1780,50 +1778,41 @@ async function route() {
 let liveTimer = null;
 
 /* ── disc artwork ──
-   Plex's trick: show the film's poster faintly behind the page, so the box visibly
-   knows what you put in. Deliberately quiet -- see .disc-art in app.css.
+   Plex's trick: the film's poster behind the disc panel, so the box visibly knows what
+   you put in. Deliberately quiet -- see .tray-art in app.css.
 
-   The element is created once and lives outside #content, because the queue re-renders
-   every 2.5 seconds while a rip runs and rebuilding it there would restart the fade on
-   every tick. Keyed by label so an unchanged disc never re-fetches. */
-let artLabel = null;
+   It lives *inside* the disc cell rather than behind the whole viewport. Two reasons.
+   A page-wide backdrop only shows where the page happens to be empty, so it vanished
+   on a narrow window and had to be switched off on mobile entirely; and anchored to
+   the panel it is composed against something, which is what makes it read as design
+   rather than as a picture that happens to be behind the text.
 
-function discArtEl() {
-  let el = $("#disc-art");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "disc-art";
-    el.className = "disc-art";
-    document.body.insertBefore(el, document.body.firstChild);
-  }
-  return el;
-}
-
-function clearDiscArt() {
-  artLabel = null;
-  const el = $("#disc-art");
-  if (el) { el.classList.remove("on"); el.style.backgroundImage = ""; }
-}
+   State, not DOM: the lookup result is cached here and `tray()` paints it on every
+   render. The queue re-renders every 2.5s during a rip, so anything that faded itself
+   in on each render would strobe. Painting the same background-image is a no-op for
+   the browser, so it simply sits there. */
+let artState = { label: null, image: null };
 
 async function setDiscArt(label) {
-  if (!label) return clearDiscArt();
-  if (label === artLabel) return;          // same disc, already decided
-  artLabel = label;
+  if (!label) { artState = { label: null, image: null }; return; }
+  if (label === artState.label) return;      // same disc, already decided
+  artState = { label: label, image: null };
   let hit;
   try { hit = await api.get(`/api/artwork?label=${encodeURIComponent(label)}`); }
-  catch (e) { return; }                     // offline: no backdrop, no complaint
-  if (artLabel !== label) return;           // disc changed while we were asking
-  if (!hit || !hit.ok) { const el = $("#disc-art"); if (el) el.classList.remove("on"); return; }
-  const el = discArtEl();
-  // Decode before revealing, so it fades in complete rather than painting in bands.
-  const img = new Image();
-  img.onload = () => {
-    if (artLabel !== label) return;
-    el.style.backgroundImage = `url("${hit.image}")`;
-    el.classList.add("on");
-    el.title = hit.title;
-  };
-  img.src = hit.image;
+  catch (e) { return; }                       // offline: no backdrop, no complaint
+  if (artState.label !== label) return;       // disc changed while we were asking
+  if (!hit || !hit.ok) return;                // not sure enough: show nothing
+  // Decode before painting, so it appears complete rather than in bands, and so a
+  // failed image never leaves a half-painted panel.
+  await new Promise((res) => {
+    const img = new Image();
+    img.onload = img.onerror = res;
+    img.src = hit.image;
+  });
+  if (artState.label !== label) return;
+  artState.image = hit.image;
+  artState.title = hit.title;
+  if (location.hash.replace(/^#\//, "").split("/")[0] === "queue") route();
 }
 
 function scheduleLiveRefresh(section) {
