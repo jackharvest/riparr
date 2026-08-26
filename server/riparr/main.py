@@ -1080,12 +1080,30 @@ def system_backup_delete(name: str, user=Depends(require_user)):
 
 # ─────────────────────────────── static ───────────────────────────────
 
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+class RevalidatingStatic(StaticFiles):
+    """Static files the browser must revalidate rather than assume.
+
+    With no Cache-Control at all, browsers apply a heuristic freshness lifetime and
+    happily serve a stale app.js for hours -- so an upgraded box keeps showing the old
+    interface and the user is told to "hard refresh", which is not an answer an
+    appliance gets to give. `no-cache` does not mean "do not store": the file is still
+    cached, it is just revalidated, so the normal case is a 304 with no body. On a LAN
+    that is free, and a plain reload always shows the version that is installed.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/static", RevalidatingStatic(directory=STATIC), name="static")
 
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC, "index.html"))
+    return FileResponse(os.path.join(STATIC, "index.html"),
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/{path:path}")
