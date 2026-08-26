@@ -684,6 +684,9 @@ views.queue = async () => {
   const jobs = q.jobs;
   state.typical = q.typical_seconds;
   state.typicalN = q.typical_samples;
+  state.typicalStages = q.typical_stages || {};
+  state.stageLabels = q.stage_labels || {};
+  state.stageOrder = q.stage_order || [];
   state.status = st;
   const drives = state.status.drives || [];
   const inTray = drives.find(d => d.present);
@@ -802,7 +805,60 @@ function jobRow(j) {
         </div>
       </div>
       <div class="job-steps">${stepHtml}</div>
+      ${stageClock(j)}
     </div>`;
+}
+
+/* ── the counting timer ──
+   MakeMKV cannot say how far through a disc scan it is, and the kernel cannot see the
+   reads because they go through /dev/sg0 -- so for the sixteen minutes before a byte
+   is written there is no percentage to show and never will be. What there is: this box
+   has done this before and took about as long each time.
+
+   So the slow stages get a clock instead of a bar. It counts up (which is always true)
+   against the median (which is a guess, and says so), and the remaining stages are
+   added on to answer the question actually being asked -- when can I come back. */
+function stageClock(j) {
+  const med = state.typicalStages || {};
+  const order = state.stageOrder || [];
+  const name = j.stage_name;
+  if (!name || !j.stage_started) return "";
+  const label = (state.stageLabels || {})[name] || name;
+  const elapsed = Math.max(0, Date.now() / 1000 - j.stage_started);
+  const mine = med[name] && med[name].seconds;
+
+  // Everything after this stage, at its usual cost. Verification is skipped when it
+  // is off, because promising a stage that will not run is worse than a vaguer number.
+  const at = order.indexOf(name);
+  const rest = at < 0 ? [] : order.slice(at + 1)
+    .filter(k => med[k] && !(k === "verify" && state.settings
+                             && state.settings.verify_mode === "off"));
+  const restSecs = rest.reduce((a, k) => a + med[k].seconds, 0);
+
+  if (!mine) {
+    return `<div class="clock">
+      <span class="clock-stage">${esc(label)}</span>
+      <span class="clock-el">${esc(duration(elapsed))}</span>
+      <span class="grow"></span>
+      <span class="muted">no history for this stage yet</span></div>`;
+  }
+  const left = mine - elapsed;
+  const over = left < 0;
+  // A stage that has run long is not a stage that has failed, and saying "0 min left"
+  // for six minutes is how an interface loses the user's trust. Say the true thing.
+  const rem = over ? `${duration(-left)} over the usual ${duration(mine)}`
+                   : `about ${duration(left)} left in this stage`;
+  const total = over ? null : left + restSecs;
+  return `<div class="clock${over ? " over" : ""}">
+    <span class="clock-stage"><i class="sg-${esc(name)}"></i>${esc(label)}</span>
+    <span class="clock-el">${esc(duration(elapsed))} of ~${esc(duration(mine))}</span>
+    <span class="grow"></span>
+    <span class="clock-est">${esc(rem)}${
+      total != null && restSecs > 0
+        ? ` · <b>done around ${esc(clockAt(Date.now() / 1000 + total))}</b>` : ""}</span>
+  </div>
+  <div class="clock-bar"><i class="sg-${esc(name)}"
+       style="width:${Math.min(100, (elapsed / mine) * 100).toFixed(1)}%"></i></div>`;
 }
 
 const leg = (p) => (p >= 100 ? "\u2713" : p > 0 ? `${Math.round(p)}%` : "");
@@ -1050,69 +1106,194 @@ function checkList(checks, fails, warns) {
   </details>`;
 }
 
-/* ── the rips gallery ──
-   A finished rip is a film, and a list of films should look like a shelf of films. The
-   table this replaced answered "what happened" precisely and "what have I got" not at
-   all -- and the artwork the box already fetches for the tray was thrown away the
-   moment the disc came out. Posters are the index here; the words underneath are the
-   detail you go looking for second. */
-views.history = async () => {
-  let { jobs } = await api.get("/api/history");
-  if (!jobs.length) {
-    return `${head("History", "Everything Riparr has finished or failed.")}
-      <div class="card"><div class="empty-state"><div class="big">${icon("clock-rotate-left")}</div>
-        <h2>No rips yet</h2><p>Finished rips appear here, with their artwork.</p></div></div>`;
-  }
-  // One tile per film, not per attempt. A shelf answers "what have I got"; eight tiles
-  // of the same disc from eight tries answers "what did I do last night". The newest
-  // attempt wins the tile and carries the state, and the rest become a count -- nothing
-  // is hidden, it is just not shouted eight times.
-  const byFilm = [];
-  const seen = new Map();
-  for (const j of jobs) {
-    // Group on the normalised name, not the fingerprint. Fingerprint looks like the
-    // right key -- it is the disc's actual identity -- but a job that died before
-    // identification finished never got one, so keying on it mixed hashes and titles
-    // and split a film into two tiles: `Trolls` beside `TROLLS`. Normalising the label
-    // collapses the raw volume label onto the resolved title, which is the whole point.
-    const key = (j.title || j.disc_label || "?")
-      .toLowerCase().replace(/[_.]+/g, " ").replace(/\s+/g, " ").trim();
-    const at = seen.get(key);
-    if (at === undefined) { seen.set(key, byFilm.length); byFilm.push({ ...j, tries: 1 }); }
-    else {
-      byFilm[at].tries += 1;
-      // A disc that eventually succeeded is a success, whenever that happened.
-      if (byFilm[at].state !== "done" && j.state === "done") {
-        byFilm[at] = { ...j, tries: byFilm[at].tries };
-      }
-      // Prefer a real title over a volume label, whichever attempt happened to get it.
-      if (!byFilm[at].title && j.title) byFilm[at].title = j.title;
-    }
-  }
-  jobs = byFilm;
+/* ── History: the data page ──
+   The two pages had swapped jobs. History was a wall of posters that answered "what
+   have I got" -- which Discs already knew, since Discs *is* the record of what this
+   box has seen -- and answered "what happened, and how long did it take" not at all.
+   A grouped tile saying "5 attempts" is the exact shape of a number with nowhere to
+   go: no way to see what the five were, when, or why four of them failed.
 
-  const card = (j) => {
-    const name = j.title || j.disc_label || "Unknown disc";
-    const bad = j.state !== "done";
-    return `<figure class="rip" data-art="${esc(j.title || j.disc_label || "")}">
+   So History is now one row per attempt, newest first, with the stage breakdown the
+   rip engine records and the retries the box can actually perform. Posters moved to
+   Discs, where the page had four columns of text and nothing to look at. */
+
+const RETRY_ICON = {
+  "upload": "upload", "rip": "compact-disc",
+  "verify-quick": "circle-check", "verify-deep": "magnifying-glass",
+};
+
+views.history = async () => {
+  const h = await api.get("/api/history");
+  const jobs = h.jobs || [];
+  if (!jobs.length) {
+    return `${head("History", "Every attempt, what each stage cost, and what can be retried.")}
+      <div class="card"><div class="empty-state"><div class="big">${icon("clock-rotate-left")}</div>
+        <h2>No rips yet</h2><p>Finished and failed rips are recorded here with a
+          breakdown of where the time went.</p></div></div>`;
+  }
+
+  // "5 attempts" was the old page's whole answer. The number is only useful if the
+  // five are visible, so each row is numbered within its film and every one of them is
+  // on screen -- the count becomes "try 4 of 5" on a row you can read the error of.
+  const key = (j) => (j.title || j.disc_label || "?")
+    .toLowerCase().replace(/[_.]+/g, " ").replace(/\s+/g, " ").trim();
+  const tally = new Map();
+  for (const j of jobs) tally.set(key(j), (tally.get(key(j)) || 0) + 1);
+  const seen = new Map();
+  // `jobs` is newest first, so counting down from the total numbers them in the order
+  // they actually happened.
+  for (const j of jobs) {
+    const k = key(j);
+    const n = (seen.get(k) || 0) + 1;
+    seen.set(k, n);
+    j._try = tally.get(k) - n + 1;
+    j._tries = tally.get(k);
+  }
+
+  const typical = h.typical_stages || {};
+  const row = (j) => {
+    const size = j.state === "done" ? j.bytes_sent || j.bytes_ripped || j.bytes_total
+                                    : j.bytes_ripped || 0;
+    // Work done, not wall clock. `finished_at` moves every time a job is retried or
+    // re-verified, so the span from start to finish on a job checked again an hour
+    // later reads "1h" for thirteen seconds of work. The stages know better, and this
+    // is then the same number the bar beside it is drawn from.
+    const worked = (j.stages || []).reduce((a, st) => a + st.seconds, 0);
+    const took = worked || (j.finished_at && j.started_at
+                            ? j.finished_at - j.started_at : null);
+    return `<tr class="hist ${j.state}" data-job="${j.id}">
+      <td class="stat">${icon(j.state === "done" ? "circle-check"
+                             : j.state === "cancelled" ? "ban"
+                             : "triangle-exclamation")}</td>
+      <td>
+        <div class="hist-title">${esc(j.title || j.disc_label || "Unknown disc")}</div>
+        ${j.title && j.disc_label && j.title !== j.disc_label
+          ? `<div class="hist-sub">${esc(j.disc_label)}</div>` : ""}
+        ${j.error ? `<div class="hist-err">${esc(j.error)}</div>` : ""}
+      </td>
+      <td class="num">${j._tries > 1
+        ? `<span title="This film has been attempted ${j._tries} times. Every attempt is a row here.">try ${j._try} of ${j._tries}</span>`
+        : `<span class="muted">1</span>`}</td>
+      <td class="num">${size ? esc(filesize(size)) : `<span class="muted">—</span>`}</td>
+      <td class="num">${took != null ? esc(duration(took)) : `<span class="muted">—</span>`}</td>
+      <td>${stageBar(j.stages, typical)}</td>
+      <td class="num"><span title="${esc(when(j.finished_at))}">${esc(ago(j.finished_at))}</span></td>
+      <td class="act">${(j.retries || []).map(r =>
+        `<button class="btn tiny" data-hretry="${j.id}" data-haction="${esc(r.action)}"
+                 title="${esc(r.why)}">${icon(RETRY_ICON[r.action] || "arrows-rotate")
+                 } ${esc(r.label)}</button>`).join("")}</td>
+    </tr>
+    ${j.dest_path ? `<tr class="hist-dest ${j.state}"><td></td>
+      <td colspan="7"><span class="muted">${icon("hard-drive")} ${esc(j.dest_path)}</span>${
+        j.verified_mode && j.verified_mode !== "off"
+          ? ` <span class="badge ok">${esc(j.verified_mode)} verified</span>` : ""}</td></tr>` : ""}`;
+  };
+
+  return `${head("History", "Every attempt, what each stage cost, and what can be retried.")}
+    <div class="card"><table class="hist-table">
+      <thead><tr>
+        <th class="stat"></th><th>Title</th><th class="num">Attempt</th>
+        <th class="num">Size</th><th class="num">Took</th><th>Where the time went</th>
+        <th class="num">When</th><th class="act"></th>
+      </tr></thead>
+      <tbody>${jobs.map(row).join("")}</tbody>
+    </table></div>
+    ${stageLegend(typical, h.stage_order, h.stage_labels)}`;
+};
+
+/* A proportional bar of the stages, because the interesting fact about a rip is not
+   that it took thirty minutes -- it is that half of that was spent before a single
+   byte was written, and no amount of staring at a total tells you that. */
+function stageBar(stages, typical) {
+  stages = (stages || []).filter(s => s.seconds > 0);
+  if (!stages.length) return `<span class="muted">—</span>`;
+  const total = stages.reduce((a, s) => a + s.seconds, 0);
+  return `<div class="stagebar">${stages.map(s => {
+    const med = typical[s.name] && typical[s.name].seconds;
+    const vs = med ? ` — usually ${duration(med)}` : "";
+    return `<i class="sg-${esc(s.name)}" style="flex:${s.seconds}"
+       title="${esc(s.label)}: ${esc(duration(s.seconds))}${vs}${
+         s.runs > 1 ? ` across ${s.runs} runs` : ""}"></i>`;
+  }).join("")}</div>
+  <div class="stagenums">${stages.map(s =>
+    `<span><i class="sg-${esc(s.name)}"></i>${esc(duration(s.seconds))}</span>`).join("")}
+  </div>`;
+}
+
+/* The key for the colours above, doubling as the answer to "how long does this box
+   normally take" -- which is the number the queue's counting timer is built from. */
+function stageLegend(typical, order, labels) {
+  order = order || [];
+  const have = order.filter(k => typical[k]);
+  if (!have.length) {
+    return `<p class="muted stage-note">Riparr needs two finished rips of the same kind
+      before it can say what is normal for this box. Until then the queue counts up
+      rather than down.</p>`;
+  }
+  return `<div class="card stage-key"><h3>Typical on this box</h3>
+    <div class="stage-key-row">${have.map(k =>
+      `<span class="sk"><i class="sg-${esc(k)}"></i>
+        <b>${esc((labels || {})[k] || k)}</b>
+        <span>${esc(duration(typical[k].seconds))}</span>
+        <span class="muted">${typical[k].samples} rip${typical[k].samples === 1 ? "" : "s"}</span>
+      </span>`).join("")}</div>
+    <p class="muted">Medians over this box's own finished rips. MakeMKV cannot report
+      progress during the disc scan at all — the reads go through <code>/dev/sg0</code>,
+      where neither the file accounting nor the block layer can see them — so what this
+      machine did last time is the only honest estimate there is.</p></div>`;
+}
+
+function when(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleString();
+}
+
+/* ── Discs: the shelf ──
+   Every disc this box has seen, and the one page in the product with something worth
+   looking at. The record was already here; the artwork was being fetched for the tray
+   and thrown away the moment the disc came out. */
+views.discs = async () => {
+  const { discs } = await api.get("/api/discs");
+  if (!discs.length) {
+    return `${head("Discs", "Every disc Riparr has seen. Reinsert one and it is refused rather than re-ripped.")}
+      <div class="card"><div class="empty-state"><div class="big">${icon("compact-disc")}</div>
+        <h2>No discs recorded</h2>
+        <p>Once Riparr rips a disc it remembers it, so reinserting it is refused
+           instead of costing you forty minutes — and <b>Re-rip</b> is here for when
+           you meant it.</p></div></div>`;
+  }
+  const card = (d) => {
+    const name = d.title || pretty(d.label) || "Unknown disc";
+    return `<figure class="rip" data-art="${esc(d.title || d.label || "")}">
       <div class="rip-art">
         <span class="rip-fallback">${icon("compact-disc")}</span>
-        ${bad ? `<span class="rip-flag" title="${esc(j.error || j.state)}">${
+        ${!d.ripped_at ? `<span class="rip-flag" title="Seen, but never finished a verified rip">${
           icon("triangle-exclamation")}</span>` : ""}
       </div>
       <figcaption>
         <div class="rip-title" title="${esc(name)}">${esc(name)}</div>
-        <div class="rip-meta">${esc(ago(j.finished_at))}${
-          bad ? ` · <span class="bad">${esc(STATE_LABEL[j.state] || j.state)}</span>` : ""}${
-          j.tries > 1 ? ` · ${j.tries} attempts` : ""}</div>
+        <div class="rip-meta">${d.ripped_at ? esc(ago(d.ripped_at))
+                                            : `<span class="bad">never finished</span>`}</div>
       </figcaption>
-      ${j.state !== "done" && j.local_path
-        ? `<button class="btn rip-retry" data-retry="${j.id}">Retry upload</button>` : ""}
+      <div class="rip-acts">
+        <button class="btn tiny" data-rerip="${esc(d.fingerprint)}"
+                title="Put this disc back in the tray and read it again from the start.">Re-rip</button>
+        <button class="btn tiny" data-forget="${esc(d.fingerprint)}"
+                title="Forget this disc, so the next time it goes in it is treated as new.">Forget</button>
+      </div>
     </figure>`;
   };
-  return `${head("History", "Every rip, newest first.")}
-    <div class="rips">${jobs.map(card).join("")}</div>`;
+  return `${head("Discs", "Every disc Riparr has seen. Reinsert one and it is refused rather than re-ripped.")}
+    <div class="rips">${discs.map(card).join("")}</div>`;
 };
+
+/* The same tidy-up the server does to a volume label, so ALL_CAPS_1999 does not sit
+   under a poster shouting. */
+function pretty(label) {
+  if (!label) return "";
+  return label.replace(/[_.]+/g, " ").replace(/\s+/g, " ").trim()
+              .replace(/\b\w/g, c => c.toUpperCase());
+}
 
 /* Fill the posters in after the grid is on screen. Each lookup is cached server-side by
    normalised title, and a miss simply leaves the disc icon showing -- a film we cannot
@@ -1135,25 +1316,6 @@ async function paintRipArt() {
     }
   }
 }
-
-views.discs = async () => {
-  const { discs } = await api.get("/api/discs");
-  return `${head("Discs", "Every disc Riparr has seen, by fingerprint. This is what makes it ask about a problem disc only once.")}
-    ${discs.length ? `<div class="card"><table>
-      <thead><tr><th>Title</th><th>Label</th><th>Ripped</th><th class="act"></th></tr></thead>
-      <tbody>${discs.map(d => `<tr>
-        <td>${esc(d.title || "—")}</td><td class="muted">${esc(d.label || "—")}</td>
-        <td class="muted">${ago(d.ripped_at)}</td>
-        <td class="act">
-          <button class="btn" data-rerip="${esc(d.fingerprint)}">Re-rip</button>
-          <button class="btn" data-forget="${esc(d.fingerprint)}">Forget</button></td>
-      </tr>`).join("")}</tbody></table></div>`
-    : `<div class="card"><div class="empty-state"><div class="big">${icon("compact-disc")}</div>
-        <h2>No discs recorded</h2>
-        <p>Once Riparr rips a disc it remembers it, so reinserting it is refused
-           instead of costing you forty minutes \u2014 and <b>Re-rip</b> is here for when
-           you meant it.</p></div></div>`}`;
-};
 
 /* ── settings ── */
 /* Five pages, not Sonarr's twenty. Riparr has no indexers, no download clients, no
@@ -1313,10 +1475,55 @@ settingsPages.connect = async (s) => {
 
   <div class="section"><h2>Discord
     <span class="grow"></span>${chanBadge(ch.discord)}</h2><div>
+    <p class="muted">A Discord webhook posts into a <b>channel</b>. If you want the box
+      to tell <i>you</i> — a notification on your phone rather than a line in a channel
+      somebody might read on Tuesday — make a server of one and have Riparr mention
+      you in it. Both halves are below.</p>
+
+    <ol class="steps">
+      <li><b>Make somewhere for it to post.</b> In Discord, click <b>+</b> at the bottom
+        of the server list → <b>Create My Own</b> → <b>For me and my friends</b>. Call it
+        anything. Nobody else can see it. A channel there is a private feed, and Discord
+        pushes it to your phone like any other.</li>
+      <li><b>Make the webhook.</b> Hover the channel → the gear (<b>Edit Channel</b>) →
+        <b>Integrations</b> → <b>Create Webhook</b> → <b>Copy Webhook URL</b>. That URL
+        is the password: anyone holding it can post as Riparr, so treat it like one.</li>
+      <li><b>Paste it below</b> and press Check. Riparr asks Discord whether the webhook
+        is real before trusting it — a URL that got truncated on the way through a
+        clipboard fails silently forever otherwise.</li>
+      <li><b>Optional but the point:</b> turn on <b>Developer Mode</b>
+        (User Settings → Advanced), then right-click your own name →
+        <b>Copy User ID</b>, and paste that in "Mention me". Riparr will @-mention you,
+        which is the thing that actually buzzes a phone.</li>
+    </ol>
+
     <label class="f"><span>Webhook URL</span>
-      <input data-set="discord_webhook" value="${esc(s.discord_webhook || "")}"
+      <input data-set="discord_webhook" id="dc-url" value="${esc(s.discord_webhook || "")}"
              placeholder="https://discord.com/api/webhooks/…">
-      <span class="help">Server Settings → Integrations → Webhooks → Copy Webhook URL.</span></label>
+      <span class="help">Nothing is sent anywhere until this is filled in.</span></label>
+    <div class="btn-row"><button class="btn" id="dc-check">Check this webhook</button>
+      <span class="test-out" id="dc-out"></span></div>
+
+    <label class="f"><span>Mention me</span>
+      <input data-set="discord_mention" value="${esc(s.discord_mention || "")}"
+             placeholder="your Discord user ID, e.g. 218411284957167616">
+      <span class="help">A user ID pings you. Prefix a <b>role</b> ID with
+        <code>&amp;</code> — <code>&amp;123…</code> — to ping a role instead, for a
+        household that shares the box. Leave empty to post quietly.</span></label>
+
+    <div class="dc-when">
+      <div class="dc-when-l">Ping me for</div>
+      <div class="notify-events">
+        ${n.events.map(e => `
+          <label class="switch"><input type="checkbox" data-set="discord_mention_events"
+                  data-multi value="${esc(e.key)}"
+                  ${(s.discord_mention_events || []).includes(e.key) ? "checked" : ""}>
+            <span class="track"></span><span class="lbl">${esc(e.label)}</span></label>`).join("")}
+      </div>
+      <p class="help">Everything else still posts to the channel — it just does not
+        make your phone light up. "A rip finished" is off by default for exactly that
+        reason: it is good news, and good news can wait.</p>
+    </div>
     ${testRow("discord")}
   </div></div>
 
@@ -2039,6 +2246,32 @@ function wireContent(section, sub) {
     }
   };
 
+  // Check the URL that is on screen, not the one that is stored. The whole point is
+  // to catch a paste that went wrong, and a check that reads the database would pass
+  // on the old value and tell the user nothing.
+  const dcCheck = $("#dc-check");
+  if (dcCheck) dcCheck.onclick = async () => {
+    const out = $("#dc-out");
+    dcCheck.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Asking Discord…";
+    try {
+      const r = await api.post("/api/notifications/discord/check",
+                               { url: ($("#dc-url") || {}).value || "" });
+      if (r.ok) {
+        out.className = "test-out ok";
+        out.textContent = `Real webhook — posts as “${r.name}”. Save, then send a test.`;
+      } else {
+        out.className = "test-out bad";
+        out.textContent = r.error;
+      }
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    dcCheck.disabled = false;
+  };
+
   $$("[data-test-notify]").forEach(b => b.onclick = async () => {
     const channel = b.dataset.testNotify;
     const out = $("#test-" + channel);
@@ -2237,6 +2470,31 @@ function wireContent(section, sub) {
       toast(r.message, "ok");
     } catch (e) { toast(e.message, "bad"); }
     route();
+  });
+
+  // The four retries on History. Each one is offered only when the box can actually
+  // do it -- the server works that out, because whether the staged file is still on
+  // the card is not something the browser can see.
+  $$("[data-hretry]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.hretry, act = b.dataset.haction;
+    const asks = {
+      "rip": "Read this disc again from the start?\n\nPut it back in the tray first. "
+           + "This is the expensive one — the whole disc gets read again.",
+      "verify-deep": "Read the whole file back off your library and hash it?\n\n"
+           + "This takes about as long as the upload did and needs as much free space "
+           + "again as the film.",
+    };
+    if (asks[act] && !confirm(asks[act])) return;
+    b.disabled = true;
+    try {
+      const r = act === "upload" ? await api.post(`/api/queue/${id}/retry`, {})
+              : act === "rip"    ? await api.post(`/api/queue/${id}/rerip`, {})
+              : await api.post(`/api/queue/${id}/verify`,
+                               { mode: act === "verify-deep" ? "deep" : "quick" });
+      toast(r.message || "Started", "ok");
+      if (act === "rip" || act === "upload") location.hash = "#/queue";
+      else route();
+    } catch (e) { toast(e.message, "bad"); b.disabled = false; }
   });
 
   $$("[data-answer]").forEach(b => b.onclick = async () => {

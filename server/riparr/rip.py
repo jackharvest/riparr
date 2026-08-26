@@ -659,6 +659,7 @@ def _identify(job, s):
     db.update_job(job["id"], state="identifying",
                   phase="Reading the disc \u2014 a few minutes on an encrypted DVD",
                   started_at=job.get("started_at") or int(time.time()))
+    db.stage_start(job["id"], "identify")
     drives = P.optical_drives()
     d = next((x for x in drives if x.get("present")), None)
     if not d:
@@ -701,6 +702,7 @@ def _identify(job, s):
     if (not name or ambiguous) and chosen_index is None:
         behaviour = s.get("on_unknown_disc", "ask")
         if behaviour == "skip":
+            db.stage_end(job["id"])
             db.update_job(job["id"], state="cancelled", finished_at=int(time.time()),
                           error="Couldn't identify the disc, and the setting is to skip.")
             P.eject()
@@ -712,6 +714,7 @@ def _identify(job, s):
                         if not name else
                         "This disc has several titles of almost the same length, which "
                         "usually means the studio is hiding the real one. Pick the film.")
+            db.stage_end(job["id"])
             db.update_job(job["id"], state="needs_input", question=question,
                           phase="Waiting for you",
                           titles=titles, title=name or None,
@@ -728,6 +731,7 @@ def _identify(job, s):
     warning = uhd_warning(d, P.libredrive_status(d, block=True))
     if warning:
         log.warning("Job %d: %s", job["id"], warning)
+    db.stage_end(job["id"])
     db.update_job(job["id"], title=title_name, chosen_title=chosen["index"],
                   titles=titles, bytes_total=chosen.get("bytes") or 0,
                   warning=warning, disc_family=disc_family(d),
@@ -773,6 +777,10 @@ def _rip(job, s, cancel_ev):
                        title_index=job.get("chosen_title"))
     db.update_job(job["id"], state="ripping", phase="Reading the disc",
                   local_path=None, bytes_ripped=0, stage_pct=0)
+    # Two stages wearing one state. MakeMKV analyses and decrypts for minutes before it
+    # opens the output file, and that silent stretch is the one users read as a hang --
+    # so it is timed separately, and the split point is the moment a byte lands.
+    db.stage_start(job["id"], "decrypt")
 
     if P.MOCK:
         return _mock_rip(job, out_dir, cancel_ev)
@@ -813,6 +821,7 @@ def _rip(job, s, cancel_ev):
                 done = _output_size(out_dir)
                 if done and not first_byte_at:
                     first_byte_at = time.time()
+                    db.stage_start(job["id"], "save")
                 # `total` is MakeMKV's estimate of the title, so the finished file can
                 # overshoot it. Hold just short of full until the process has actually
                 # exited: a bar that sits at 100% while work continues is the same lie
@@ -857,6 +866,7 @@ def _rip(job, s, cancel_ev):
         raise RipFailed(last_msg or "MakeMKV couldn't read this disc. If it's dirty "
                                     "or scratched, clean it and try again.")
     path = os.path.join(out_dir, produced[0])
+    db.stage_end(job["id"])
     db.update_job(job["id"], local_path=path, bytes_ripped=os.path.getsize(path),
                   bytes_total=os.path.getsize(path), eta_seconds=None)
     return path
@@ -869,6 +879,10 @@ def _mock_rip(job, out_dir, cancel_ev):
     downstream of here is exercised for real off-hardware rather than stubbed.
     """
     path = os.path.join(out_dir, "title_t00.mkv")
+    # `_rip` already opened "decrypt". Stand in for MakeMKV's silent analysis pass so
+    # the stage breakdown off-hardware has the same shape it has on the box.
+    time.sleep(1.5)
+    db.stage_start(job["id"], "save")
     total = 32 * 2 ** 20
     chunk = total // 40
     written = 0
@@ -884,9 +898,11 @@ def _mock_rip(job, out_dir, cancel_ev):
             elapsed = time.time() - started
             frac = written / total
             db.update_job(job["id"], bytes_ripped=written, bytes_total=total,
+                          stage_pct=round(frac, 4),
                           phase="Reading title %d" % job["_title"]["index"],
                           eta_seconds=int(elapsed / frac - elapsed) if frac > 0.05 else None)
             time.sleep(0.25)
+    db.stage_end(job["id"])
     db.update_job(job["id"], local_path=path, bytes_ripped=total, bytes_total=total,
                   eta_seconds=None)
     return path
@@ -909,8 +925,10 @@ def _transfer(job, s, local_path, cancel_ev):
 
     transport = SH.Transport(share)
     total = os.path.getsize(local_path)
+    db.stage_start(job["id"], "upload")
     db.update_job(job["id"], state="transferring", phase="Sending to your library",
-                  dest_path=transport.describe(name), bytes_sent=0, bytes_total=total)
+                  dest_path=transport.describe(name), remote_name=name,
+                  bytes_sent=0, bytes_total=total)
 
     started = time.time()
 
@@ -948,6 +966,7 @@ def _transfer(job, s, local_path, cancel_ev):
         raise Cancelled()
     if not r.get("ok"):
         raise RipFailed("Couldn't write to your library: %s" % r.get("error"))
+    db.stage_end(job["id"])
     db.update_job(job["id"], bytes_sent=total, eta_seconds=None)
     return transport, name
 
@@ -959,8 +978,10 @@ def _verify(job, s, transport, name, local_path):
     mode = s.get("verify_mode") or ("deep" if s.get("verify_after_transfer", True)
                                     else "off")
     if mode == "off":
+        db.update_job(job["id"], verified_mode="off")
         return
 
+    db.stage_start(job["id"], "verify")
     db.update_job(job["id"], state="verifying", bytes_verified=0,
                   phase=("Checking the size on your library" if mode == "quick"
                          else "Reading it back to check every byte"))
@@ -970,15 +991,18 @@ def _verify(job, s, transport, name, local_path):
                       stage_pct=round(done / total, 4) if total else None)
 
     r = SH.verify_remote(transport, name, local_path, progress=progress, mode=mode)
+    db.stage_end(job["id"])
     if not r.get("ok"):
         raise RipFailed("The file reached your library but didn't verify: %s"
                         % r.get("error"))
+    db.update_job(job["id"], verified_mode=r.get("mode") or mode)
 
 
 # ── stage 5: tidy up ──
 
 def _finish(job, s, transport, name, local_path):
     now = int(time.time())
+    db.stage_end(job["id"], at=now)
     if job.get("fingerprint"):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind="movie", ripped_at=now,
@@ -1032,11 +1056,13 @@ def _run_job(job):
 
     except Cancelled:
         log.info("Job %d cancelled.", job_id)
+        db.stage_end(job_id)
         db.update_job(job_id, state="cancelled", phase=None,
                       finished_at=int(time.time()), error="Cancelled")
         _cleanup_staging({"id": job_id})
     except RipFailed as e:
         log.error("Job %d failed: %s", job_id, e)
+        db.stage_end(job_id)
         row = db.get_job(job_id) or {}
         db.update_job(job_id, state="failed", phase=None,
                       finished_at=int(time.time()), error=str(e))
@@ -1047,6 +1073,7 @@ def _run_job(job):
                     body=str(e))
     except Exception as e:
         log.exception("Job %d hit an unexpected error", job_id)
+        db.stage_end(job_id)
         row = db.get_job(job_id) or {}
         db.update_job(job_id, state="failed", phase=None,
                       finished_at=int(time.time()),
@@ -1094,6 +1121,82 @@ def resume_transfer(job_id):
                   attempts=(job.get("attempts") or 0) + 1)
     _wake.set()
     return True, "Retrying the transfer."
+
+
+def reverify(job_id, mode="quick"):
+    """Re-check a job's file against the share. No disc, no re-rip.
+
+    Runs on its own thread and writes its progress to the job like any other stage, so
+    the History row shows it happening and the timings gain another `verify` run. The
+    job's recorded state is left alone until it finishes: a `done` job being re-checked
+    is still done, and a `failed` one becomes done only if the check now passes.
+    """
+    job = db.get_job(job_id)
+    if not job:
+        return False, "No such job."
+    local = job.get("local_path")
+    if not local or not os.path.exists(local):
+        return False, ("The staged copy is gone, so there is nothing to compare "
+                       "against. Re-rip the disc to check it.")
+    share = db.default_share()
+    if not share:
+        return False, "There's no library share configured."
+    name = _remote_name(job)
+    if not name:
+        return False, "Riparr doesn't know where this one landed."
+    if db.active_job():
+        return False, "Riparr is busy with a disc. Try again when it's finished."
+
+    def run():
+        transport = SH.Transport(share)
+        db.stage_start(job_id, "verify")
+        db.update_job(job_id, state="verifying", bytes_verified=0, error=None,
+                      phase=("Checking the size on your library" if mode == "quick"
+                             else "Reading it back to check every byte"))
+
+        def progress(done, total):
+            db.update_job(job_id, bytes_verified=done,
+                          stage_pct=round(done / total, 4) if total else None)
+
+        try:
+            r = SH.verify_remote(transport, name, local, progress=progress, mode=mode)
+        except Exception as e:
+            r = {"ok": False, "error": str(e)}
+        db.stage_end(job_id)
+        if r.get("ok"):
+            db.update_job(job_id, state="done", phase=None, error=None,
+                          verified_mode=r.get("mode") or mode,
+                          finished_at=int(time.time()), stage_pct=None)
+            log.info("Job %d re-verified (%s).", job_id, mode)
+        else:
+            db.update_job(job_id, state="failed", phase=None, stage_pct=None,
+                          finished_at=int(time.time()),
+                          error="Verification failed again: %s" % r.get("error"))
+            log.warning("Job %d failed re-verification: %s", job_id, r.get("error"))
+
+    threading.Thread(target=run, name="riparr-reverify", daemon=True).start()
+    return True, ("Checking the size on your library."
+                  if mode == "quick" else
+                  "Reading the whole file back. This takes about as long as the "
+                  "upload did.")
+
+
+def _remote_name(job):
+    """The share-relative path this job's file was written to.
+
+    Recorded by `_transfer`, because it is the only place that knows it for certain.
+    Jobs that predate the column fall back to the tail of `dest_path`, which is the
+    same string with the share prefix on the front -- correct for every transport
+    whose `describe()` is "//host/share/" + name.
+    """
+    name = job.get("remote_name")
+    if name:
+        return name
+    dest = job.get("dest_path") or ""
+    s = _settings()
+    folder = (s.get("movie_folder") or "Movies").strip("/")
+    at = dest.find("/%s/" % folder) if folder else -1
+    return dest[at + 1:] if at >= 0 else None
 
 
 # ─────────────────────────────── the worker ───────────────────────────────

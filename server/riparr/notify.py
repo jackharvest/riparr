@@ -15,6 +15,7 @@ worse than no notification, and a NAS-adjacent box is exactly where a webhook to
 unreachable host will hang for thirty seconds.
 """
 import json
+import re
 import smtplib
 import threading
 import urllib.error
@@ -126,16 +127,86 @@ def _ntfy(event, title, body, payload):
           (body or "").encode("utf-8"), headers, content_type="text/plain")
 
 
+_DISCORD_RE = re.compile(
+    r"^https://(?:\w+\.)?discord(?:app)?\.com/api(?:/v\d+)?/webhooks/(\d+)/([\w-]+)")
+
+
+def discord_mention_prefix(event):
+    """`<@id>` when this event is one the user asked to be pinged for.
+
+    A message in a channel is something you find later. A mention is something your
+    phone tells you about, and the whole product is "walk away" -- so the events that
+    mean *come back* are the ones that get the ping, and the rest stay quiet. Roles
+    (`&`-prefixed IDs) work too, for a household that shares the box.
+    """
+    who = (db.get("discord_mention") or "").strip()
+    if not who:
+        return "", None
+    want = db.get("discord_mention_events")
+    if isinstance(want, list) and event not in want and event != "test":
+        return "", None
+    if who.startswith("&"):
+        return "<@%s> " % who, {"parse": [], "roles": [who[1:]]}
+    return "<@%s> " % who, {"parse": [], "users": [who]}
+
+
 def _discord(event, title, body, payload):
     url = (db.get("discord_webhook") or "").strip()
     if not url:
         return
     colour = {"done": 0x27C24C, "failed": 0xF05050, "needs_you": 0xFF9F1A,
               "share_lost": 0xFF9F1A, "key_expiring": 0xFF9F1A}.get(event, 0x5B5B8A)
-    _post(url, {"embeds": [{"title": title or "Riparr",
-                            "description": body or "",
-                            "color": colour,
-                            "footer": {"text": "Riparr"}}]})
+    mention, allowed = discord_mention_prefix(event)
+    msg = {"username": "Riparr",
+           "embeds": [{"title": title or "Riparr",
+                       "description": body or "",
+                       "color": colour,
+                       "footer": {"text": "Riparr on %s" % P.hostname()}}]}
+    if mention:
+        msg["content"] = mention.strip()
+        # Without this Discord will happily render `<@everyone>`-shaped text but will
+        # not ping anyone the webhook was not explicitly told to ping.
+        msg["allowed_mentions"] = allowed
+    _post(url, msg)
+
+
+def discord_check(url=None):
+    """Ask Discord what a webhook URL actually points at, before trusting it.
+
+    A webhook URL is a long opaque string a user pasted, and the failure mode of
+    getting it slightly wrong is silence -- notifications that go nowhere, discovered
+    weeks later when the one that mattered did not arrive. Discord answers an
+    unauthenticated GET on the webhook itself with its name and channel, so the
+    settings page can say *what it is connected to* rather than "saved".
+    """
+    url = (url if url is not None else db.get("discord_webhook") or "").strip()
+    if not url:
+        return {"ok": False, "error": "Paste the webhook URL first."}
+    m = _DISCORD_RE.match(url)
+    if not m:
+        return {"ok": False,
+                "error": "That doesn't look like a Discord webhook URL. It should "
+                         "start https://discord.com/api/webhooks/ and Discord gives "
+                         "you the whole thing on the Copy Webhook URL button."}
+    try:
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("User-Agent", "Riparr")
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            info = json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403, 404):
+            return {"ok": False,
+                    "error": "Discord doesn't recognise that webhook. It was probably "
+                             "deleted, or the URL got truncated when it was copied."}
+        return {"ok": False, "error": "Discord said %s %s" % (e.code, e.reason)}
+    except urllib.error.URLError as e:
+        return {"ok": False, "error": "Couldn't reach Discord: %s" % e.reason}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True,
+            "name": info.get("name") or "Riparr",
+            "channel_id": info.get("channel_id"),
+            "guild_id": info.get("guild_id")}
 
 
 def _webhook(event, title, body, payload):

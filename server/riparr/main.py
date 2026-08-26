@@ -646,6 +646,22 @@ def notifications_test(body: NotifyTest, user=Depends(require_user)):
     return r
 
 
+class DiscordCheck(BaseModel):
+    url: str = ""
+
+
+@app.post("/api/notifications/discord/check")
+def notifications_discord_check(body: DiscordCheck = DiscordCheck(),
+                                user=Depends(require_user)):
+    """Confirm a Discord webhook URL points at something real, and say what.
+
+    Deliberately not an error: a bad URL here is the normal outcome of pasting the
+    wrong half of something, and the page shows the reason next to the field rather
+    than as a failure.
+    """
+    return NT.discord_check(body.url or None)
+
+
 # ─────────────────────────────── shares ───────────────────────────────
 
 class ShareQuery(BaseModel):
@@ -758,6 +774,18 @@ def _job_out(j):
             j["titles"] = json.loads(j["titles"])
         except (ValueError, TypeError):
             j["titles"] = []
+    # Which stage is running and since when. The queue's counting timer is built from
+    # this against the medians: the two slowest stages of a rip -- the disc scan and
+    # the decrypt pass -- can report no progress at all, so "this box usually takes
+    # nine minutes and you are four minutes in" is the only number available.
+    try:
+        raw = json.loads(j.get("stages") or "[]")
+    except (ValueError, TypeError):
+        raw = []
+    j["stages"] = db.job_stages(j)
+    open_now = next((st for st in reversed(raw) if st.get("ended") is None), None)
+    j["stage_name"] = open_now.get("name") if open_now else None
+    j["stage_started"] = open_now.get("started") if open_now else None
     return j
 
 
@@ -769,7 +797,12 @@ def queue(user=Depends(require_user)):
     # so a fuzzy "usually done by" beats an empty space, provided it is labelled as the
     # guess it is and only offered once there is something to average.
     typical, samples = db.typical_job_seconds()
-    return {"jobs": jobs, "typical_seconds": typical, "typical_samples": samples}
+    # Per-stage medians as well as the total. The total answers "when will this be
+    # done"; the stages answer "should the fact that nothing has moved for six minutes
+    # worry me", which is the question that actually gets asked.
+    return {"jobs": jobs, "typical_seconds": typical, "typical_samples": samples,
+            "typical_stages": db.typical_stage_seconds(),
+            "stage_labels": db.STAGE_LABEL, "stage_order": db.STAGE_ORDER}
 
 
 class RipRequest(BaseModel):
@@ -805,6 +838,58 @@ def rip_retry(job_id: int, user=Depends(require_user)):
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"ok": True, "message": message}
+
+
+class VerifyRequest(BaseModel):
+    mode: str = "quick"
+
+
+@app.post("/api/queue/{job_id}/verify")
+def rip_reverify(job_id: int, body: VerifyRequest = VerifyRequest(),
+                 user=Depends(require_user)):
+    """Check a finished job's file against the share again, without re-ripping.
+
+    The read-back is the one stage that can fail for reasons that have nothing to do
+    with the disc -- a NAS that went to sleep, a share that filled up, a box that ran
+    out of RAM writing the temporary copy. Re-running it should not cost the forty
+    minutes the rip did, and until now the only retry offered was the transfer.
+    """
+    if body.mode not in ("quick", "deep"):
+        raise HTTPException(status_code=400, detail="Unknown verification mode.")
+    ok, message = RIP.reverify(job_id, mode=body.mode)
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message}
+
+
+@app.post("/api/queue/{job_id}/rerip")
+def rip_rerip(job_id: int, user=Depends(require_user)):
+    """Read the disc again from the start, for a job whose rip is gone.
+
+    Distinct from `/api/discs/{fingerprint}/rerip`, which starts from a remembered
+    disc. This starts from a *job* -- typically a failed one on the History page --
+    and its job is to refuse politely when the wrong disc is in the tray rather than
+    silently ripping whatever it finds.
+    """
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    drives = P.optical_drives()
+    d = next((x for x in drives if x.get("present")), None)
+    if not d:
+        raise HTTPException(
+            status_code=400,
+            detail="Put %s back in the tray first." % (job.get("title") or "the disc"))
+    want = job.get("fingerprint")
+    if want and RIP.fingerprint(d) != want:
+        raise HTTPException(
+            status_code=400,
+            detail="The disc in the tray isn't %s. Swap it and try again."
+                   % (job.get("title") or "that one"))
+    new_id, why = RIP.enqueue(force=True)
+    if not new_id:
+        raise HTTPException(status_code=400, detail=why)
+    return {"ok": True, "job_id": new_id}
 
 
 class DiscAnswer(BaseModel):
@@ -850,7 +935,60 @@ def disc_rerip(fingerprint: str, user=Depends(require_user)):
 
 @app.get("/api/history")
 def history(user=Depends(require_user)):
-    return {"jobs": db.list_jobs(states=["done", "failed"], limit=100)}
+    """Every finished job, with what each stage cost and what can still be retried.
+
+    History is the data page: the question it answers is "what happened, how long did
+    each part take, and what can I do about it". The four retry verbs are computed
+    here rather than in the browser, because whether a retry is possible depends on
+    something only the box can see -- whether the staged file is still on the card.
+    """
+    jobs = []
+    for j in db.list_jobs(states=["done", "failed", "cancelled"], limit=100):
+        j = _job_out(j)                       # this is what parses `stages`
+        local = j.get("local_path")
+        j["local_exists"] = bool(local and os.path.exists(local))
+        j["retries"] = _retries_for(j)
+        jobs.append(j)
+    return {"jobs": jobs, "typical_stages": db.typical_stage_seconds(),
+            "stage_order": db.STAGE_ORDER, "stage_labels": db.STAGE_LABEL}
+
+
+def _retries_for(j):
+    """Which of the four retry verbs apply to this job, and why.
+
+    Each one is offered only when it would actually do something:
+
+    * **Retry rip** -- the rip itself is gone or was never made, so the disc has to go
+      back in. Always available on a job that did not finish; it needs the disc.
+    * **Retry upload** -- the file is still staged on the card, so the expensive half
+      is already paid for and this is a re-copy, not a re-rip.
+    * **Retry fast verification** / **Retry deep verification** -- the file reached
+      the share, so it can be checked again without touching the disc. Deep needs the
+      staged copy to compare against; fast only needs the size, so it needs the staged
+      copy too (that is what the size is compared *to*).
+    """
+    out = []
+    state, local = j.get("state"), j.get("local_exists")
+    landed = bool(j.get("dest_path"))
+    if state != "done":
+        if local:
+            out.append({"action": "upload", "label": "Retry upload",
+                        "why": "The rip is still on the card, so this is a re-copy "
+                               "rather than a re-read of the disc."})
+        out.append({"action": "rip", "label": "Retry rip", "needs_disc": True,
+                    "why": "Put the disc back in the tray and Riparr will read it "
+                           "again from the start."})
+    if landed and local:
+        done_mode = j.get("verified_mode")
+        out.append({"action": "verify-quick", "label": "Retry fast verification",
+                    "why": "Compares the size on your library against the rip. "
+                           "Seconds, and it catches a truncated transfer."})
+        out.append({"action": "verify-deep", "label": "Retry deep verification",
+                    "why": ("Reads the whole file back and hashes it. Slow, and it "
+                            "needs as much free space again as the film."
+                            + (" This one has only ever been size-checked."
+                               if done_mode == "quick" else ""))})
+    return out
 
 
 @app.get("/api/discs")

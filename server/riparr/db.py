@@ -83,6 +83,18 @@ ADDED_COLUMNS = {
         ("bytes_verified", "INTEGER DEFAULT 0"),
         ("warning", "TEXT"),           # non-fatal: the rip proceeds, the user is told
         ("disc_family", "TEXT"),       # dvd | bluray | uhd -- what was actually in the tray
+        # JSON list of {name, started, ended}: how long each stage of this job took.
+        # A rip is five very different operations wearing one progress bar, and until
+        # this existed the only number anyone had was the total -- which is why the
+        # "sixteen minutes before a byte is written" behaviour had to be measured by
+        # hand with a stopwatch rather than simply read off the box.
+        ("stages", "TEXT"),
+        ("verified_mode", "TEXT"),     # quick | deep -- which check actually passed
+        # The share-relative path the transfer actually wrote to. `dest_path` is the
+        # human description a transport prints and cannot be handed back to one, and
+        # rebuilding the path from the template afterwards is guessing -- the year is
+        # already stripped out of `title` by then, so the guess comes out wrong.
+        ("remote_name", "TEXT"),
     ],
     "discs": [
         ("title_index", "INTEGER"),    # the remembered title choice (R5: fix once, ever)
@@ -129,6 +141,13 @@ DEFAULTS = {
     "ntfy_topic": "",
     "ntfy_token": "",
     "discord_webhook": "",
+    # A Discord webhook posts into a *channel*. Somebody who wants the box to tell
+    # *them* wants their phone to buzz, and in Discord the only thing that buzzes a
+    # phone reliably is being mentioned -- so the user's own ID goes on the message.
+    # Empty means "post quietly into the channel", which is the right default for a
+    # shared server.
+    "discord_mention": "",
+    "discord_mention_events": ["needs_you", "failed", "share_lost", "key_expiring"],
     "smtp_host": "",
     "smtp_port": 587,
     "smtp_tls": True,
@@ -443,6 +462,125 @@ def typical_job_seconds(kind=None, minimum=2):
     mid = len(spans) // 2
     med = spans[mid] if len(spans) % 2 else (spans[mid - 1] + spans[mid]) // 2
     return med, len(spans)
+
+
+# ── stage timings ──
+#
+# A rip is five operations, not one, and they are wildly unequal: on the reference box
+# a DVD spends ~9 min being scanned, ~7 min being decrypted with nothing written at
+# all, ~9 min being saved to the card, ~5 min uploading and seconds verifying. A single
+# total hides all of that, and the stage that looks hung to a user (the silent seven
+# minutes) is precisely the one no progress bar can describe.
+#
+# Stored as a JSON list on the job rather than a table: it is written a handful of
+# times per job, read all at once, and never queried across jobs by SQL.
+
+STAGE_ORDER = ["identify", "decrypt", "save", "upload", "verify"]
+
+STAGE_LABEL = {
+    "identify": "Reading the disc",
+    "decrypt":  "Decrypting",
+    "save":     "Saving to the card",
+    "upload":   "Uploading",
+    "verify":   "Verifying",
+}
+
+
+def _stages(job):
+    try:
+        got = json.loads(job.get("stages") or "[]")
+        return got if isinstance(got, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def stage_start(job_id, name, at=None):
+    """Open a stage, closing whatever was open before it.
+
+    Closing the previous stage here rather than at each call site means a stage that
+    raises still gets an end time -- so a failed job's breakdown says how far it got
+    instead of showing one stage running forever.
+    """
+    now = int(at or time.time())
+    job = get_job(job_id) or {}
+    stages = _stages(job)
+    for st in stages:
+        if st.get("ended") is None:
+            st["ended"] = now
+    stages.append({"name": name, "started": now, "ended": None})
+    update_job(job_id, stages=json.dumps(stages))
+
+
+def stage_end(job_id, at=None):
+    """Close the open stage, if there is one."""
+    now = int(at or time.time())
+    job = get_job(job_id) or {}
+    stages = _stages(job)
+    changed = False
+    for st in stages:
+        if st.get("ended") is None:
+            st["ended"] = now
+            changed = True
+    if changed:
+        update_job(job_id, stages=json.dumps(stages))
+
+
+def job_stages(job):
+    """Stage timings for one job, oldest first, with seconds worked out.
+
+    Repeated stages are summed -- a job whose upload was retried three times uploaded
+    three times, and the honest answer to "how long did the upload take" is all of it.
+    """
+    totals = {}
+    for st in _stages(job):
+        name = st.get("name")
+        start, end = st.get("started"), st.get("ended")
+        if not name or not start:
+            continue
+        end = end or start
+        if end < start:
+            continue
+        row = totals.setdefault(name, {"name": name, "seconds": 0, "runs": 0,
+                                       "label": STAGE_LABEL.get(name, name)})
+        row["seconds"] += end - start
+        row["runs"] += 1
+    return [totals[n] for n in STAGE_ORDER if n in totals] + \
+           [v for k, v in totals.items() if k not in STAGE_ORDER]
+
+
+def typical_stage_seconds(kind=None, minimum=2, limit=20):
+    """Median seconds per stage over this box's own successful rips.
+
+    The counting timer the queue shows is built out of this. There is no way to ask
+    MakeMKV how far through a scan it is (see typical_job_seconds), but this machine
+    has done the same work before and took about as long each time -- which is a real
+    estimate for every stage, not just the ones that can count bytes.
+
+    Returns {stage: {"seconds": median, "samples": n}}.
+    """
+    q = "SELECT stages FROM jobs WHERE state='done' AND stages IS NOT NULL"
+    args = []
+    if kind:
+        q += " AND disc_family=?"
+        args.append(kind)
+    q += " ORDER BY id DESC LIMIT ?"
+    args.append(limit)
+
+    buckets = {}
+    for row in conn().execute(q, args):
+        for st in job_stages({"stages": row["stages"]}):
+            if st["seconds"] > 0:
+                buckets.setdefault(st["name"], []).append(st["seconds"])
+
+    out = {}
+    for name, vals in buckets.items():
+        if len(vals) < minimum:
+            continue
+        vals.sort()
+        mid = len(vals) // 2
+        med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) // 2
+        out[name] = {"seconds": int(med), "samples": len(vals)}
+    return out
 
 
 def record_disc(fingerprint, **fields):

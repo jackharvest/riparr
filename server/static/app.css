@@ -685,8 +685,73 @@ td.stat .ic { font-size: var(--ic-nav); }
 }
 .rip-meta { margin-top: 3px; font-size: 11.5px; color: var(--fg-muted); }
 .rip-meta .bad { color: var(--bad, #e05c5c); }
-.rip-retry { margin-top: 8px; width: 100%; }
+.rip-acts { display: flex; gap: 6px; margin-top: 8px; }
+.rip-acts .btn { flex: 1; }
 @media (prefers-reduced-motion: reduce) { .rip:hover .rip-art { transform: none; } }
+
+/* ── History: the data table ───────────────────────────────
+ * Deliberately plain. Every column answers one question a person actually asks about
+ * a rip that has already happened, and the stage bar answers the one they cannot ask
+ * because they do not know it is askable: where did the half hour go.
+ */
+.hist-table td { vertical-align: top; }
+.hist-table tr.hist td { border-bottom: 0; padding-bottom: 4px; }
+.hist-dest td { padding-top: 0; font-size: 12px; }
+.hist-dest .badge { margin-left: 8px; }
+.hist-title { color: var(--fg-strong); }
+.hist-sub { font-size: 12px; color: var(--fg-muted); margin-top: 2px; }
+.hist-err { font-size: 12px; color: var(--bad, #e05c5c); margin-top: 3px; max-width: 46ch; }
+tr.hist.done > td.stat { color: var(--ok, #27c24c); }
+tr.hist.failed > td.stat { color: var(--bad, #e05c5c); }
+tr.hist.cancelled > td.stat { color: var(--fg-muted); }
+/* Buttons line up with the title, not with the middle of a row whose height is set
+   by an error message underneath it. */
+.hist-table .act { vertical-align: top; padding-top: 6px; }
+.hist-table .act .btn { margin-left: 6px; }
+.btn.tiny { font-size: 11.5px; padding: 4px 8px; }
+.btn.tiny .ic { font-size: 11px; margin-right: 4px; }
+
+/* One stage, one colour, used identically in the bar, the numbers under it and the
+   legend -- so the wide grey band a user asks about is findable in the key. */
+/* Capped, not stretched: the bar is a proportion, and a proportion drawn across
+   half the page reads as a progress bar for something still happening. */
+.stagebar { display: flex; height: 7px; border-radius: 4px; overflow: hidden;
+            width: 220px; max-width: 100%; background: var(--panel); }
+.stagebar i { display: block; min-width: 2px; }
+.stagenums { display: flex; gap: 9px; margin-top: 4px; font-size: 11px;
+             color: var(--fg-muted); flex-wrap: wrap; }
+.stagenums i, .sk i { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+                      margin-right: 4px; vertical-align: -1px; }
+.sg-identify { background: #7d8cc4; }
+.sg-decrypt  { background: #c48f7d; }
+.sg-save     { background: #5d9cec; }
+.sg-upload   { background: #27c24c; }
+.sg-verify   { background: #d2b04c; }
+
+.stage-key { margin-top: 16px; }
+.stage-key h3 { font-size: 14px; font-weight: 700; color: var(--fg-strong);
+                margin: 0 0 10px; text-transform: none; letter-spacing: 0; }
+.stage-key-row { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 10px; }
+.sk { font-size: 12px; display: inline-flex; align-items: baseline; gap: 6px; }
+.sk b { color: var(--fg-strong); font-weight: 600; }
+.stage-note { margin-top: 14px; font-size: 12.5px; }
+
+/* The counting timer on an in-flight job. Sits under the stepper, because it is the
+   answer to "is this thing stuck", and that question is asked while looking there. */
+.clock {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin-top: 10px; font-size: 12px; color: var(--fg-muted);
+}
+.clock-stage { color: var(--fg-strong); font-weight: 600; }
+.clock-stage i { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+                 margin-right: 6px; }
+.clock-el { font-variant-numeric: tabular-nums; }
+.clock-est b { color: var(--fg); font-weight: 600; }
+.clock.over .clock-est { color: var(--warn); }
+.clock-bar { height: 3px; border-radius: 2px; background: var(--panel);
+             margin-top: 5px; overflow: hidden; }
+.clock-bar i { display: block; height: 100%; opacity: .8;
+               transition: width .6s linear; }
 
 /* The verify choice sits with Auto Rip because that is where somebody decides what
    "walk away" means. It is one setting: it governs a rip started by hand too. */
@@ -732,6 +797,21 @@ td.stat .ic { font-size: var(--ic-nav); }
 .ni-title .ni-dur { color: var(--fg-strong); font-variant-numeric: tabular-nums; }
 .ni-title .ni-size { font-size: 11.5px; }
 .notify-events { display: grid; gap: 2px; margin-bottom: 4px; }
+
+/* ── the Discord walkthrough ──
+   A webhook URL is four clicks deep in somebody else's app, and the docs page for it
+   is written for people building bots. Numbered steps in the product beat a link out
+   of it, and the fourth step -- the user ID -- is the one nobody would have found. */
+.steps { margin: 4px 0 16px; padding-left: 22px; max-width: 640px; }
+.steps li { margin-bottom: 9px; line-height: 20px; font-size: 13px;
+            color: var(--fg-muted); }
+.steps li b { color: var(--fg); font-weight: 600; }
+.steps li::marker { color: var(--accent); font-weight: 700; }
+.dc-when { margin: 14px 0 4px; padding-left: calc(var(--form-label-w) + var(--form-label-gap)); }
+.dc-when-l { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+.dc-when .help { color: var(--fg-muted); font-size: 13px; line-height: 20px;
+                 margin-top: 6px; }
+@media (max-width: 1200px) { .dc-when { padding-left: 0; } }
 .test-out { font-size: 12.5px; color: var(--fg-muted); }
 .test-out.ok { color: var(--ok); }
 .test-out.bad { color: var(--bad); }
