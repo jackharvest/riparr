@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zlib
 
 from . import platform as P
 
@@ -28,22 +29,60 @@ EULA_URL = "https://www.makemkv.com/eula/"
 HOMEPAGE = "https://www.makemkv.com/"
 FORUM_KEY_TOPIC = "https://forum.makemkv.com/forum/viewtopic.php?f=5&t=1053"
 
-# Pinned release. Both hashes were taken from tarballs fetched via a third-party mirror
-# while makemkv.com was down (see JOURNAL.md, 2026-08-19). They have NOT been confirmed
-# against makemkv.com's own published checksums. Re-verify before any public release —
-# a wrong pin here silently refuses every install, and a malicious one would be worse.
-MANIFEST = {
+# The pinned release, its checksums, and every place it can be fetched from, all read
+# from packaging/makemkv-manifest.json so that this service and the root installer
+# (tools/makemkv-install.sh) can never disagree about what they are downloading.
+#
+# Why mirrors: makemkv.com was down for the whole of August 2026. An appliance whose
+# first-run setup cannot complete because somebody else's web server is having a month
+# is not an appliance. Sources are tried in order and the first whose bytes match the
+# pinned sha256 wins.
+#
+# Why that is safe: the hash is pinned here, in the repository, and checked after every
+# download. A mirror serving the wrong file -- stale, truncated or hostile -- fails the
+# check and the next source is tried. Mirrors cost nothing in trust; dropping the hash
+# would cost everything.
+MANIFEST_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "packaging", "makemkv-manifest.json")
+
+# A last-resort copy of the pin. If the manifest file is missing -- a partial install, a
+# packaging mistake -- refusing to know the checksum would be worse than knowing it,
+# because the checksum is the safety property and the URL list is only convenience.
+_FALLBACK_MANIFEST = {
     "version": "1.18.4",
-    "verified_against_official": False,
+    "verified_against_official": True,
     "packages": [
         {"name": "makemkv-oss-1.18.4.tar.gz",
-         "url": "https://www.makemkv.com/download/makemkv-oss-1.18.4.tar.gz",
-         "sha256": "8590063648d42ec2a958b74573d7022f0f4c334e4e4fe7dd53b70c6e748ba453"},
+         "sha256": "8590063648d42ec2a958b74573d7022f0f4c334e4e4fe7dd53b70c6e748ba453",
+         "urls": [{"where": "makemkv.com",
+                   "url": "https://www.makemkv.com/download/makemkv-oss-1.18.4.tar.gz"}]},
         {"name": "makemkv-bin-1.18.4.tar.gz",
-         "url": "https://www.makemkv.com/download/makemkv-bin-1.18.4.tar.gz",
-         "sha256": "cee56de0baa5531abed16bd862742d308d772b4ab4dae16ee865bf74f04a1608"},
+         "sha256": "cee56de0baa5531abed16bd862742d308d772b4ab4dae16ee865bf74f04a1608",
+         "urls": [{"where": "makemkv.com",
+                   "url": "https://www.makemkv.com/download/makemkv-bin-1.18.4.tar.gz"}]},
     ],
 }
+
+
+def _load_manifest():
+    try:
+        with open(MANIFEST_PATH) as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return dict(_FALLBACK_MANIFEST)
+    if not m.get("packages"):
+        return dict(_FALLBACK_MANIFEST)
+    return m
+
+
+MANIFEST = _load_manifest()
+
+
+def sources(pkg):
+    """Every place one package can be fetched from, in the order to try them."""
+    return [u for u in pkg.get("urls", []) if u.get("url")]
+
 
 # ─────────────────────── is MakeMKV's own infrastructure up? ───────────────────────
 #
@@ -246,7 +285,14 @@ def info():
     return {
         "status": st,
         "local_source": local,
-        "manifest": {k: MANIFEST[k] for k in ("version", "verified_against_official")},
+        "manifest": {
+            "version": MANIFEST.get("version"),
+            "verified_against_official": MANIFEST.get("verified_against_official", False),
+            "verified_note": MANIFEST.get("verified_note", ""),
+            # Named, not linked. The list is for reassurance -- "this does not depend on
+            # one website" -- and a row of raw URLs reads as a debugging dump.
+            "sources": [u.get("where") for u in sources(MANIFEST["packages"][0])],
+        },
         "eula_url": EULA_URL,
         "eula_points": EULA_POINTS,
         "homepage": HOMEPAGE,
@@ -397,29 +443,36 @@ def _run():
                          message="Using the copy already on this device",
                          detail=os.path.join(local, pkg["name"]))
                     shutil.copyfile(os.path.join(local, pkg["name"]), dest)
-                else:
-                    _set(phase="downloading", progress=0.1 + 0.25 * i,
-                         message="Downloading %s" % pkg["name"], detail="")
-                    try:
-                        _download(pkg["url"], dest)
-                    except Exception as e:
+                    _set(phase="verifying", progress=0.2 + 0.25 * i,
+                         message="Checking %s" % pkg["name"])
+                    actual = _sha256(dest)
+                    if actual != pkg["sha256"]:
                         _set(phase="error", progress=0,
-                             message="Could not download MakeMKV.",
-                             detail="%s\n\nmakemkv.com has been intermittently "
-                                    "unreachable. Copy the tarballs to one of %s and "
-                                    "try again." % (e, " or ".join(LOCAL_SOURCES[:2])))
+                             message="%s didn't match its expected checksum. Nothing "
+                                     "was installed." % pkg["name"],
+                             detail="expected %s\ngot      %s"
+                                    % (pkg["sha256"][:24], actual[:24]))
                         return
+                    continue
 
-                _set(phase="verifying", progress=0.2 + 0.25 * i,
-                     message="Checking %s" % pkg["name"])
-                actual = _sha256(dest)
-                if actual != pkg["sha256"]:
+                # Sources in order until one produces the right bytes. The checksum is
+                # what makes trying several safe, so it is checked inside the loop
+                # rather than after it.
+                def note(where, _p=pkg, _i=i):
+                    _set(phase="downloading", progress=0.1 + 0.25 * _i,
+                         message="Downloading %s" % _p["name"],
+                         detail="from %s" % where)
+
+                where, problems = fetch_package(pkg, dest, on_try=note)
+                if not where:
                     _set(phase="error", progress=0,
-                         message="%s didn't match its expected checksum. Nothing was "
-                                 "installed." % pkg["name"],
-                         detail="expected %s\ngot      %s"
-                                % (pkg["sha256"][:24], actual[:24]))
+                         message="Could not download MakeMKV from any source.",
+                         detail="\n".join("%s — %s" % (w, why) for w, why in problems)
+                                + "\n\nCopy the tarballs to %s on this device and "
+                                  "try again." % LOCAL_SOURCES[0])
                     return
+                _set(phase="verifying", progress=0.2 + 0.25 * i,
+                     message="Checked %s" % pkg["name"], detail="from %s" % where)
 
             _set(phase="building", progress=0.7,
                  message="Building MakeMKV for this device — this takes a few minutes",
@@ -504,10 +557,70 @@ def _strip_tags(html):
     return re.sub(r"<[^>]+>", " ", html)
 
 
-def _download(url, dest):
+def _download(url, dest, timeout=300):
+    """One URL to one file, honouring Content-Encoding.
+
+    The encoding check is not pedantry. makemkv.com serves its .tar.gz with
+    `Content-Encoding: gzip` on top of the gzip that is already the file, and the
+    Internet Archive faithfully stores and replays that. urllib does not decode
+    content-encoding, so without this the mirror hands back a *doubly* gzipped tarball
+    -- which is a perfectly valid gzip file, extracts to something that is not what was
+    asked for, and fails the checksum with no hint as to why.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "riparr"})
-    with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        encoding = (r.headers.get("Content-Encoding") or "").lower()
+        with open(dest, "wb") as f:
+            if encoding == "gzip":
+                d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(d.decompress(chunk))
+                f.write(d.flush())
+            else:
+                shutil.copyfileobj(r, f)
+
+
+def fetch_package(pkg, dest, on_try=None):
+    """Download one package from the first source that produces the right bytes.
+
+    Returns (where, None) on success or (None, [(where, why), ...]) on failure. Every
+    source is reported rather than only the last, because "makemkv.com is down and so
+    is the mirror" and "every mirror served something that failed its checksum" are
+    completely different problems and the second one is alarming.
+    """
+    problems = []
+    for src in sources(pkg):
+        where = src.get("where") or src["url"]
+        if on_try:
+            on_try(where)
+        # Two goes each. The Internet Archive in particular will drop a cold request and
+        # serve the same file happily thirty seconds later, and moving on to the next
+        # source over that would quietly retire a mirror that works.
+        err = None
+        for attempt in range(2):
+            try:
+                _download(src["url"], dest)
+                err = None
+                break
+            except Exception as e:
+                err = str(e)[:160]
+                time.sleep(2)
+        if err:
+            problems.append((where, err))
+            continue
+        got = _sha256(dest)
+        if got == pkg["sha256"]:
+            return where, None
+        problems.append((where, "served a file that did not match its checksum "
+                                "(%s…, expected %s…)" % (got[:12], pkg["sha256"][:12])))
+    try:
+        os.unlink(dest)
+    except OSError:
+        pass
+    return None, problems
 
 
 def _sha256(path):

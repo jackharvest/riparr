@@ -455,7 +455,10 @@ select option { background: var(--dropdown); }
   background: var(--default-btn-hover, rgba(255,255,255,.12));
   text-decoration: none;
 }
-.btn:disabled { opacity: .65; cursor: not-allowed; }
+/* .65 left a disabled primary button looking blue enough to click. The one that
+   matters is "Download and install" before the licence is accepted, where the
+   whole point is that it does not look available yet. */
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .btn.primary { border-color: var(--btn); background: var(--btn); color: #fff; }
 .btn.primary:hover:not(:disabled) { background: var(--btn-hover); border-color: var(--btn-hover); }

@@ -46,7 +46,84 @@ EOF
   exit 1
 fi
 
-[ -d "$SRC" ] || { echo "No such source directory: $SRC"; exit 2; }
+mkdir -p "$SRC" || { echo "Could not create $SRC"; exit 2; }
+
+# ── fetching, when the tarballs are not already here ──
+#
+# This used to not exist, and the omission was invisible: makemkv-run.sh printed
+# "Downloading MakeMKV from makemkv.com" and then ran this script, which looked in
+# $SRC, found nothing and exited 2. The one path that reaches a first-time user
+# through the web interface -- no Preparer copy on the card -- could not install
+# MakeMKV at all, and announced a download while it did so.
+#
+# Sources and checksums come from packaging/makemkv-manifest.json, the same file the
+# service reads, so the two can never disagree. Sources are tried in order and the
+# first whose bytes match the pinned sha256 wins; a mirror serving the wrong file is
+# rejected by the hash rather than trusted because it answered.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANIFEST="${RIPARR_MAKEMKV_MANIFEST:-$HERE/../packaging/makemkv-manifest.json}"
+
+manifest_rows() {
+  # name<TAB>sha256<TAB>where<TAB>url, one line per source.
+  python3 - "$MANIFEST" <<'PYEOF'
+import json, sys
+try:
+    m = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+for pkg in m.get("packages", []):
+    for u in pkg.get("urls", []):
+        if u.get("url"):
+            print("\t".join([pkg["name"], pkg["sha256"],
+                             u.get("where") or u["url"], u["url"]]))
+PYEOF
+}
+
+sha_of() { sha256sum "$1" | cut -d" " -f1; }
+
+fetch_missing() {
+  local rows names
+  rows=$(manifest_rows) || return 0
+  [ -n "$rows" ] || { echo "No download manifest at $MANIFEST"; return 0; }
+
+  names=$(printf '%s\n' "$rows" | cut -f1 | awk '!seen[$0]++')
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    local want dest got
+    want=$(printf '%s\n' "$rows" | awk -F'\t' -v n="$name" '$1==n{print $2; exit}')
+    dest="$SRC/$name"
+    if [ -s "$dest" ] && [ "$(sha_of "$dest")" = "$want" ]; then
+      echo "Already have $name (checksum matches)"
+      continue
+    fi
+    got=0
+    while IFS=$'\t' read -r n _ where url; do
+      [ "$n" = "$name" ] || continue
+      echo "Downloading $name from $where"
+      # --location: Launchpad answers with a 303 to its file host.
+      # --compressed: makemkv.com serves the .tar.gz with Content-Encoding: gzip on
+      #   top of the gzip that is already the file, and anything replaying its
+      #   response does the same. Without this the file arrives doubly compressed --
+      #   valid gzip, wrong contents, failed checksum, and no hint as to why.
+      if curl -fsSL --compressed --retry 2 --connect-timeout 20 --max-time 900 \
+              -o "$dest.part" "$url"; then
+        if [ "$(sha_of "$dest.part")" = "$want" ]; then
+          mv "$dest.part" "$dest"; got=1; echo "  ok - checksum matches"; break
+        fi
+        echo "  $where served a file that did not match its checksum; trying the next"
+      else
+        echo "  $where did not answer; trying the next"
+      fi
+      rm -f "$dest.part"
+    done <<< "$rows"
+    if [ "$got" != "1" ]; then
+      echo "Could not download $name from any source."
+      echo "Copy it to $SRC by hand and run this again."
+      exit 2
+    fi
+  done <<< "$names"
+  return 0
+}
 
 # find, not globbing: an unmatched glob here previously left `ls -d` with no argument,
 # which lists "." and set OSS/BIN to a directory that is not MakeMKV at all.
@@ -55,9 +132,13 @@ find_pkg() { find "$SRC" -maxdepth 1 -mindepth 1 -type d -name "makemkv-$1-*" | 
 OSS=$(find_pkg oss)
 BIN=$(find_pkg bin)
 if [ -z "$OSS" ] || [ -z "$BIN" ]; then
-  echo "Extracting tarballs in $SRC"
   archives=$(find "$SRC" -maxdepth 1 -type f -name 'makemkv-*.tar.gz' | sort)
+  if [ -z "$archives" ]; then
+    fetch_missing
+    archives=$(find "$SRC" -maxdepth 1 -type f -name 'makemkv-*.tar.gz' | sort)
+  fi
   [ -n "$archives" ] || { echo "No makemkv-*.tar.gz found in $SRC"; exit 2; }
+  echo "Extracting tarballs in $SRC"
   while IFS= read -r f; do
     [ -s "$f" ] || { echo "$(basename "$f") is empty -- download it again"; exit 2; }
     tar xzf "$f" -C "$SRC" || { echo "Could not unpack $(basename "$f")"; exit 2; }

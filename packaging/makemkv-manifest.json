@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "The one place MakeMKV's version, checksums and download locations are written down.",
+    "Read by server/riparr/makemkv.py and by tools/makemkv-install.sh, so the service and",
+    "the root installer can never disagree about what they are fetching.",
+    "",
+    "Mirrors exist because makemkv.com is unreliable -- it was down for the whole of",
+    "August 2026 -- and an appliance whose setup cannot complete because somebody else's",
+    "web server is having a month is not an appliance. They are tried in order and the",
+    "first one whose bytes match sha256 wins.",
+    "",
+    "A mirror is safe precisely because of that hash. It is pinned here, in the repository,",
+    "and checked after every download; a mirror serving the wrong file -- stale, truncated",
+    "or hostile -- fails the check and the next one is tried. So adding mirrors costs",
+    "nothing in trust. Removing the hash would cost everything.",
+    "",
+    "PROVENANCE (2026-08-26). Both hashes were originally taken from tarballs fetched",
+    "through a third-party MEGA link while makemkv.com was down, and were carried for a",
+    "week marked unverified. They are now confirmed twice over, independently:",
+    "  - the Internet Archive's capture of makemkv.com's own /download/ URLs",
+    "    (2026-06-17, before the outage) decompresses to exactly these bytes;",
+    "  - Launchpad's ~heyarje/makemkv-beta PPA serves byte-identical .orig.tar.gz files.",
+    "Three sources, one pair of hashes."
+  ],
+  "version": "1.18.4",
+  "verified_against_official": true,
+  "verified_note": "Confirmed against the Internet Archive's 2026-06-17 capture of makemkv.com and against Launchpad's ~heyarje/makemkv-beta PPA.",
+  "verified_at": "2026-08-26",
+  "packages": [
+    {
+      "name": "makemkv-oss-1.18.4.tar.gz",
+      "sha256": "8590063648d42ec2a958b74573d7022f0f4c334e4e4fe7dd53b70c6e748ba453",
+      "bytes": 6638381,
+      "urls": [
+        {"where": "makemkv.com",
+         "url": "https://www.makemkv.com/download/makemkv-oss-1.18.4.tar.gz"},
+        {"where": "Launchpad PPA",
+         "url": "https://ppa.launchpadcontent.net/heyarje/makemkv-beta/ubuntu/pool/main/m/makemkv-oss/makemkv-oss_1.18.4.orig.tar.gz"},
+        {"where": "Launchpad (files)",
+         "url": "https://launchpad.net/~heyarje/+archive/ubuntu/makemkv-beta/+files/makemkv-oss_1.18.4.orig.tar.gz"},
+        {"where": "Internet Archive",
+         "url": "https://web.archive.org/web/20260617084344id_/https://www.makemkv.com/download/makemkv-oss-1.18.4.tar.gz"}
+      ]
+    },
+    {
+      "name": "makemkv-bin-1.18.4.tar.gz",
+      "sha256": "cee56de0baa5531abed16bd862742d308d772b4ab4dae16ee865bf74f04a1608",
+      "bytes": 18803132,
+      "urls": [
+        {"where": "makemkv.com",
+         "url": "https://www.makemkv.com/download/makemkv-bin-1.18.4.tar.gz"},
+        {"where": "Launchpad PPA",
+         "url": "https://ppa.launchpadcontent.net/heyarje/makemkv-beta/ubuntu/pool/main/m/makemkv-bin/makemkv-bin_1.18.4.orig.tar.gz"},
+        {"where": "Launchpad (files)",
+         "url": "https://launchpad.net/~heyarje/+archive/ubuntu/makemkv-beta/+files/makemkv-bin_1.18.4.orig.tar.gz"},
+        {"where": "Internet Archive",
+         "url": "https://web.archive.org/web/20260617084255id_/https://www.makemkv.com/download/makemkv-bin-1.18.4.tar.gz"}
+      ]
+    }
+  ]
+}

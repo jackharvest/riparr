@@ -2073,7 +2073,20 @@ settingsPages.general = async (s) => {
       ${st.installed ? "" : `
         <p class="muted" style="margin-bottom:10px">MakeMKV is made by GuinpinSoft. Its
           licence is between you and them.
-          <a href="${esc(mk.eula_url)}" target="_blank" rel="noopener">Read it</a>.</p>
+          <a href="${esc(mk.eula_url)}" target="_blank" rel="noopener">Read it</a>.
+          Riparr installs version <b>${esc(mk.manifest.version)}</b>, built on this
+          device — the build is the slow part, around half an hour.</p>
+        ${mk.local_source ? `
+        <p class="muted" style="margin-bottom:10px">${icon("circle-check", "ok")}
+          A copy is already on this device, at <code>${esc(mk.local_source)}</code>.
+          Nothing will be downloaded.</p>`
+        : `
+        <p class="muted" style="margin-bottom:10px">Downloaded from
+          <b>${(mk.manifest.sources || []).map(esc).join("</b>, <b>")}</b> — in that
+          order, until one works. makemkv.com goes down for weeks at a time, which is
+          why there is more than one. Every download is checked against a checksum
+          pinned in Riparr's own source, so a mirror can only give Riparr the right
+          file or none at all.</p>`}
         <label class="switch"><input type="checkbox" id="mk-accept"><span class="track"></span>
           <span class="lbl">I have read and accept MakeMKV's licence agreement</span></label>
         <div class="btn-row"><button class="btn primary" id="mk-install" disabled>

@@ -56,7 +56,13 @@ done
 if [ -n "$SRC" ]; then
   say downloading 0.15 "Using the copy already on this device" "$SRC"
 else
-  say downloading 0.15 "Downloading MakeMKV from makemkv.com" ""
+  # Until makemkv-install.sh grew a fetch step this line was a lie: nothing downloaded
+  # anything, and the script it hands off to exited 2 on an empty source directory.
+  # It now tries makemkv.com first and falls through to mirrors, so name them -- the
+  # thing a person needs to know when makemkv.com is down for a month is that the box
+  # is not stuck on it.
+  say downloading 0.15 "Downloading MakeMKV" \
+      "makemkv.com first, then mirrors if it is down. Every download is checked against a pinned checksum."
 fi
 
 # The script installs its own build dependencies if they are absent, which on a box
