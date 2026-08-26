@@ -1070,10 +1070,13 @@ views.history = async () => {
   const byFilm = [];
   const seen = new Map();
   for (const j of jobs) {
-    // Fingerprint is the disc's identity, so attempts group even when the early ones
-    // failed before identification resolved a title and fell back to the raw volume
-    // label -- otherwise THE_BOSS_BABY and The Boss Baby sit side by side as two films.
-    const key = j.fingerprint || (j.title || j.disc_label || "?").toLowerCase();
+    // Group on the normalised name, not the fingerprint. Fingerprint looks like the
+    // right key -- it is the disc's actual identity -- but a job that died before
+    // identification finished never got one, so keying on it mixed hashes and titles
+    // and split a film into two tiles: `Trolls` beside `TROLLS`. Normalising the label
+    // collapses the raw volume label onto the resolved title, which is the whole point.
+    const key = (j.title || j.disc_label || "?")
+      .toLowerCase().replace(/[_.]+/g, " ").replace(/\s+/g, " ").trim();
     const at = seen.get(key);
     if (at === undefined) { seen.set(key, byFilm.length); byFilm.push({ ...j, tries: 1 }); }
     else {
