@@ -232,13 +232,25 @@ class SetupUser(BaseModel):
 
 @app.get("/api/setup/state")
 def setup_state():
-    st = P.makemkv_status()
+    """What the setup wizard needs to know before anyone has signed in.
+
+    Unauthenticated by necessity -- it is what the page asks to find out whether an
+    account exists yet. That makes everything it returns public to anything that can
+    reach the port, so the share comes back as the four fields the wizard actually
+    draws. It used to return `db.default_share()` whole, which includes the SMB
+    **password in the clear**: an unauthenticated GET handed out the credentials to
+    the user's NAS.
+    """
     share = db.default_share()
     return {
         "has_users": db.has_users(),
         "complete": bool(db.get("setup_complete")),
-        "makemkv": st,
-        "share": share,
+        "makemkv": P.makemkv_status(),
+        "share": None if not share else {
+            "id": share["id"], "name": share["name"],
+            "host": share["host"], "path": share["path"],
+            "verified_at": share["verified_at"],
+        },
         "hostname": P.hostname(),
         "version": __version__,
     }
