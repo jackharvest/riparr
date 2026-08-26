@@ -693,7 +693,7 @@ views.queue = async () => {
             <button class="tool" id="t-eject" ${drives.length && !busy ? "" : "disabled"}>
               <span class="ti">${icon("eject")}</span>Eject</button>`)}
     ${autoRipPanel(ar)}
-    <div class="card${artState.image ? " has-art" : ""}">
+    <div class="card disc-cell${artState.image ? " has-art" : ""}">
       ${artState.image ? `<div class="tray-art" role="presentation"
            style="background-image:url('${artState.image}')"></div>` : ""}
       ${jobs.length ? `${jobs.map(jobRow).join("")}
@@ -721,6 +721,11 @@ function jobRow(j) {
   const active = j.state === "ripping" ? ripPct
                : j.state === "transferring" ? sentPct
                : j.state === "verifying" ? verPct : 0;
+  // Reading the disc reports nothing, and MakeMKV is silent until its first progress
+  // line, so a real rip opens with a bar sitting at zero. Sweep it instead: "moving,
+  // but I cannot tell you how far" is a different message from "stopped".
+  const working = active <= 0
+    && ["identifying", "queued", "ripping", "transferring", "verifying"].includes(j.state);
   return `
     <div class="job">
       <div class="job-head">
@@ -734,7 +739,7 @@ function jobRow(j) {
       </div>
       ${j.warning ? `<div class="job-warn">${icon("triangle-exclamation")}
         <span>${esc(j.warning)}</span></div>` : ""}
-      <div class="bar"><i style="width:${active}%"></i></div>
+      <div class="bar${working ? " working" : ""}"><i style="width:${active}%"></i></div>
       <div class="job-legs">
         <span class="${j.state === "ripping" ? "on" : ripPct >= 100 ? "did" : ""}">Rip ${leg(ripPct)}</span>
         <span class="${j.state === "transferring" ? "on" : sentPct >= 100 ? "did" : ""}">Upload ${leg(sentPct)}</span>
@@ -1825,7 +1830,9 @@ function scheduleLiveRefresh(section) {
   // page that happens with no user action, and this used to return early whenever the
   // queue was empty -- so the tray stayed empty until the user clicked something, and
   // Refresh re-rendered the same stale snapshot. Slower when idle: nothing is racing.
-  const delay = $$(".job").length ? 2500 : 5000;
+  // 1.2s while a job is live. The phase line, the legs and the ETA all move on their
+  // own during a rip, and at 2.5s the numbers visibly stepped rather than counted.
+  const delay = $$(".job").length ? 1200 : 5000;
   liveTimer = setTimeout(() => { if (!document.hidden) route(); }, delay);
 }
 
@@ -2016,16 +2023,22 @@ function wireContent(section, sub) {
 
   const ripNow = $("#rip-now");
   if (ripNow) ripNow.onclick = async () => {
+    // Say something immediately. Starting a rip reads the disc before the job exists,
+    // which takes a few seconds on a DVD and longer if the drive is busy -- and the
+    // button used only to go quietly disabled, so the box looked broken during exactly
+    // the window where the user is least sure they clicked anything.
     ripNow.disabled = true;
+    const was = ripNow.innerHTML;
+    ripNow.innerHTML = `<span class="spin"></span> Starting\u2026`;
     try {
       await api.post("/api/rip", {});
-      toast("Started", "ok");
     } catch (e) {
       toast(e.message, "bad");
+      ripNow.innerHTML = was;
       ripNow.disabled = false;
       return;
     }
-    route();
+    route();   // the job now exists, so the panel becomes the progress view
   };
 
   $$("[data-cancel]").forEach(b => b.onclick = async () => {

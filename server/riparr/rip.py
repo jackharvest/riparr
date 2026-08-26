@@ -147,7 +147,25 @@ def enqueue(force=False):
         return None, refusal
 
     label = d.get("label") or ""
+
+    # The row exists *before* the slow part, not after. `fingerprint()` reads the disc
+    # structure through makemkvcon, which is minutes on a real drive -- and while it
+    # ran there was no job, so the queue had nothing to draw and sat on "Rip this disc"
+    # for the whole identification. The click looked like it had done nothing, which is
+    # the one impression an appliance cannot afford. `identifying` is a state the
+    # interface already renders ("Reading the disc"), so this costs no new UI.
+    job_id = db.create_job(
+        title=None, disc_label=label, kind="movie", fingerprint="",
+        state="identifying", phase="Reading the disc",
+        mode=None, bytes_total=int(d.get("size_bytes") or 0))
+
+    def _abandon(reason):
+        """Take the row back down when the disc turns out not to be rippable."""
+        db.update_job(job_id, state="cancelled", phase=None,
+                      finished_at=int(time.time()), error=reason)
+
     fp = fingerprint(d)
+    db.update_job(job_id, fingerprint=fp)
 
     if not force:
         known = db.get_disc(fp)
@@ -158,15 +176,16 @@ def enqueue(force=False):
                              % time.strftime("%d %b %Y", time.localtime(known["ripped_at"])))
             LED.announce("duplicate")
             P.eject()
-            return None, "You've already ripped %s." % (known.get("title") or label)
+            msg = "You've already ripped %s." % (known.get("title") or label)
+            _abandon(msg)
+            return None, msg
+        # Exclude the row just created, which now carries this same fingerprint.
         existing = db.job_for_fingerprint(fp, states=db.ACTIVE_STATES)
-        if existing:
+        if existing and existing["id"] != job_id:
+            _abandon("Already queued as job %d." % existing["id"])
             return existing["id"], None
 
-    job_id = db.create_job(
-        title=None, disc_label=label, kind="movie", fingerprint=fp,
-        state="queued", phase="Waiting to start",
-        mode=None, bytes_total=int(d.get("size_bytes") or 0))
+    db.update_job(job_id, state="queued", phase="Waiting to start")
     _wake.set()
     return job_id, None
 
@@ -313,7 +332,7 @@ def fingerprint(drive):
     """
     parts = [drive.get("label") or "", drive.get("media") or ""]
     try:
-        for t in read_titles(drive.get("device")):
+        for t in read_titles(drive.get("device"), drive):
             parts.append("%d:%d" % (t["index"], t["seconds"]))
     except Exception:
         pass
@@ -333,7 +352,23 @@ def _seconds(text):
     return int(h) * 3600 + int(mm) * 60 + int(ss)
 
 
-def read_titles(device):
+# One disc gets read once. `fingerprint()` needs the title structure to tell two discs
+# with the same label apart, and the worker needs it again a moment later to choose
+# what to rip -- and each read is a ~2.5 minute `makemkvcon` run on a real drive, so
+# doing it twice put five minutes of silence in front of every rip. Keyed on the same
+# cheap signature the disc watcher uses, so swapping discs invalidates it.
+_titles_cache = {"key": None, "titles": None, "at": 0.0}
+TITLES_TTL = 1800
+
+
+def _titles_key(disc):
+    if not disc:
+        return None
+    return "%s|%s|%s" % (disc.get("device"), disc.get("label") or "?",
+                         disc.get("size_bytes") or 0)
+
+
+def read_titles(device, disc=None):
     """Every title on the disc, with its runtime and size.
 
     Codes are MakeMKV's own AP_ItemAttributeId: 2 name, 9 duration, 10 size as text,
@@ -354,6 +389,11 @@ def read_titles(device):
             {"index": 2, "seconds": 61, "bytes": 90 * 2 ** 20,
              "name": "Menu loop", "file": "title_t02.mkv"},
         ]
+    key = _titles_key(disc)
+    if key and _titles_cache["key"] == key and _titles_cache["titles"] \
+            and time.time() - _titles_cache["at"] < TITLES_TTL:
+        return _titles_cache["titles"]
+
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     if not os.path.exists(binary):
         return []
@@ -375,7 +415,10 @@ def read_titles(device):
             t["name"] = value
         elif code == 27:
             t["file"] = value
-    return [titles[k] for k in sorted(titles)]
+    out = [titles[k] for k in sorted(titles)]
+    if key and out:
+        _titles_cache.update(key=key, titles=out, at=time.time())
+    return out
 
 
 def _disc_arg(device):
@@ -560,7 +603,7 @@ def _identify(job, s):
     if not d:
         raise RipFailed("The disc was removed before Riparr could read it.")
 
-    titles = read_titles(d.get("device"))
+    titles = read_titles(d.get("device"), d)
     if not titles:
         raise RipFailed("Riparr couldn't read any titles from this disc. "
                         "If it's dirty or scratched, clean it and try again.")

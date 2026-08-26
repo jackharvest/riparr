@@ -407,9 +407,19 @@ def _drive_report():
     on the status request a human made.
     """
     out = []
+    busy = db.active_job() is not None
     for d in P.optical_drives():
         d = dict(d)
-        d["libredrive"] = P.libredrive_status(d)
+        # Ask MakeMKV about LibreDrive only when it cannot get in the way. The probe is
+        # a two-minute `makemkvcon` run that holds the drive, and rip.py:136 already
+        # states the rule -- "LibreDrive is asked only for a 4K disc" -- which this
+        # ignored, probing on every status poll for any Blu-ray-capable drive. With a
+        # DVD in the tray that meant a background probe owned /dev/sr0 and the rip's own
+        # makemkvcon queued behind it, so POST /api/rip simply hung and the user saw a
+        # button that did nothing. Idle tray, or a disc that actually raises the UHD
+        # question: otherwise leave it None and let the chip stay unlit.
+        ask = not busy and (not d.get("present") or RIP.disc_family(d) == "uhd")
+        d["libredrive"] = P.libredrive_status(d) if ask else None
         # MakeMKV outranks the registry in both directions. The registry is what to
         # expect of a drive you have not bought; MakeMKV is what this drive does.
         verdict = {"enabled": "yes", "no": "no"}.get(d["libredrive"]) or d.get("uhd")

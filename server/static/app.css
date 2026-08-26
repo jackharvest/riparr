@@ -648,7 +648,25 @@ td.path {
 }
 
 .bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
-.bar > i { display: block; height: 100%; background: var(--queue); border-radius: 3px; }
+.bar > i { display: block; height: 100%; background: var(--queue); border-radius: 3px;
+           transition: width .4s ease; }
+
+/* Work with nothing to measure yet -- reading the disc, or ripping before MakeMKV has
+   emitted its first progress line. A bar frozen at zero is indistinguishable from a
+   box that has hung, which is the impression that makes people pull the cable. This
+   says "moving, but I cannot tell you how far" instead. */
+.bar.working { position: relative; }
+.bar.working > i {
+  width: 34% !important; transition: none;
+  animation: bar-sweep 1.4s ease-in-out infinite;
+}
+@keyframes bar-sweep {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(330%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bar.working > i { animation: none; width: 100% !important; opacity: .35; }
+}
 .bar.dual > i.sent { background: var(--ok); }
 
 /* DescriptionList: a 160px right-aligned bold label column with the value at 180px,
@@ -837,6 +855,13 @@ td.path {
  * for free; it only needs a positioning context.
  */
 .card.has-art { position: relative; }
+
+/* The disc cell keeps one height whatever it is showing. It swaps between an idle
+   tray, a "reading the disc" row and a full progress view, and letting it resize on
+   every transition made the page jump under the pointer -- and gave the artwork a
+   different crop each time. One height, contents centred. */
+.disc-cell { min-height: 296px; display: flex; flex-direction: column; justify-content: center; }
+@media (max-width: 700px) { .disc-cell { min-height: 260px; } }
 
 .tray-art {
   position: absolute; inset: 0 0 0 auto;
