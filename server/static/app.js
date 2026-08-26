@@ -681,6 +681,14 @@ views.queue = async () => {
     api.get("/api/status"),
     api.get("/api/autorip"),
   ]);
+  // A refused duplicate leaves nothing on this page to look at -- no job, no file --
+  // so the page it belongs on is Discs, next to the disc in question and the button
+  // that overrides the refusal. Checked here because this is the only view that keeps
+  // polling, and putting a disc in is the one thing that happens with no user action.
+  if (st.duplicate && st.duplicate.fingerprint) {
+    goToDuplicate(st.duplicate);
+    return "";
+  }
   const jobs = q.jobs;
   state.typical = q.typical_seconds;
   state.typicalN = q.typical_samples;
@@ -807,6 +815,14 @@ function jobRow(j) {
       <div class="job-steps">${stepHtml}</div>
       ${stageClock(j)}
     </div>`;
+}
+
+/* Point the browser at the disc it already has, once. The acknowledgement is what
+   stops it happening again on the next poll -- without it the page would bounce back
+   to Discs every five seconds and the user could never leave. */
+async function goToDuplicate(dupe) {
+  try { await api.post("/api/duplicate/ack", {}); } catch (e) { /* show it anyway */ }
+  location.hash = `#/discs/${encodeURIComponent(dupe.fingerprint)}`;
 }
 
 /* ── the counting timer ──
@@ -1267,12 +1283,20 @@ function when(ts) {
   return new Date(ts * 1000).toLocaleString();
 }
 
+/* A date a person would say out loud: no seconds, no am/pm on something months old. */
+function day(ts) {
+  if (!ts) return "";
+  return new Date(ts * 1000).toLocaleDateString([],
+    { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
 /* ── Discs: the shelf ──
    Every disc this box has seen, and the one page in the product with something worth
    looking at. The record was already here; the artwork was being fetched for the tray
    and thrown away the moment the disc came out. */
-views.discs = async () => {
+views.discs = async (highlight) => {
   const { discs } = await api.get("/api/discs");
+  const hit = highlight ? discs.find(d => d.fingerprint === highlight) : null;
   if (!discs.length) {
     return `${head("Discs", "Every disc Riparr has seen. Reinsert one and it is refused rather than re-ripped.")}
       <div class="card"><div class="empty-state"><div class="big">${icon("compact-disc")}</div>
@@ -1283,7 +1307,9 @@ views.discs = async () => {
   }
   const card = (d) => {
     const name = d.title || pretty(d.label) || "Unknown disc";
-    return `<figure class="rip" data-art="${esc(d.title || d.label || "")}">
+    const me = highlight && d.fingerprint === highlight;
+    return `<figure class="rip${me ? " dupe" : ""}" id="${me ? "dupe-tile" : ""}"
+                    data-art="${esc(d.title || d.label || "")}">
       <div class="rip-art">
         <span class="rip-fallback">${icon("compact-disc")}</span>
         ${!d.ripped_at ? `<span class="rip-flag" title="Seen, but never finished a verified rip">${
@@ -1302,7 +1328,27 @@ views.discs = async () => {
       </div>
     </figure>`;
   };
+  // The banner is the sentence the box would say out loud. It names the film and the
+  // date, because "you already have this" is only convincing with evidence, and it
+  // points at the button rather than describing a menu path.
+  const banner = hit ? `
+    <div class="card dupe-note">
+      <div class="dupe-ic">${icon("compact-disc")}</div>
+      <div class="grow">
+        <h2>You've already ripped ${esc(hit.title || pretty(hit.label) || "this disc")}</h2>
+        <p>It went into your library ${esc(ago(hit.ripped_at))}${
+          // The exact date earns its place only once "3 days ago" stops being an
+          // answer. Next to "2 min ago" it is just a timestamp with seconds in it.
+          hit.ripped_at && Date.now() / 1000 - hit.ripped_at > 86400
+            ? ` — ${esc(day(hit.ripped_at))}` : ""}, so Riparr gave the disc straight
+          back rather than spending another half hour on it.</p>
+        <p class="muted">Meant it? <b>Re-rip</b> on the highlighted tile pulls the tray
+          back in and starts over.</p>
+      </div>
+      <button class="icon-btn" id="dupe-dismiss" title="Dismiss">${icon("xmark")}</button>
+    </div>` : "";
   return `${head("Discs", "Every disc Riparr has seen. Reinsert one and it is refused rather than re-ripped.")}
+    ${banner}
     <div class="rips">${discs.map(card).join("")}</div>`;
 };
 
@@ -1454,6 +1500,33 @@ settingsPages.ripping = (s) => `
         most.</span></label>
     ${sw("keep_local_copy", "Keep the local copy", s.keep_local_copy,
         "Retains the rip until the space is needed, so a downstream problem is a re-copy rather than a re-rip.")}
+  </div></div>
+
+  <div class="section"><h2>Already-ripped discs</h2><div>
+    <p class="muted">Put a disc back in that Riparr has already finished and it gives it
+      straight back rather than spending another half hour on it. If a browser is open
+      it jumps to <b>Discs</b> and points at the film. If nobody is looking at one, this
+      is how the box says so.</p>
+    <label class="f" style="margin-top:14px"><span>Tell me with</span>
+      <select data-set="duplicate_signal">
+        ${opt("flash", "The drive's own light", s.duplicate_signal)}
+        ${opt("tray", "The tray — open and close it", s.duplicate_signal)}
+        ${opt("both", "Both", s.duplicate_signal)}
+        ${opt("off", "Nothing — just eject", s.duplicate_signal)}
+      </select>
+      <span class="help">Nothing can address the light on the front of an optical
+        drive — there is no such command, in any standard. What the light reports is
+        the drive <i>reading</i>, so Riparr reads the disc in a rhythm: three short
+        flashes, three times. It works on any drive and needs no vendor knowledge, and
+        it is the gentler of the two. <b>The tray</b> is unmissable across a room and
+        is machinery, so it does two cycles and stops.</span></label>
+    <div class="btn-row">
+      <button class="btn" data-signal-test="flash">Try the light</button>
+      <button class="btn" data-signal-test="tray">Try the tray</button>
+      <span class="test-out" id="signal-out"></span></div>
+    <p class="help">Put a disc in first — the light is blinked by reading one. Riparr
+      cannot see the result, so this is the only way to find out whether your drive
+      blinks the way you would want: watch it.</p>
   </div></div>${saveBar()}`;
 
 /* Connect — how Riparr reaches you, and how finished files reach everything else.
@@ -2291,6 +2364,26 @@ function wireContent(section, sub) {
     dcCheck.disabled = false;
   };
 
+  // Nobody inside the software can see the drive's light, so this button exists for a
+  // person to watch. The result reports sectors actually read, which is the only proof
+  // available that the reads reached the drive rather than the page cache.
+  $$("[data-signal-test]").forEach(b => b.onclick = async () => {
+    const out = $("#signal-out");
+    const mode = b.dataset.signalTest;
+    $$("[data-signal-test]").forEach(x => x.disabled = true);
+    out.className = "test-out";
+    out.textContent = mode === "tray" ? "Watch the tray…" : "Watch the drive…";
+    try {
+      const r = await api.post("/api/drive/signal-test", { mode });
+      out.className = "test-out " + (r.ok ? "ok" : "warn");
+      out.textContent = r.message;
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    $$("[data-signal-test]").forEach(x => x.disabled = false);
+  });
+
   $$("[data-test-notify]").forEach(b => b.onclick = async () => {
     const channel = b.dataset.testNotify;
     const out = $("#test-" + channel);
@@ -2429,6 +2522,19 @@ function wireContent(section, sub) {
   // host. Reboots, so it borrows the same full-screen overlay as restart.
   if ($(".rips")) paintRipArt();
 
+  // Bring the tile to the user rather than making them find it. `center` because a
+  // tile scrolled to the very top of the viewport reads as "the first one", not as
+  // "this one".
+  const dupeTile = $("#dupe-tile");
+  if (dupeTile) {
+    dupeTile.scrollIntoView({ behavior: "smooth", block: "center" });
+    // The blink is attention, not decoration, so it stops. A tile that pulses forever
+    // becomes part of the furniture and stops meaning anything.
+    setTimeout(() => dupeTile.classList.remove("dupe"), 9000);
+  }
+  const dupeX = $("#dupe-dismiss");
+  if (dupeX) dupeX.onclick = () => { location.hash = "#/discs"; };
+
   const arVerify = $("#ar-verify");
   if (arVerify) arVerify.onchange = async () => {
     try {
@@ -2498,14 +2604,17 @@ function wireContent(section, sub) {
   $$("[data-hretry]").forEach(b => b.onclick = async () => {
     const id = b.dataset.hretry, act = b.dataset.haction;
     const asks = {
-      "rip": "Read this disc again from the start?\n\nPut it back in the tray first. "
-           + "This is the expensive one — the whole disc gets read again.",
+      "rip": "Read this disc again from the start?\n\nLeave the disc on the tray — "
+           + "Riparr will pull it in. This is the expensive one; the whole disc gets "
+           + "read again.",
       "verify-deep": "Read the whole file back off your library and hash it?\n\n"
            + "This takes about as long as the upload did and needs as much free space "
            + "again as the film.",
     };
     if (asks[act] && !confirm(asks[act])) return;
     b.disabled = true;
+    const wasLabel = b.innerHTML;
+    if (act === "rip") b.innerHTML = `<span class="spin"></span> Starting…`;
     try {
       const r = act === "upload" ? await api.post(`/api/queue/${id}/retry`, {})
               : act === "rip"    ? await api.post(`/api/queue/${id}/rerip`, {})
@@ -2514,7 +2623,11 @@ function wireContent(section, sub) {
       toast(r.message || "Started", "ok");
       if (act === "rip" || act === "upload") location.hash = "#/queue";
       else route();
-    } catch (e) { toast(e.message, "bad"); b.disabled = false; }
+    } catch (e) {
+      toast(e.message, "bad");
+      b.innerHTML = wasLabel;
+      b.disabled = false;
+    }
   });
 
   $$("[data-answer]").forEach(b => b.onclick = async () => {
@@ -2539,13 +2652,24 @@ function wireContent(section, sub) {
   });
 
   $$("[data-rerip]").forEach(b => b.onclick = async () => {
-    if (!confirm("Re-rip this disc?\n\nPut it back in the tray first. This reads the "
-                 + "whole disc again and overwrites what's in your library.")) return;
+    if (!confirm("Re-rip this disc?\n\nLeave it on the tray — Riparr will pull the "
+                 + "tray in. This reads the whole disc again and overwrites what's "
+                 + "in your library.")) return;
+    // Closing the tray and waiting for the drive to find the disc takes up to half a
+    // minute, and a button that sits there looking clickable for half a minute is a
+    // button somebody clicks twice.
+    b.disabled = true;
+    const was = b.innerHTML;
+    b.innerHTML = `<span class="spin"></span> Starting…`;
     try {
       await api.post(`/api/discs/${encodeURIComponent(b.dataset.rerip)}/rerip`, {});
       toast("Started", "ok");
       location.hash = "#/queue";
-    } catch (e) { toast(e.message, "bad"); }
+    } catch (e) {
+      toast(e.message, "bad");
+      b.innerHTML = was;
+      b.disabled = false;
+    }
   });
 
   // Fetching is a network round trip to somebody else's forum, so it happens after

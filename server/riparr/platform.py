@@ -557,6 +557,204 @@ def usb_host_fix():
     return True, "Reconfiguring the second USB-C socket, then restarting"
 
 
+# ─────────────────── saying something with the drive itself ───────────────────
+#
+# The status LED on the board is the documented way the box speaks without a browser,
+# and on a board with nothing wired to SPI it says nothing at all. The optical drive
+# has a light on the front of it and it is always there, so it is worth using.
+#
+# **There is no way to address that light.** MMC -- the command set every optical drive
+# speaks -- has no LED control command, and the vendor-specific ones that exist are
+# per-manufacturer guesses that do not belong anywhere near a stranger's hardware.
+#
+# What the light actually does is report *media access*. So Riparr does not switch it
+# on; it gives the drive something to do, in a rhythm. Reads are issued with O_DIRECT
+# so the page cache cannot answer them -- a cached read lights nothing -- and from a
+# fresh offset each time so the head has to move. The result is a real blink pattern
+# out of nothing but ordinary reads, on any drive, with no vendor knowledge at all.
+
+# A DVD sector is 2048 bytes, so every offset and length here is a multiple of it;
+# O_DIRECT on a block device rejects anything else.
+_SECTOR = 2048
+_FLASH_CHUNK = 256 * 1024          # big enough that one read is audible head movement
+
+# (on_seconds, off_seconds) per blink, then the gap before the group repeats. Three
+# short flashes is deliberately unlike the steady flicker of a rip in progress.
+DUPLICATE_PATTERN = {"blinks": 3, "on": 0.22, "off": 0.22, "gap": 0.55, "groups": 3}
+
+
+def drive_flash(device="/dev/sr0", blinks=3, on=0.22, off=0.22, gap=0.55, groups=3):
+    """Blink the drive's own activity light by reading the disc in a rhythm.
+
+    Returns {"ok", "message", "sectors"} -- `sectors` is how far the block layer says
+    the drive actually read, which is the only evidence available that anything
+    happened. Nobody here can see the light.
+
+    Never raises. A drive that is busy, empty, or refuses O_DIRECT simply reports that
+    it could not blink; this is a courtesy signal and nothing depends on it.
+    """
+    if MOCK:
+        return {"ok": True, "message": "Drive light flashed (simulated)", "sectors": 0}
+
+    before = _sr_sectors_read(device)
+    fd = None
+    buf = None
+    try:
+        import mmap
+        # mmap gives page-aligned memory, which satisfies O_DIRECT's alignment rule
+        # without hand-rolling an aligned allocator.
+        buf = mmap.mmap(-1, _FLASH_CHUNK)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECT", 0)
+        try:
+            fd = os.open(device, flags)
+        except OSError:
+            # Some filesystems and some drives refuse O_DIRECT outright. Without it the
+            # cache may answer and the light will not move, so say so rather than
+            # pretending the signal was sent.
+            if not getattr(os, "O_DIRECT", 0):
+                return {"ok": False, "sectors": 0,
+                        "message": "This system has no O_DIRECT, so reads would come "
+                                   "from cache and the light would not move."}
+            fd = os.open(device, os.O_RDONLY)
+
+        offset = 0
+        for _ in range(max(1, groups)):
+            for _ in range(max(1, blinks)):
+                # Hold the drive busy for the whole "on" period. One read is over in
+                # milliseconds; a light that flickers for 4 ms is a light nobody sees.
+                until = time.monotonic() + on
+                while time.monotonic() < until:
+                    try:
+                        os.preadv(fd, [buf], offset)
+                    except OSError:
+                        # Past the end of a short disc, or a bad sector. Go back to the
+                        # start rather than leaving the offset stranded -- otherwise
+                        # every remaining flash fails instantly and the light, having
+                        # blinked once, simply stops.
+                        offset = 0
+                        break
+                    offset += _FLASH_CHUNK
+                    # Stay inside the first 512 MB. Every real disc has data there, and
+                    # seeking past the end of a short disc only earns I/O errors.
+                    if offset > 512 * 1024 * 1024:
+                        offset = 0
+                time.sleep(off)
+            time.sleep(gap)
+    except Exception as e:
+        return {"ok": False, "message": "Could not flash the drive light: %s" % e,
+                "sectors": max(0, _sr_sectors_read(device) - before)}
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if buf is not None:
+            try:
+                buf.close()
+            except Exception:
+                pass
+
+    read = max(0, _sr_sectors_read(device) - before)
+    # Zero sectors means the reads never reached the device -- cache, or a drive that
+    # ignored them -- so the light did not move and saying "sent" would be a lie.
+    return {"ok": read > 0,
+            "sectors": read,
+            "message": ("Flashed the drive light (%d sectors read)." % read) if read
+                       else "The reads never reached the drive, so the light did not move."}
+
+
+def _sr_sectors_read(device="/dev/sr0"):
+    """Sectors the block layer has read from this drive, or 0 if it cannot say.
+
+    Field 3 of /sys/block/<dev>/stat. This is the proof that a `drive_flash` did
+    something: MakeMKV's own reads go through /dev/sg0 and never appear here, so any
+    movement in this counter is ours.
+    """
+    name = os.path.basename(device or "")
+    try:
+        with open("/sys/block/%s/stat" % name) as f:
+            return int(f.read().split()[2])
+    except (OSError, IndexError, ValueError):
+        return 0
+
+
+def close_tray(device="/dev/sr0", wait=25):
+    """Pull the tray in and wait for the drive to work out what is on it.
+
+    The counterpart to `eject`, and the reason Re-rip can be a single click: the disc
+    is sitting on an open tray at exactly the moment somebody decides they meant it.
+    `wait=0` closes the tray and says nothing about what is in it -- which is what
+    `tray_gesture` wants, since it is only moving the tray to be looked at.
+    Returns (ok, message).
+    """
+    if MOCK:
+        return True, "Tray closed (simulated)"
+    try:
+        p = subprocess.run(["eject", "-t", device], capture_output=True, text=True)
+    except OSError as e:
+        return False, "Riparr could not close the tray (%s)." % e
+    if p.returncode != 0:
+        return False, ((p.stderr or p.stdout).strip()
+                       or "The drive would not pull the tray in.")
+    if not wait:
+        return True, "Tray closed."
+    # Closing returns long before the disc is readable -- a DVD takes 15-25 s to spin
+    # up and report its table of contents, and asking too early gets "no medium".
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        time.sleep(2)
+        d = next((x for x in optical_drives() if x.get("present")), None)
+        if d:
+            return True, "Tray closed."
+    return False, ("The tray closed but the drive found no disc in it. "
+                   "Put the disc in and try again.")
+
+
+def tray_gesture(device="/dev/sr0", cycles=2):
+    """Say something by opening and closing the tray -- the loudest thing this box owns.
+
+    Unmissable across a room, and it is machinery, so it is deliberately restrained:
+    a couple of cycles, not a drum solo. The tray is left **open** at the end, because
+    whatever the box was trying to say, the user's disc is theirs to take back.
+    """
+    if MOCK:
+        return {"ok": True, "message": "Tray gesture (simulated)"}
+    ok = True
+    for i in range(max(1, cycles)):
+        r = eject(device)
+        ok = ok and r.get("ok")
+        time.sleep(1.2)
+        if i < cycles - 1:
+            done, _ = close_tray(device, wait=0)
+            ok = ok and done
+            time.sleep(1.2)
+    return {"ok": ok, "message": "Opened the tray %d times." % max(1, cycles)}
+
+
+def duplicate_signal(device="/dev/sr0", mode="flash"):
+    """Tell somebody with no screen that this disc is already in their library.
+
+    Ordering matters: the light can only be blinked while the disc is still in the
+    drive, so that happens first and the eject follows. Returns a message describing
+    what was actually done, which is not always what was asked -- a flash that never
+    reached the drive falls back to the tray rather than silently doing nothing.
+    """
+    if mode == "off":
+        return {"ok": True, "message": "No physical signal (turned off)."}
+    out = []
+    flashed = False
+    if mode in ("flash", "both"):
+        r = drive_flash(device, **DUPLICATE_PATTERN)
+        flashed = r.get("ok")
+        out.append(r.get("message"))
+    if mode == "tray" or mode == "both" or (mode == "flash" and not flashed):
+        if mode == "flash":
+            out.append("Falling back to the tray.")
+        out.append(tray_gesture(device).get("message"))
+    return {"ok": True, "message": " ".join(x for x in out if x)}
+
+
 def eject(device="/dev/sr0"):
     """Give the user their disc back. There is no physical button on the enclosure."""
     if MOCK:

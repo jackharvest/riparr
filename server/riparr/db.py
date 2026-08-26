@@ -132,6 +132,12 @@ DEFAULTS = {
     # the only feature that tells an outside server what you are ripping, so it is a
     # setting rather than an assumption -- and purely decorative when off.
     "disc_artwork": True,
+    # How the box says "you already ripped this" to somebody who is not looking at a
+    # browser. "flash" blinks the optical drive's own light by reading the disc in a
+    # rhythm -- there is no command that addresses that light, so activity is the only
+    # lever (see platform.drive_flash). "tray" opens and closes the tray instead, which
+    # is unmissable and is machinery. "both", or "off".
+    "duplicate_signal": "flash",
     "webhook_url": "",
     "watch_folder": "",
     # Notifications. The box's whole promise is "walk away", so these are the only way

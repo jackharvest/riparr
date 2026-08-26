@@ -355,17 +355,72 @@ def status(user=Depends(require_user)):
         "wifi": P.wifi_status(),
         "makemkv": P.makemkv_status(),
         "drives": _drive_report(),
-        "share": db.default_share(),
+        # Four fields, not the row. The row carries the SMB password, and the browser
+        # has never needed it -- same argument as /api/setup/state, which was handing
+        # it out to anyone at all.
+        "share": _share_out(db.default_share()),
         "setup_complete": bool(db.get("setup_complete")),
         "autorip": _autorip_state(),
+        # A refused duplicate leaves no job and no file, so this is the only trace of
+        # it. The page turns it into "you already ripped this, here it is".
+        "duplicate": RIP.pending_duplicate(),
         "led": {"detected": LED.available(), "state": LED.current_state(),
                 "device": LED.SPI_DEV},
     }
 
 
+def _share_out(share):
+    if not share:
+        return None
+    return {"id": share["id"], "name": share["name"], "host": share["host"],
+            "path": share["path"], "verified_at": share["verified_at"]}
+
+
 @app.post("/api/drive/eject")
 def drive_eject(user=Depends(require_user)):
     return P.eject()
+
+
+@app.post("/api/drive/close")
+def drive_close(user=Depends(require_user)):
+    ok, message = P.close_tray()
+    if not ok:
+        raise HTTPException(status_code=400, detail=message)
+    return {"ok": True, "message": message}
+
+
+@app.post("/api/duplicate/ack")
+def duplicate_ack(user=Depends(require_user)):
+    """The interface has shown the user their already-ripped disc. Stop pointing."""
+    RIP.ack_duplicate()
+    return {"ok": True}
+
+
+class SignalTest(BaseModel):
+    mode: str = "flash"
+
+
+@app.post("/api/drive/signal-test")
+def drive_signal_test(body: SignalTest = SignalTest(), user=Depends(require_user)):
+    """Fire the "already ripped" signal on demand, with a disc in the tray.
+
+    Nobody can see the drive's light from inside the software, so the only way to know
+    whether the blink works on a given drive is for a person to watch it happen. This
+    is the button that lets them, without having to find a duplicate disc first.
+    """
+    if body.mode not in ("flash", "tray", "both"):
+        raise HTTPException(status_code=400, detail="Unknown signal.")
+    if db.active_job():
+        raise HTTPException(status_code=400,
+                            detail="Riparr is working on a disc — this would fight it "
+                                   "for the drive. Try again when it has finished.")
+    d = next((x for x in P.optical_drives() if x.get("present")), None)
+    if body.mode in ("flash", "both") and not d:
+        raise HTTPException(status_code=400,
+                            detail="Put a disc in first — the light is blinked by "
+                                   "reading one.")
+    r = P.duplicate_signal((d or {}).get("device") or "/dev/sr0", mode=body.mode)
+    return {"ok": bool(r.get("ok")), "message": r.get("message")}
 
 
 @app.post("/api/system/led/test")
@@ -874,36 +929,6 @@ def rip_reverify(job_id: int, body: VerifyRequest = VerifyRequest(),
     return {"ok": True, "message": message}
 
 
-@app.post("/api/queue/{job_id}/rerip")
-def rip_rerip(job_id: int, user=Depends(require_user)):
-    """Read the disc again from the start, for a job whose rip is gone.
-
-    Distinct from `/api/discs/{fingerprint}/rerip`, which starts from a remembered
-    disc. This starts from a *job* -- typically a failed one on the History page --
-    and its job is to refuse politely when the wrong disc is in the tray rather than
-    silently ripping whatever it finds.
-    """
-    job = db.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="No such job.")
-    drives = P.optical_drives()
-    d = next((x for x in drives if x.get("present")), None)
-    if not d:
-        raise HTTPException(
-            status_code=400,
-            detail="Put %s back in the tray first." % (job.get("title") or "the disc"))
-    want = job.get("fingerprint")
-    if want and RIP.fingerprint(d) != want:
-        raise HTTPException(
-            status_code=400,
-            detail="The disc in the tray isn't %s. Swap it and try again."
-                   % (job.get("title") or "that one"))
-    new_id, why = RIP.enqueue(force=True)
-    if not new_id:
-        raise HTTPException(status_code=400, detail=why)
-    return {"ok": True, "job_id": new_id}
-
-
 class DiscAnswer(BaseModel):
     title_index: int = None
     name: str = ""
@@ -925,22 +950,56 @@ def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
 def disc_rerip(fingerprint: str, user=Depends(require_user)):
     """Re-rip a disc Riparr already knows.
 
-    `docs/guide/06-ripping-discs.md` has told people to "force a re-rip from the web
-    page if you meant it" for as long as the guide has existed, and until now there was
-    no such control -- only "Forget", which is a different thing wearing a name that
-    does not match the sentence the guide taught them.
+    The button is pressed at the exact moment the disc is sitting on an open tray,
+    because that is where a refused duplicate leaves it -- so this closes the tray
+    rather than telling the user to. `_start_rerip` carries the rest.
     """
-    drives = P.optical_drives()
-    d = next((x for x in drives if x.get("present")), None)
+    return _start_rerip(fingerprint)
+
+
+@app.post("/api/queue/{job_id}/rerip")
+def rip_rerip(job_id: int, user=Depends(require_user)):
+    """Read the disc again from the start, for a job whose rip is gone.
+
+    Distinct from the disc-fingerprint form only in where the fingerprint comes from.
+    A job that died before identification never got one, in which case this rips
+    whatever is in the tray -- which is the best available reading of "try that again"
+    when nobody, including Riparr, ever found out what that disc was.
+    """
+    job = db.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    return _start_rerip(job.get("fingerprint") or None,
+                        what=job.get("title") or job.get("disc_label"))
+
+
+def _start_rerip(fingerprint, what=None):
+    """Pull the tray in if it is open, then queue this disc past the duplicate check.
+
+    Two things have to be true at once and they fight each other. The duplicate check
+    must not refuse this disc -- and the *disc watcher* may well get to it first, three
+    seconds after the tray closes, with no idea a human asked for it. So the
+    authorisation is armed on the disc rather than passed to one call: whichever path
+    reaches `enqueue` first consumes it, and the loser is turned away by the
+    already-working-on-a-disc guard rather than by ejecting the disc.
+    """
+    RIP.arm_force(fingerprint)
+    d = next((x for x in P.optical_drives() if x.get("present")), None)
     if not d:
-        raise HTTPException(status_code=400,
-                            detail="Put the disc back in the tray first.")
-    if RIP.fingerprint(d) != fingerprint:
-        raise HTTPException(
-            status_code=400,
-            detail="The disc in the tray isn't that one. Insert it and try again.")
-    job_id, why = RIP.enqueue(force=True)
+        ok, message = P.close_tray()
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail="Put %s in the tray and press Re-rip again. (%s)"
+                       % (what or "the disc", message))
+    job_id, why = RIP.enqueue(force=True, expect=fingerprint)
     if not job_id:
+        # The watcher beat us to it. That is a success wearing an error's clothes:
+        # the disc it picked up is the one that was armed, so it is already being
+        # ripped and the only correct answer is to point at that job.
+        active = db.active_job()
+        if active and (not fingerprint or active.get("fingerprint") in (fingerprint, "")):
+            return {"ok": True, "job_id": active["id"]}
         raise HTTPException(status_code=400, detail=why)
     return {"ok": True, "job_id": job_id}
 

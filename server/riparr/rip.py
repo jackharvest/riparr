@@ -55,6 +55,40 @@ _wake = threading.Event()
 _stop = threading.Event()
 _cancel = {}                    # job id -> threading.Event, for a cancel mid-flight
 
+# "The next time you see this disc, rip it anyway." Set by Re-rip, consumed by whichever
+# path gets to the disc first.
+#
+# Without this there is a race with a real consequence. Re-rip closes the tray; the disc
+# watcher notices a disc three seconds later and calls `enqueue()` with no force; the
+# duplicate check refuses it and ejects -- so pressing Re-rip spat the disc back out.
+# Arming by *fingerprint* rather than by a bare flag also means it cannot leak onto a
+# different disc that happens to go in first.
+_ARM_SECONDS = 300
+_arm = {"fingerprint": None, "at": 0}
+_arm_lock = threading.Lock()
+
+
+def arm_force(fingerprint):
+    """Authorise one re-rip of one disc, for the next few minutes."""
+    with _arm_lock:
+        _arm["fingerprint"] = fingerprint or ""
+        _arm["at"] = time.time()
+
+
+def _consume_arm(fingerprint):
+    """True if this disc was the one somebody asked to re-rip. Single use."""
+    with _arm_lock:
+        if not _arm["at"] or time.time() - _arm["at"] > _ARM_SECONDS:
+            return False
+        want = _arm["fingerprint"]
+        # "" means "whatever is in the tray" -- a job that died before it ever got a
+        # fingerprint has no other way to say which disc it meant.
+        if want and want != fingerprint:
+            return False
+        _arm["fingerprint"] = None
+        _arm["at"] = 0
+        return True
+
 
 # ─────────────────────────────── the disc watcher ───────────────────────────────
 
@@ -115,11 +149,13 @@ def _autorip_ready():
 
 # ─────────────────────────────── queueing ───────────────────────────────
 
-def enqueue(force=False):
+def enqueue(force=False, expect=None):
     """Queue the disc currently in the tray. Returns (job_id, reason_if_not).
 
     `force` is the "Re-rip" path: it skips the duplicate check, which is the only
-    thing standing between a user and forty minutes they have already spent.
+    thing standing between a user and forty minutes they have already spent. `expect`
+    is a fingerprint the caller believes is in the tray -- Re-rip supplies it so that
+    asking to re-rip one film cannot start a rip of whatever disc actually went in.
     """
     drives = P.optical_drives()
     d = next((x for x in drives if x.get("present")), None)
@@ -188,16 +224,37 @@ def enqueue(force=False):
     fp = fingerprint(d, on_progress=scan_progress)
     db.update_job(job_id, fingerprint=fp)
 
+    if expect and fp != expect:
+        msg = "The disc in the tray isn't the one you asked to re-rip."
+        _abandon(msg)
+        return None, msg
+
+    # Whoever got here first -- this call, or the disc watcher three seconds ahead of
+    # it -- the arm makes exactly one enqueue of this disc a forced one.
+    if not force:
+        force = _consume_arm(fp)
+
     if not force:
         known = db.get_disc(fp)
         if known and known.get("ripped_at"):
-            log.info("Refused a duplicate: %s", known.get("title") or label)
-            notify.send("duplicate", title=known.get("title") or label,
-                        body="Already ripped on %s. Ejected without re-reading it."
-                             % time.strftime("%d %b %Y", time.localtime(known["ripped_at"])))
+            title = known.get("title") or pretty_label(label) or label
+            when = time.strftime("%d %b %Y", time.localtime(known["ripped_at"]))
+            log.info("Refused a duplicate: %s", title)
+            # Remembered *before* the physical signal, because the signal takes about
+            # ten seconds and the browser should already be on its way to the Discs
+            # page pointing at this film by the time the tray opens.
+            note_duplicate(fp, title, label, known.get("ripped_at"))
+            notify.send("duplicate", title=title,
+                        body="Already ripped on %s. Ejected without re-reading it." % when)
             LED.announce("duplicate")
+            # Say it with the drive, for whoever is not looking at a browser. This
+            # blinks the drive's own light *before* ejecting, because it works by
+            # reading the disc and there is nothing to read once the tray is open.
+            r = P.duplicate_signal(d.get("device") or "/dev/sr0",
+                                   mode=_settings().get("duplicate_signal", "flash"))
+            log.info("Duplicate signal: %s", r.get("message"))
             P.eject()
-            msg = "You've already ripped %s." % (known.get("title") or label)
+            msg = "You've already ripped %s." % title
             _abandon(msg)
             return None, msg
         # Exclude the row just created, which now carries this same fingerprint.
@@ -215,6 +272,48 @@ def enqueue(force=False):
     db.update_job(job_id, state="queued", phase="Waiting to start")
     _wake.set()
     return job_id, None
+
+
+# ─────────────────────────── "you already have this" ───────────────────────────
+#
+# A refused duplicate is the one outcome with nothing to show for it: no job, no file,
+# no row in the queue. The disc goes in, something happens for ten seconds, the disc
+# comes out. Without a record of it the interface has no way to explain what it just
+# did, so the refusal is written down and the page picks it up on its next poll.
+#
+# Kept in settings rather than a table -- it is one small fact at a time, and the
+# alternative is a table with one row in it.
+
+DUPLICATE_FRESH = 600           # after ten minutes it is history, not news
+
+
+def note_duplicate(fingerprint, title, label, ripped_at):
+    db.set("last_duplicate", {
+        "fingerprint": fingerprint, "title": title, "label": label,
+        "ripped_at": ripped_at, "at": int(time.time()),
+    })
+
+
+def pending_duplicate():
+    """The unacknowledged duplicate refusal, if there is a recent one.
+
+    Recency matters: this is a nudge towards a page, and being marched to the Discs
+    page by something that happened on Tuesday is not a nudge, it is a haunting.
+    """
+    got = db.get("last_duplicate")
+    if not isinstance(got, dict) or got.get("seen"):
+        return None
+    if time.time() - (got.get("at") or 0) > DUPLICATE_FRESH:
+        return None
+    return got
+
+
+def ack_duplicate():
+    """The interface has shown it. Do not show it again."""
+    got = db.get("last_duplicate")
+    if isinstance(got, dict):
+        got["seen"] = True
+        db.set("last_duplicate", got)
 
 
 def cancel(job_id):
