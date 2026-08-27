@@ -728,6 +728,7 @@ async function startConnect() {
    cannot replace itself: a source checkout, or a release with no build for this
    platform. */
 async function checkUpdate() {
+  if (!(state.boot.prefs || {}).auto_check_updates) return;
   let u;
   try { u = await riparr.check_update(); } catch (e) { return; }
   if (u.status !== "update") return;
@@ -827,6 +828,14 @@ async function init() {
 
   setRail(null);
   show("welcome");
+  const auto = $("#auto-check");
+  auto.checked = !!(state.boot.prefs || {}).auto_check_updates;
+  auto.onchange = async () => {
+    state.boot.prefs = state.boot.prefs || {};
+    state.boot.prefs.auto_check_updates = auto.checked;
+    await riparr.set_pref("auto_check_updates", auto.checked);
+    if (auto.checked) checkUpdate(); else $("#update-slot").innerHTML = "";
+  };
   checkUpdate();
 }
 

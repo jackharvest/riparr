@@ -1169,3 +1169,50 @@ def update_install_target():
     if not target:
         return None, "Riparr Preparer could not work out where it is installed."
     return target, ""
+
+
+# ─────────────────────────── Preferences ───────────────────────────
+#
+# The Preparer is a wizard, not an application with a settings screen, and it should
+# stay that way -- one file, a couple of keys, and no preferences window to design.
+# It lives in the build folder beside the SSH key and the account password, because
+# that folder is already the thing a person keeps.
+
+PREFS_FILE = "preparer-prefs.json"
+
+PREF_DEFAULTS = {
+    # On by default. A tool that writes an SD card is used rarely, often months apart,
+    # and the version you last used is exactly the version that has since been fixed.
+    # Checking is a nudge and nothing more: it never downloads without being asked.
+    "auto_check_updates": True,
+}
+
+
+def read_prefs(assets):
+    prefs = dict(PREF_DEFAULTS)
+    try:
+        with open(os.path.join(assets, PREFS_FILE)) as f:
+            saved = json.load(f)
+        if isinstance(saved, dict):
+            prefs.update({k: v for k, v in saved.items() if k in PREF_DEFAULTS})
+    except Exception:
+        pass                       # missing or malformed: the defaults are the answer
+    return prefs
+
+
+def write_pref(assets, key, value):
+    """Set one preference. Unknown keys are refused rather than silently stored."""
+    if key not in PREF_DEFAULTS:
+        return {"ok": False, "error": "unknown preference: %s" % key}
+    prefs = read_prefs(assets)
+    prefs[key] = value
+    try:
+        os.makedirs(assets, exist_ok=True)
+        path = os.path.join(assets, PREFS_FILE)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(prefs, f, indent=2)
+        os.replace(tmp, path)
+    except OSError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "prefs": prefs}

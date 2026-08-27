@@ -154,6 +154,9 @@ body { display: grid; grid-template-columns: 208px 1fr; }
 .update-pill b { display: block; font-size: 12px; }
 
 /* Mid-update: not a button any more, because there is nothing to click. */
+.auto-check { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.auto-check input { accent-color: var(--accent); margin: 0; }
+
 .update-pill.busy { cursor: default; }
 .update-pill.busy:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .update-pill.warn { border-color: var(--warn); color: var(--warn); }

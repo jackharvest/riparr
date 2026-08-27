@@ -41,6 +41,9 @@ EVENTS = [
     ("share_lost",  "Your library went away",    True),
     ("duplicate",   "A disc was already ripped", False),
     ("key_expiring", "The MakeMKV key is about to expire", True),
+    # On by default and quiet by nature: the update check fires every six hours but
+    # each version is announced once, so this is a handful of messages a year.
+    ("update_available", "A new version of Riparr is available", True),
 ]
 
 DEFAULT_EVENTS = [k for k, _, on in EVENTS if on]
@@ -55,6 +58,8 @@ _TAGS = {
     "share_lost": ("warning", 4),
     "duplicate": ("recycle", 2),
     "key_expiring": ("key", 4),
+    # Priority 2: worth seeing, never worth waking somebody at 3am. Nothing is broken.
+    "update_available": ("arrow_up", 2),
 }
 
 
@@ -159,7 +164,8 @@ def _discord(event, title, body, payload):
     if not url:
         return
     colour = {"done": 0x27C24C, "failed": 0xF05050, "needs_you": 0xFF9F1A,
-              "share_lost": 0xFF9F1A, "key_expiring": 0xFF9F1A}.get(event, 0x5B5B8A)
+              "share_lost": 0xFF9F1A, "key_expiring": 0xFF9F1A,
+              "update_available": 0x4C9AFF}.get(event, 0x5B5B8A)
     mention, allowed = discord_mention_prefix(event)
     msg = {"username": "Riparr",
            "embeds": [{"title": title or "Riparr",

@@ -31,7 +31,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -124,6 +124,7 @@ class Bridge:
         default_board = boards.default_id()
         return {
             "version": VERSION,
+            "prefs": core.read_prefs(self.assets),
             "repo": core.RIPARR_REPO,
             "assets": self.assets,
             "images": images,
@@ -221,6 +222,10 @@ class Bridge:
 
     def refresh_disks(self):
         return {"disks": core.list_disks()}
+
+    def set_pref(self, key, value):
+        """One preference, written to the build folder. See core.PREF_DEFAULTS."""
+        return core.write_pref(self.assets, key, value)
 
     def check_update(self):
         """What is available, and whether this copy can install it itself."""

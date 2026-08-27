@@ -348,9 +348,45 @@ def _task_check_health():
 
 
 def _task_update_check():
+    """Look for a new release and, if there is one, say so once.
+
+    Two things this deliberately does not do.
+
+    **It does not install anything.** Replacing the software while somebody is halfway
+    through ripping a disc, because a machine decided the moment was right, is not a
+    courtesy. The notification is a nudge; System -> Updates is where a person says yes.
+
+    **It does not nag.** The check runs every six hours, and a box left alone for a
+    fortnight would otherwise send the same notification fifty-six times. The version
+    last announced is remembered, so each release is mentioned exactly once -- and a
+    *newer* release than the one already announced is mentioned again, which is the
+    behaviour that matters.
+
+    `auto_check_updates` is honoured here, which it previously was not: the switch was
+    on the settings page, defaulted to True, and was read by nothing at all. A setting
+    that does nothing in either position is worse than no setting, because it answers
+    the question wrongly instead of not answering it.
+    """
     from . import updater
+    if not db.get("auto_check_updates", True):
+        return "Update check: skipped (turned off in settings)"
+
     r = updater.check()
-    return "Update check: %s" % r.get("status", "unknown")
+    status = r.get("status", "unknown")
+    if status != "update":
+        return "Update check: %s" % status
+
+    latest = r.get("latest") or ""
+    component("Update").info("Version %s is available", latest)
+    if db.get("last_update_announced", "") != latest:
+        from . import notify
+        notify.send(
+            "update_available",
+            title="Riparr %s is available" % latest,
+            body=("You're on %s. System → Updates installs it and restarts, and "
+                  "nothing is changed until you say so." % r.get("current", "?")))
+        db.set("last_update_announced", latest)
+    return "Update check: %s available" % latest
 
 
 def _task_key_check():

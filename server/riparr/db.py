@@ -171,7 +171,7 @@ DEFAULTS = {
     # Notifications. The box's whole promise is "walk away", so these are the only way
     # it can reach someone who did.
     "notify_events": ["done", "ripped", "needs_you", "failed", "share_lost",
-                      "key_expiring"],
+                      "key_expiring", "update_available"],
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": "",
     "ntfy_token": "",
@@ -195,6 +195,10 @@ DEFAULTS = {
     "warn_key_days": 7,
     "update_channel": "stable",
     "auto_check_updates": True,
+    # The last version announced, so each release is mentioned once rather than every
+    # six hours until somebody installs it. Not a preference -- state -- but it lives
+    # here because this is where the box keeps things that must survive a power cut.
+    "last_update_announced": "",
 }
 
 
