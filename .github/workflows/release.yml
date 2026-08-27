@@ -157,6 +157,17 @@ jobs:
               if printf '%s' "$norm" | grep -q "payload/$f"; then echo "ok  $f"
               else echo "::error::payload is missing $f"; fail=1; fi
             done
+            if [ $fail -ne 0 ]; then
+              # A gate that fails should say what it looked at, not just that it
+              # disagreed. Every previous failure here cost a full release cycle to
+              # diagnose because it printed nothing.
+              echo "--- payload entries the TOC does contain ---"
+              printf '%s' "$norm" | grep -o "payload[^']*" | sort -u | head -30
+              echo "--- a sample of collected data entries ---"
+              printf '%s' "$norm" | grep -o "('[^']*', '[^']*', 'DATA')" | head -10
+              echo "--- toc files read ---"
+              find tools/preparer/build -name "*.toc"
+            fi
           fi
           exit $fail
 
