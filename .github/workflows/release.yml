@@ -73,6 +73,29 @@ jobs:
           pip install -r tools/preparer/requirements.txt
           pip install pyinstaller
 
+      # Gather the appliance next to the app before building, so --add-data names one
+      # local directory on every platform. Reaching up out of the build directory with
+      # "../../server" worked on macOS and Linux and collected nothing on Windows, and
+      # the difference is not worth understanding when it can be removed instead.
+      - name: Stage the appliance into the bundle
+        shell: bash
+        run: |
+          set -e
+          rm -rf tools/preparer/payload
+          mkdir -p tools/preparer/payload/tools
+          cp -R server tools/preparer/payload/server
+          cp -R packaging tools/preparer/payload/packaging
+          cp tools/install.sh tools/makemkv-install.sh tools/preparer/payload/tools/
+          rm -rf tools/preparer/payload/server/.venv
+          find tools/preparer/payload -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
+          find tools/preparer/payload -name "*.pyc" -delete 2>/dev/null || true
+          echo "staged:"
+          for f in server/riparr/main.py server/requirements.txt \
+                   tools/install.sh packaging/riparr.service; do
+            test -f "tools/preparer/payload/$f" || { echo "::error::did not stage $f"; exit 1; }
+            echo "  ok  $f"
+          done
+
       - name: Build
         shell: bash
         run: |
@@ -93,10 +116,7 @@ jobs:
             --collect-all webview \
             --add-data "ui${PATHSEP:-:}ui" \
             --add-data "hostos${PATHSEP:-:}hostos" \
-            --add-data "../../server${PATHSEP:-:}payload/server" \
-            --add-data "../../packaging${PATHSEP:-:}payload/packaging" \
-            --add-data "../../tools/install.sh${PATHSEP:-:}payload/tools" \
-            --add-data "../../tools/makemkv-install.sh${PATHSEP:-:}payload/tools" \
+            --add-data "payload${PATHSEP:-:}payload" \
             shell.py
         env:
           PATHSEP: ${{ runner.os == 'Windows' && ';' || ':' }}

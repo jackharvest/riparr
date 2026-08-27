@@ -40,3 +40,7 @@ JOURNAL.md
 DECISIONS.md
 server/DECISIONS.md
 docs/design/
+
+# Staged by the release build: the appliance tree copied next to the Preparer so it
+# can be bundled with one --add-data. Never committed; rebuilt on every release.
+tools/preparer/payload/
