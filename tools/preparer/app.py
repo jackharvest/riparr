@@ -37,7 +37,11 @@ import bridge as _bridge
 import core
 import shots
 
-VERSION = "1.0.0"
+# No VERSION here. This module is the superseded hand-built NSWindow (see shell.py),
+# and the copy it used to keep said "1.0.0" against releases tagged v0.1.x -- the
+# exact drift bridge.py warns about, sitting one import away from the update check.
+# release.yml only compares bridge.py, so a second constant here is a landmine with
+# no guard on it. bridge.VERSION is the one and only answer.
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
 

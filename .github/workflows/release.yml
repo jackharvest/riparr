@@ -83,15 +83,60 @@ jobs:
           # --collect-all webview: pywebview loads its per-platform backend by name at
           # runtime, so static analysis does not find it and the bundle starts, opens
           # nothing, and exits 0.
+          # payload/ is the appliance itself, carried inside the app. Stage 2 streams
+          # this tree to the box over SSH and runs tools/install.sh inside it, so a
+          # bundle without it is a Preparer that writes a card and can then install
+          # nothing -- which is precisely what v0.1.2 shipped.
           pyinstaller --noconfirm --clean --windowed --name "Riparr Preparer" \
             ${ONEFILE} \
+            --osx-bundle-identifier com.jackharvest.riparr-preparer \
             --collect-all webview \
             --add-data "ui${PATHSEP:-:}ui" \
             --add-data "hostos${PATHSEP:-:}hostos" \
+            --add-data "../../server${PATHSEP:-:}payload/server" \
+            --add-data "../../packaging${PATHSEP:-:}payload/packaging" \
+            --add-data "../../tools/install.sh${PATHSEP:-:}payload/tools" \
+            --add-data "../../tools/makemkv-install.sh${PATHSEP:-:}payload/tools" \
             shell.py
         env:
           PATHSEP: ${{ runner.os == 'Windows' && ';' || ':' }}
           ONEFILE: ${{ matrix.onefile }}
+
+      # The build cannot be trusted to have carried the appliance with it. v0.1.2 was
+      # packaged, signed, published and downloaded before anyone noticed that stage 2
+      # had nothing to install -- so the presence of the payload is now a release gate
+      # rather than something to discover on somebody else's Mac.
+      - name: The bundle carries the appliance it installs
+        shell: bash
+        run: |
+          set -e
+          root=$(find tools/preparer/dist -type d -name payload -print -quit)
+          [ -n "$root" ] || { echo "::error::no payload/ in the bundle"; exit 1; }
+          fail=0
+          for f in server/riparr/main.py server/requirements.txt \
+                   tools/install.sh packaging/riparr.service; do
+            if [ -f "$root/$f" ]; then echo "ok  $f"
+            else echo "::error::payload is missing $f"; fail=1; fi
+          done
+          exit $fail
+
+      # PyInstaller's command line cannot set CFBundleShortVersionString, so the bundle
+      # reported 0.0.0 in Get Info and in the version picker of anything that reads it.
+      # The tag is the truth; write it in.
+      - name: Stamp the version into the app bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          V="${GITHUB_REF_NAME#v}"
+          [ -n "$V" ] || V=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' tools/preparer/bridge.py)
+          PL="tools/preparer/dist/Riparr Preparer.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$PL" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $V" "$PL"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $V" "$PL" \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $V" "$PL"
+          echo "stamped $V"
+          plutil -p "$PL" | grep -i CFBundle
 
       # A .dmg with an Applications symlink in it, which is the gesture every Mac user
       # already knows. UDZO compresses it; -ov because a re-run must not stop to ask.

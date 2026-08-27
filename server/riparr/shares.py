@@ -89,7 +89,7 @@ class BadPath(ValueError):
 
 
 def normalise(share, path=""):
-    """Turn whatever somebody typed into (share, folder) that smbclient can use.
+    r"""Turn whatever somebody typed into (share, folder) that smbclient can use.
 
     Three things go wrong here and all of them used to end in a bare SMB error code.
 

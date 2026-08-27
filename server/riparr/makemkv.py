@@ -10,6 +10,8 @@ Riparr invokes `makemkvcon` as a separate process over its CLI and never links a
 libmakemkv, which is what keeps a GPL-3 codebase and a proprietary decoder at arm's
 length.
 """
+import calendar
+import datetime
 import hashlib
 import json
 import os
@@ -28,6 +30,18 @@ from . import platform as P
 EULA_URL = "https://www.makemkv.com/eula/"
 HOMEPAGE = "https://www.makemkv.com/"
 FORUM_KEY_TOPIC = "https://forum.makemkv.com/forum/viewtopic.php?f=5&t=1053"
+
+# A second place to ask, for the same reason there are mirrors for the binary below:
+# forum.makemkv.com is regularly slow to the point of unusable -- four minutes to a first
+# byte has been observed -- and an appliance that cannot tell you your key has lapsed
+# because somebody else's phpBB is thrashing is an appliance that lies by omission.
+#
+# This one is not a scrape. It is an API built for exactly this, and it answers with the
+# expiry as a Unix timestamp, which is the thing the forum only ever states in prose.
+# It requires a descriptive User-Agent and publishes the timestamp after which it wants
+# to be asked again; both are honoured.
+AYRA_KEY_API = "https://cable.ayra.ch/makemkv/api.php?json"
+USER_AGENT = "riparr/%s (+https://github.com/jackharvest/riparr)"
 
 # The pinned release, its checksums, and every place it can be fetched from, all read
 # from packaging/makemkv-manifest.json so that this service and the root installer
@@ -506,50 +520,329 @@ def _run():
 # This is a forum page, not an API, so it will break one day. Every failure path here
 # ends in "here is the link, paste it yourself" rather than an error, because that is
 # exactly as good as the situation before this existed.
-_key_cache = {"at": 0, "value": None}
+_key_cache = {"at": 0, "ttl": 0, "value": None}
+_EMPTY_KEY = {"key": None, "expires": None, "expires_text": None,
+              "source": FORUM_KEY_TOPIC, "sources_agree": None,
+              "fetched_at": 0, "error": None}
 KEY_TTL = 6 * 3600
+# A failure is cached too, briefly. Without this, a forum having a bad hour cost a
+# fresh timeout on every render of Settings and of the setup wizard.
+FAIL_TTL = 15 * 60
+FORUM_TIMEOUT = 20
+API_TIMEOUT = 10
 KEY_RE = re.compile(r"\bT-[A-Za-z0-9@_\-]{40,80}\b")
+# "end of" is *captured*, not skipped. It used to sit in a non-capturing group, which
+# threw away the only word that distinguishes "valid until September 2026" from "valid
+# until the end of September 2026" -- a 29-day difference, and always in the direction of
+# warning a month early. The forum has said "end of" every month it has been read.
 EXPIRY_RE = re.compile(
-    r"valid\s+until\s+(?:the\s+)?(?:end\s+of\s+)?([A-Z][a-z]+\s+\d{1,2},?\s+\d{4}"
+    r"valid\s+until\s+(?:the\s+)?(end\s+of\s+)?([A-Z][a-z]+\s+\d{1,2},?\s+\d{4}"
     r"|[A-Z][a-z]+\s+\d{4}|\d{1,2}\s+[A-Z][a-z]+\s+\d{4})", re.I)
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july", "august",
+     "september", "october", "november", "december"], start=1)}
 
-def beta_key(force=False):
-    """The current beta key, with whatever validity the forum states.
 
-    Cached, because the answer changes monthly at most and this is somebody else's
-    forum — polling it on every page load would be rude and slow.
+def _resolve_expiry(text, end_of):
+    """Turn the forum's prose into a real date. Returns "YYYY-MM-DD" or None.
+
+    A bare month ("September 2026") is ambiguous by a month. `end_of` decides which edge
+    it means, and the answer is the *last* day of that month when the forum said so --
+    which is also what the second source's timestamp resolves to, so the two agree rather
+    than merely coexisting.
+    """
+    if not text:
+        return None
+    t = " ".join(text.split()).rstrip(".,")
+
+    m = re.match(r"^([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})$", t)      # September 30, 2026
+    if not m:
+        m2 = re.match(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$", t)   # 30 September 2026
+        if m2:
+            m = None
+            mon, day, year = m2.group(2), int(m2.group(1)), int(m2.group(3))
+        else:
+            m3 = re.match(r"^([A-Za-z]+)\s+(\d{4})$", t)             # September 2026
+            if not m3:
+                return None
+            mon, year = m3.group(1), int(m3.group(2))
+            day = None
+    else:
+        mon, day, year = m.group(1), int(m.group(2)), int(m.group(3))
+
+    month = _MONTHS.get(mon.lower())
+    if not month:
+        return None
+    if day is None:
+        day = _last_day(year, month) if end_of else 1
+    try:
+        return datetime.date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _last_day(year, month):
+    return calendar.monthrange(year, month)[1]
+
+
+def beta_key(force=False, allow_fetch=True):
+    """The current beta key and the date it lapses, from whichever source answers.
+
+    Two sources, tried in order, exactly as the binary download below uses mirrors and
+    for the same reason: the forum is authoritative but frequently unusable, and an
+    appliance must not depend on somebody else's uptime to tell you your key is dead.
+
+    The forum is asked first because it is GuinpinSoft's own word. The API is asked when
+    the forum fails *or* when the forum gave a key but no date -- it carries the expiry
+    as a timestamp, so a month named in prose and a month named in seconds can be
+    checked against each other rather than merely believed.
+
+    `allow_fetch=False` returns whatever is cached and never touches the network, which
+    is what any caller on a hot path wants.
     """
     now = time.time()
-    if not force and _key_cache["value"] and now - _key_cache["at"] < KEY_TTL:
-        return dict(_key_cache["value"], cached=True)
+    if _key_cache["value"] and now - _key_cache["at"] < _key_cache["ttl"]:
+        if not force:
+            return dict(_key_cache["value"], cached=True)
+    if not allow_fetch:
+        return dict(_key_cache["value"] or _EMPTY_KEY, cached=True)
 
-    result = {"key": None, "expires": None, "source": FORUM_KEY_TOPIC,
+    result = {"key": None, "expires": None, "expires_text": None,
+              "source": FORUM_KEY_TOPIC, "sources_agree": None,
               "fetched_at": int(now), "error": None, "cached": False}
+
+    forum = _key_from_forum()
+    api = None
+    if not forum.get("key") or not forum.get("expires"):
+        api = _key_from_api()
+
+    chosen = forum if forum.get("key") else (api or {})
+    if not chosen.get("key"):
+        # Nothing answered. Cache the *failure* briefly so a forum having a bad hour
+        # costs one wait per quarter-hour rather than one per visit to Settings.
+        result["error"] = (forum.get("error") or (api or {}).get("error")
+                           or "Couldn't reach any source for the current beta key.")
+        _remember(result, FAIL_TTL)
+        return result
+
+    result["key"] = chosen["key"]
+    result["source"] = chosen.get("source", FORUM_KEY_TOPIC)
+    result["expires"] = chosen.get("expires")
+    result["expires_text"] = chosen.get("expires_text")
+
+    # If the forum gave a key but no readable date, the API's timestamp fills it in
+    # without changing whose key we are quoting.
+    if result["key"] and not result["expires"] and api and api.get("key") == result["key"]:
+        result["expires"] = api.get("expires")
+
+    # Corroboration, when both answered. Disagreement is reported, not silently resolved:
+    # two sources differing about a registration key is a fact the user should see.
+    if forum.get("key") and api and api.get("key"):
+        result["sources_agree"] = forum["key"] == api["key"]
+        if not result["sources_agree"]:
+            result["error"] = ("The forum and the backup key service disagree about the "
+                               "current key. The forum's is shown, being GuinpinSoft's "
+                               "own; check the forum post before relying on it.")
+
+    _remember(result, KEY_TTL)
+    _record_expiry(result)
+    return result
+
+
+def _key_from_forum():
+    """GuinpinSoft's own announcement post. Authoritative, and often very slow."""
+    out = {"source": FORUM_KEY_TOPIC}
     try:
         req = urllib.request.Request(
             FORUM_KEY_TOPIC,
             headers={"User-Agent": "Mozilla/5.0 (compatible; riparr)"})
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=FORUM_TIMEOUT) as r:
             html = r.read(400000).decode("utf-8", "replace")
     except Exception as e:
-        result["error"] = ("Couldn't reach the MakeMKV forum (%s). Open the link and "
-                           "paste the key in yourself." % e)
-        return result
+        out["error"] = ("Couldn't reach the MakeMKV forum (%s)." % e)
+        return out
 
+    text = _strip_tags(html)
     # The first match is the announcement post, which is the one kept up to date.
-    m = KEY_RE.search(_strip_tags(html))
+    m = KEY_RE.search(text)
     if not m:
-        result["error"] = ("The forum page didn't contain a key in the expected "
-                           "format. Open the link and copy it in yourself.")
-        return result
-    result["key"] = m.group(0)
-    e = EXPIRY_RE.search(_strip_tags(html))
+        out["error"] = "The forum page didn't contain a key in the expected format."
+        return out
+    out["key"] = m.group(0)
+    e = EXPIRY_RE.search(text)
     if e:
-        result["expires"] = e.group(1).strip().rstrip(".,")
-    _key_cache["at"] = now
+        out["expires_text"] = (e.group(0) or "").strip()
+        out["expires"] = _resolve_expiry(e.group(2), bool(e.group(1)))
+    return out
+
+
+def _key_from_api():
+    """The backup service. Answers with the expiry as a Unix timestamp."""
+    out = {"source": AYRA_KEY_API}
+    try:
+        req = urllib.request.Request(
+            AYRA_KEY_API, headers={"User-Agent": USER_AGENT % _version()})
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT) as r:
+            data = json.loads(r.read(20000).decode("utf-8", "replace"))
+    except Exception as e:
+        out["error"] = "Couldn't reach the backup key service (%s)." % e
+        return out
+
+    key = (data.get("key") or "").strip()
+    if not KEY_RE.fullmatch(key or ""):
+        out["error"] = "The backup key service returned nothing key-shaped."
+        return out
+    out["key"] = key
+    ts = data.get("keydate")
+    if isinstance(ts, (int, float)) and ts > 0:
+        try:
+            out["expires"] = datetime.date.fromtimestamp(ts).isoformat()
+        except (OverflowError, OSError, ValueError):
+            pass
+    return out
+
+
+def _version():
+    from . import __version__
+    return __version__
+
+
+def _remember(result, ttl):
+    _key_cache["at"] = time.time()
+    _key_cache["ttl"] = ttl
     _key_cache["value"] = result
-    return result
+
+
+def record_expiry_for(key):
+    """Re-derive the stored expiry after the user enters a key, without a network wait.
+
+    Uses only what is already cached. If nothing has been fetched yet the expiry stays
+    unknown and the next lookup fills it in -- which is the right trade against making
+    somebody wait on a forum that may take four minutes to answer.
+    """
+    cached = beta_key(allow_fetch=False)
+    _record_expiry(cached if cached.get("key") else {"key": None})
+
+
+def _record_expiry(result):
+    """Write the expiry of *the key this box actually has* where status can read it.
+
+    `platform.makemkv_status()` runs on every status poll and must never make a network
+    call, and it cannot import this module anyway -- this one imports it. The database is
+    the channel between them, and it is also durable, so the countdown keeps running
+    while every source is unreachable.
+
+    The distinction that matters: the published key's expiry is only *our* expiry when it
+    is the key we hold. Holding a different one means holding an older one, and that is
+    worth saying now rather than on the date the current key happens to lapse.
+    """
+    try:
+        _record_expiry_inner(result)
+    except Exception:
+        # Recording the date is a convenience for the status poll. It must never be the
+        # reason a successfully fetched key is thrown away.
+        pass
+
+
+def _record_expiry_inner(result):
+    from . import db
+    mine = (db.get("makemkv_key") or "").strip()
+    if not mine:
+        db.set("makemkv_key_expires", "")
+        db.set("makemkv_key_stale", False)
+        return
+    if not mine.startswith("T-"):
+        # A purchased key. It does not expire, and the beta schedule does not apply.
+        db.set("makemkv_key_expires", "")
+        db.set("makemkv_key_stale", False)
+        return
+    published = result.get("key")
+    if not published:
+        return
+    if mine == published:
+        db.set("makemkv_key_expires", result.get("expires") or "")
+        db.set("makemkv_key_stale", False)
+    else:
+        # Holding a key that is not the published one means holding an older one, and
+        # the published key's expiry is emphatically not its expiry. Saying "34 days
+        # left" about somebody else's key is worse than admitting the date is unknown.
+        db.set("makemkv_key_stale", True)
+        db.set("makemkv_key_expires", "")
+
+
+SETTINGS_CONF = "~/.MakeMKV/settings.conf"
+
+
+def settings_conf_path():
+    """Where makemkvcon reads its registration key.
+
+    makemkvcon keeps its state in `$HOME/.MakeMKV`, and the unit sets HOME to the state
+    directory (`/var/lib/riparr`) rather than leaving it at a home that ProtectHome=yes
+    hides. `ReadWritePaths=` names that directory, so the unprivileged service can write
+    here; the installer creates the file and owns it to the same user.
+    """
+    return os.path.expanduser(SETTINGS_CONF)
+
+
+def apply_key(key):
+    """Put the key where MakeMKV will actually read it. Returns (ok, message).
+
+    Storing a key in Riparr's database registered nothing: `app_Key` was written nowhere,
+    so a user could paste a valid key, watch the warning clear, and still have every
+    encrypted disc fail. The database row is the record of what the user chose; this is
+    the part that makes it true.
+
+    Purely local. It needs no network, which is the point -- makemkv.com can be down for
+    a month, as it was in August 2026, and registering still works.
+    """
+    key = (key or "").strip()
+    path = settings_conf_path()
+    if P.MOCK:
+        return True, "Simulated: would write app_Key to %s" % path
+
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        lines = []
+        if os.path.exists(path):
+            with open(path) as f:
+                lines = f.read().splitlines()
+
+        # Replace the existing app_Key rather than appending a second one: MakeMKV reads
+        # the file top to bottom and the last assignment wins, so an appended key would
+        # work by luck and a duplicated file would grow by one line per save.
+        out = [l for l in lines if not re.match(r"\s*app_Key\s*=", l)]
+        if key:
+            out.append('app_Key = "%s"' % key.replace('\\', '\\\\').replace('"', '\\"'))
+        body = "\n".join(out).rstrip("\n") + "\n"
+
+        # Written via a temporary file in the same directory and renamed, so a power cut
+        # mid-write leaves the old settings.conf rather than half of a new one.
+        d = os.path.dirname(path)
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".settings.conf.")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(body)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except Exception:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise
+    except OSError as e:
+        return False, ("Saved, but MakeMKV could not be registered: %s could not be "
+                       "written (%s)." % (path, e))
+    return True, ("Registered." if key else "Key cleared.")
+
+
+def key_is_registered():
+    """Whether settings.conf currently carries an app_Key. Cheap; no makemkvcon run."""
+    path = settings_conf_path()
+    try:
+        with open(path) as f:
+            return bool(re.search(r"^\s*app_Key\s*=\s*\"..*\"", f.read(), re.M))
+    except OSError:
+        return False
 
 
 def _strip_tags(html):

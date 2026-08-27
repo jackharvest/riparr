@@ -30,7 +30,27 @@ configure. Pick the file for your computer:
 > **More info** then **Run anyway**. Check the download against `SHA256SUMS.txt` on the
 > release if you would rather verify it than trust it.
 
-From a checkout instead, `python3 tools/preparer/shell.py` is the same app.
+> **On a Mac, one thing may need installing first.** The card's settings live in a Linux
+> filesystem that macOS cannot mount, so the Preparer writes them with `debugfs`, from
+> Homebrew's `e2fsprogs`. If it isn't there, the Preparer says so on the card screen —
+> before it touches anything — and the fix is one line:
+>
+> ```sh
+> brew install e2fsprogs
+> ```
+>
+> Nothing else is needed, and Linux users almost always have it already (`e2fsprogs` is
+> in every distribution). The macOS download is **Apple Silicon only**; on an Intel Mac,
+> run the Preparer from a checkout instead.
+
+From a checkout instead, `python3 tools/preparer/shell.py` is the same app. It needs its
+dependencies once:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r tools/preparer/requirements.txt
+.venv/bin/python tools/preparer/shell.py
+```
 
 A window opens and walks you through it:
 

@@ -5,6 +5,7 @@ The rest of the codebase talks to this module and never shells out directly, so 
 whole app runs on a laptop with realistic fake data and runs unchanged on the Pi.
 `IS_APPLIANCE` is the only switch.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -1209,9 +1210,46 @@ def makemkv_status():
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     installed = os.path.exists(binary)
     ver = _makemkv_version(binary) if installed else None
-    return {"installed": installed, "version": ver,
-            "eula_accepted": _makemkv_eula_accepted(),
-            "key_type": None, "key_expires": None, "days_left": None}
+    out = {"installed": installed, "version": ver,
+           "eula_accepted": _makemkv_eula_accepted()}
+    out.update(_key_state())
+    return out
+
+
+def _key_state():
+    """Key type and days remaining, off the database rather than off the network.
+
+    This runs on every status poll, so it makes no request and reads no file that might
+    block. `makemkv._record_expiry` puts the date here whenever a source was reached;
+    until one has been, the honest answer is None and the interface says "unknown"
+    rather than inventing a countdown.
+
+    These three fields were hardcoded to None on real hardware while the only values that
+    were ever not-None came from the MOCK branch above -- which meant every expiry
+    warning, the key_expiring notification and the "N days left" pill were unreachable
+    code on the machines they were written for.
+    """
+    from . import db
+    key = (db.get("makemkv_key") or "").strip()
+    if not key:
+        return {"key_type": None, "key_expires": None, "days_left": None,
+                "key_stale": False}
+    if not key.startswith("T-"):
+        # Purchased keys do not expire, so there is nothing to count down.
+        return {"key_type": "purchased", "key_expires": None, "days_left": None,
+                "key_stale": False}
+
+    stale = bool(db.get("makemkv_key_stale"))
+    iso = (db.get("makemkv_key_expires") or "").strip()
+    days = None
+    if iso:
+        try:
+            y, m, d = (int(x) for x in iso.split("-"))
+            days = (datetime.date(y, m, d) - datetime.date.today()).days
+        except (ValueError, TypeError):
+            iso = ""
+    return {"key_type": "beta", "key_expires": iso or None, "days_left": days,
+            "key_stale": stale}
 
 
 _version_cache = {}

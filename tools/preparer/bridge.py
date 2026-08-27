@@ -31,7 +31,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -489,13 +489,24 @@ class Bridge:
                     "error": "The SSH key is missing from your build folder, so the "
                              "box cannot be reached. Prepare a card again."}
 
+        # Checked before the box is contacted, not after. A build that is missing the
+        # appliance tree can do nothing useful here, and saying so now is the difference
+        # between an error and ten minutes of watching a progress bar reach a failure.
+        ok, missing = core.payload_ok()
+        if not ok:
+            return {"ok": False,
+                    "error": ("This build of the Preparer is missing the Riparr files "
+                              "it installs (%s), so there is nothing to put on the box. "
+                              "Download the Preparer again, or run it from a checkout."
+                              % ", ".join(missing))}
+
         self.finisher = finish.Finisher(
             {"hostname": cfg.get("hostname", "riparr"),
              "port": int(cfg.get("port", core.DEFAULT_PORT)),
              "user": cfg.get("remote_user", "root"),
              "key": key,
              "known_hosts": os.path.join(self.assets, "known_hosts"),
-             "repo": os.path.abspath(os.path.join(HERE, "..", ".."))},
+             "repo": core.payload_root()},
             self.setup_path)
         self.nosleep.hold("setting up the box")
         core_publish(self.setup_path, phase="running", message="Starting",

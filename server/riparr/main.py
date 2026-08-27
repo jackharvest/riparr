@@ -623,9 +623,19 @@ def _autorip_state():
     elif not db.get("makemkv_key"):
         check("The MakeMKV key is current", "fail", "No key entered",
               "Encrypted discs won't decode without one.", "#/settings/general")
+    elif mk.get("installed") and not P.MOCK and not MK.key_is_registered():
+        # The key is in Riparr but not in MakeMKV. This was the silent case: the row
+        # above went green on a stored key while makemkvcon had never been given one.
+        check("The MakeMKV key is current", "fail", "Entered but not registered",
+              "Re-save the key in Settings to write it to MakeMKV.",
+              "#/settings/general")
     elif days is not None and days <= 0:
         check("The MakeMKV key is current", "fail", "Expired",
               "Every rip will fail until it's replaced.", "#/settings/general")
+    elif mk.get("key_stale"):
+        check("The MakeMKV key is current", "warn", "A newer key has been published",
+              "Yours is an older key and may already be dead. Settings offers the "
+              "current one.", "#/settings/general")
     elif days is not None and days <= warn_days:
         check("The MakeMKV key is current", "warn",
               "%s key, %d day%s left" % ((mk.get("key_type") or "Beta").capitalize(),
@@ -742,6 +752,15 @@ async def put_settings(request: Request, user=Depends(require_user)):
         if k in SECRET_SETTINGS and v == SECRET_MASK:
             continue                      # unchanged; do not overwrite with the mask
         db.set(k, v)
+
+    # The MakeMKV key is not an ordinary setting: storing it registers nothing. The
+    # Settings page saves it through here (only the setup wizard uses the dedicated
+    # endpoint), so the write into MakeMKV's own settings.conf has to happen on this
+    # path too, or registering would work in the wizard and silently not afterwards.
+    if "makemkv_key" in body and body["makemkv_key"] != SECRET_MASK:
+        MK.apply_key(body["makemkv_key"])
+        MK.record_expiry_for(body["makemkv_key"])
+
     return _redact(db.all_settings())
 
 
@@ -1410,8 +1429,25 @@ def makemkv_beta_key(refresh: bool = False, user=Depends(require_user)):
 
 @app.post("/api/makemkv/key")
 def makemkv_key(body: MakeMKVKey, user=Depends(require_user)):
-    db.set("makemkv_key", body.key.strip())
-    return {"ok": True}
+    """Save the key *and* register it. Those used to be the same call doing only the first.
+
+    Registration is local -- it writes app_Key into MakeMKV's own settings.conf -- so it
+    works whether or not makemkv.com is reachable. The expiry is then re-derived from
+    whatever source is already cached, so the countdown starts from the key just entered
+    rather than waiting for the next scheduled lookup.
+    """
+    key = body.key.strip()
+    db.set("makemkv_key", key)
+
+    ok, message = MK.apply_key(key)
+
+    # Cache-only: the user is waiting on this response, and a slow forum must not be in
+    # the way of a key they have already pasted in.
+    MK.record_expiry_for(key)
+
+    return {"ok": ok, "registered": ok, "message": message,
+            "expires": db.get("makemkv_key_expires") or None,
+            "stale": bool(db.get("makemkv_key_stale"))}
 
 
 # ─────────────────────────────── updates ───────────────────────────────
@@ -1440,11 +1476,55 @@ def config_export(user=Depends(require_user)):
 
 @app.post("/api/config/import")
 async def config_import(request: Request, user=Depends(require_user)):
+    """Restore settings *and* shares, and say plainly what could not be restored.
+
+    This used to import settings, ignore the `shares` list it had itself exported, and
+    answer `{"ok": true}` -- so restoring onto a fresh box looked like it had worked,
+    and the share, which is the one thing without which nothing rips, was quietly not
+    there.
+
+    Share passwords are deliberately not exported, so a restored share arrives without
+    one and is reported as needing it rather than being silently created broken. That
+    keeps the export file from being a credential for your NAS on top of everything else
+    it already carries.
+    """
     body = await request.json()
-    for k, v in (body.get("settings") or {}).items():
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected an object")
+
+    settings = body.get("settings") or {}
+    for k, v in settings.items():
         if k != "session_secret":
             db.set(k, v)
-    return {"ok": True}
+
+    # Registering the key is not a db.set -- see put_settings.
+    if "makemkv_key" in settings:
+        MK.apply_key(settings["makemkv_key"])
+        MK.record_expiry_for(settings["makemkv_key"])
+
+    existing = {(s["host"], s["path"]) for s in db.list_shares()}
+    restored, need_password = [], []
+    for sh in (body.get("shares") or []):
+        host, path = sh.get("host"), sh.get("path")
+        if not host or not path or (host, path) in existing:
+            continue
+        db.add_share(sh.get("name") or "%s/%s" % (host, path), host, path,
+                     sh.get("username") or "", "",
+                     make_default=bool(sh.get("is_default")))
+        existing.add((host, path))
+        restored.append("%s/%s" % (host, path))
+        need_password.append("%s/%s" % (host, path))
+
+    parts = ["%d setting%s restored" % (len(settings), "" if len(settings) == 1 else "s")]
+    if restored:
+        parts.append("%d share%s restored" % (len(restored),
+                                              "" if len(restored) == 1 else "s"))
+    if need_password:
+        parts.append("re-enter the password for %s before it can be used"
+                     % ", ".join(need_password))
+    return {"ok": True, "settings_imported": len(settings),
+            "shares_restored": restored, "shares_need_password": need_password,
+            "message": ". ".join(parts) + "."}
 
 
 # ──────────────────── system: tasks, events, logs, backups ────────────────────

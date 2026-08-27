@@ -47,13 +47,15 @@ the card *before* it boots. That is the whole reason this stage exists.
 
 | Your computer | Write the card | Set the box up | Proven on real hardware |
 |---|---|---|---|
-| **macOS** | Yes | Yes | Yes |
+| **macOS** | Yes — Apple Silicon download; Intel runs it from a checkout | Yes | Yes |
 | **Linux** | Yes | Yes | Not yet |
 | **Windows** | Yes, except for images that keep their settings in a Linux filesystem — the app says so before it touches the card | Yes | Not yet |
 
 Your computer asks for permission once — your password on macOS, polkit on Linux, UAC on
 Windows — and that covers writing, provisioning and ejecting. If the Preparer can't write
-a card from your system it says so on its first screen, before you choose anything.
+a card from your system it says so on its first screen, before you choose anything — and
+that includes naming anything it needs installed, such as `brew install e2fsprogs` on a
+Mac, which is what lets it write settings into the card's Linux partition.
 
 You can also write the card with [Raspberry Pi
 Imager](https://www.raspberrypi.com/software/) or
@@ -150,6 +152,9 @@ sudo bash tools/install.sh          # → http://riparr.local:9797
 # On your own machine, to look at the interface
 server/run.sh                       # → http://localhost:8000, simulated hardware
 ```
+
+`server/run.sh` builds its own virtualenv the first time it runs, so a fresh clone needs
+nothing prepared beforehand.
 
 Off the board, `riparr/platform.py` reports a simulated system, a simulated drive with a
 disc in it and discoverable shares, so the whole interface is exercisable on a laptop.
