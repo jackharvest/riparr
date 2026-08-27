@@ -115,6 +115,12 @@ way to reach somebody who did.
 verified MKV came out on the library share, unattended. Getting there took eleven
 interface bugs in one session, all of them now fixed.
 
+**Riparr updates itself, once you say so.** Both halves check for a new release, tell
+you when there is one, and — on a click — download it, verify it against the checksum
+published with the release, replace themselves and restart. Nothing installs on its own,
+and neither half will install anything it cannot verify. The checking is on by default
+and can be turned off in one place on each side.
+
 **This is still pre-1.0.** It has run on one board, with one drive, against one NAS. The
 parts most likely to surprise you are the ones that have met the fewest configurations:
 other boards, other drives, and **card writing from Windows or Linux** — which is written

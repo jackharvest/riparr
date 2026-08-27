@@ -173,6 +173,10 @@ somewhere permanent as well as a notification on your phone.
 usual way a working box quietly stops working, and it always happens while you are not
 looking at the web page.
 
+*A new version of Riparr is available* is on by default too, and is quiet by nature —
+each version is announced once, so it amounts to a handful of messages a year. It is
+sent at a lower priority than the rest, because nothing is broken.
+
 ### Discord, if you want the box to tell *you*
 
 A Discord webhook posts into a **channel**, which is a thing you find later. What
@@ -283,9 +287,32 @@ the password itself is never written down.
 | **Export settings** | Downloads a JSON file. **Do this once you're set up.** Rebuilding a card becomes a 30-second job. |
 | **Import settings** | Restore from that file |
 | **Change password** | Web interface login. Forgotten it? Put an empty file called `riparr-reset` on the card's boot partition — no re-flash, and nothing else is lost |
-| **Update** | Check for and install a new Riparr version |
+| **Update** | Check now, and install. See [Updates](#updates) below |
 | **Logs** | Download a log bundle for bug reports |
 | **Restart / shut down** | In the account menu (the person icon, top right), not on a page. Rarely needed — the box is built to survive losing power, but shutting down here is the safe way to stop it before unplugging |
+
+### Updates
+
+Riparr looks for a new version every six hours and **tells you when it finds one — once
+per version, not every six hours.** It does not install anything on its own.
+
+When you say yes, on **System → Updates**, the box downloads the new version, checks it
+against the checksum published with the release, swaps it in and restarts itself. If the
+download does not match, nothing is changed. If the new version cannot start, the
+previous one is put back. You do not need a terminal and you do not need to be near it.
+
+| Setting | Notes |
+|---|---|
+| **Check for updates automatically** | On by default. Turning it off stops the checking *and* the notification — nothing else changes, and **System → Updates** still works whenever you go looking |
+| *A new version of Riparr is available* | A notification event like any other, on by default, and it can be turned off on its own under Notifications if you would rather find updates yourself |
+
+The Preparer works the same way: it tells you in the corner when there is a newer
+version, and one click downloads it, verifies it, replaces itself and reopens. The
+checkbox next to the version number turns the checking off.
+
+> **Updating is always a nudge, never a surprise.** Nothing is downloaded and nothing is
+> replaced until you click. A box that quietly replaced its own software while you were
+> halfway through a disc would not be doing you a favour.
 
 ---
 
