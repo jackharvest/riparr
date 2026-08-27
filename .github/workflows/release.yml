@@ -110,14 +110,30 @@ jobs:
         shell: bash
         run: |
           set -e
-          root=$(find tools/preparer/dist -type d -name payload -print -quit)
-          [ -n "$root" ] || { echo "::error::no payload/ in the bundle"; exit 1; }
+          NEED="server/riparr/main.py server/requirements.txt tools/install.sh packaging/riparr.service"
           fail=0
-          for f in server/riparr/main.py server/requirements.txt \
-                   tools/install.sh packaging/riparr.service; do
-            if [ -f "$root/$f" ]; then echo "ok  $f"
-            else echo "::error::payload is missing $f"; fail=1; fi
-          done
+
+          root=$(find tools/preparer/dist -type d -name payload -print -quit || true)
+          if [ -n "$root" ]; then
+            # One-directory build: the files are on disk, so look at them.
+            echo "checking the unpacked bundle at $root"
+            for f in $NEED; do
+              if [ -f "$root/$f" ]; then echo "ok  $f"
+              else echo "::error::payload is missing $f"; fail=1; fi
+            done
+          else
+            # One-file build (Windows): --add-data lives inside the .exe and is unpacked
+            # to _MEIPASS at runtime, so there is nothing on disk to stat. PyInstaller's
+            # own table of contents is the record of what it collected.
+            echo "one-file build: checking PyInstaller's TOC"
+            toc=$(find tools/preparer/build -name "*.toc" | head -20)
+            [ -n "$toc" ] || { echo "::error::no PyInstaller TOC to check"; exit 1; }
+            norm=$(cat $toc | tr '\\' '/')
+            for f in $NEED; do
+              if printf '%s' "$norm" | grep -q "payload/$f"; then echo "ok  $f"
+              else echo "::error::payload is missing $f"; fail=1; fi
+            done
+          fi
           exit $fail
 
       # PyInstaller's command line cannot set CFBundleShortVersionString, so the bundle

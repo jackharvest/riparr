@@ -851,7 +851,12 @@ def payload_root():
     time somebody runs it.
     """
     if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "payload")
+        # _MEIPASS is where PyInstaller puts --add-data, and it is the same answer for a
+        # one-directory bundle and for a one-file build that unpacks itself to a temp
+        # directory at startup. Deriving it from __file__ happens to work for the first
+        # and is luck for the second.
+        base = getattr(sys, "_MEIPASS", None) or os.path.dirname(sys.executable)
+        return os.path.join(base, "payload")
     return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                         "..", ".."))
 
