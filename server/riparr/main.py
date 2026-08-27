@@ -623,9 +623,19 @@ def _autorip_state():
     elif not db.get("makemkv_key"):
         check("The MakeMKV key is current", "fail", "No key entered",
               "Encrypted discs won't decode without one.", "#/settings/general")
+    elif mk.get("installed") and not P.MOCK and not MK.key_is_registered():
+        # The key is in Riparr but not in MakeMKV. This was the silent case: the row
+        # above went green on a stored key while makemkvcon had never been given one.
+        check("The MakeMKV key is current", "fail", "Entered but not registered",
+              "Re-save the key in Settings to write it to MakeMKV.",
+              "#/settings/general")
     elif days is not None and days <= 0:
         check("The MakeMKV key is current", "fail", "Expired",
               "Every rip will fail until it's replaced.", "#/settings/general")
+    elif mk.get("key_stale"):
+        check("The MakeMKV key is current", "warn", "A newer key has been published",
+              "Yours is an older key and may already be dead. Settings offers the "
+              "current one.", "#/settings/general")
     elif days is not None and days <= warn_days:
         check("The MakeMKV key is current", "warn",
               "%s key, %d day%s left" % ((mk.get("key_type") or "Beta").capitalize(),
@@ -742,6 +752,15 @@ async def put_settings(request: Request, user=Depends(require_user)):
         if k in SECRET_SETTINGS and v == SECRET_MASK:
             continue                      # unchanged; do not overwrite with the mask
         db.set(k, v)
+
+    # The MakeMKV key is not an ordinary setting: storing it registers nothing. The
+    # Settings page saves it through here (only the setup wizard uses the dedicated
+    # endpoint), so the write into MakeMKV's own settings.conf has to happen on this
+    # path too, or registering would work in the wizard and silently not afterwards.
+    if "makemkv_key" in body and body["makemkv_key"] != SECRET_MASK:
+        MK.apply_key(body["makemkv_key"])
+        MK.record_expiry_for(body["makemkv_key"])
+
     return _redact(db.all_settings())
 
 
@@ -1410,8 +1429,25 @@ def makemkv_beta_key(refresh: bool = False, user=Depends(require_user)):
 
 @app.post("/api/makemkv/key")
 def makemkv_key(body: MakeMKVKey, user=Depends(require_user)):
-    db.set("makemkv_key", body.key.strip())
-    return {"ok": True}
+    """Save the key *and* register it. Those used to be the same call doing only the first.
+
+    Registration is local -- it writes app_Key into MakeMKV's own settings.conf -- so it
+    works whether or not makemkv.com is reachable. The expiry is then re-derived from
+    whatever source is already cached, so the countdown starts from the key just entered
+    rather than waiting for the next scheduled lookup.
+    """
+    key = body.key.strip()
+    db.set("makemkv_key", key)
+
+    ok, message = MK.apply_key(key)
+
+    # Cache-only: the user is waiting on this response, and a slow forum must not be in
+    # the way of a key they have already pasted in.
+    MK.record_expiry_for(key)
+
+    return {"ok": ok, "registered": ok, "message": message,
+            "expires": db.get("makemkv_key_expires") or None,
+            "stale": bool(db.get("makemkv_key_stale"))}
 
 
 # ─────────────────────────────── updates ───────────────────────────────

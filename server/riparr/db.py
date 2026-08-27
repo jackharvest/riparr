@@ -191,6 +191,11 @@ DEFAULTS = {
     "smtp_from": "",
     "smtp_to": "",
     "makemkv_key": "",
+    # Resolved from whichever source answered, and only ever the expiry of the key this
+    # box actually holds -- see makemkv._record_expiry. Durable, so the countdown keeps
+    # running while every source is unreachable.
+    "makemkv_key_expires": "",
+    "makemkv_key_stale": False,
     "makemkv_eula_accepted_at": 0,
     "warn_key_days": 7,
     "update_channel": "stable",

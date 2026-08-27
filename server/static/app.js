@@ -2542,6 +2542,10 @@ function healthMessages(st) {
   else if (m.days_left != null && m.days_left <= 0)
     out.push({ level: "bad", message: "The MakeMKV key has expired. Rips will fail until it is replaced.",
                href: "#/settings/makemkv", action: "Update the key" });
+  else if (m.key_stale)
+    out.push({ level: "warn", message: "A newer MakeMKV key has been published — the one "
+      + "on this box is older and may already have lapsed.",
+      href: "#/settings/makemkv", action: "Update the key" });
   else if (m.days_left != null && m.days_left <= (state.settings?.warn_key_days ?? 7))
     out.push({ level: "warn", message: `The MakeMKV key expires in ${m.days_left} day(s).`,
                href: "#/settings/makemkv", action: "Update the key" });
@@ -2774,6 +2778,7 @@ function navBadges() {
   const m = st.makemkv;
   if (!m.installed) sys++;
   else if (m.days_left != null && m.days_left < 8) sys++;
+  else if (m.key_stale) sys++;
   if (!st.share) sys++;
   if (!st.wifi.connected) sys++;
   if (sys) b.system = sys;
@@ -3650,6 +3655,8 @@ function renderChrome() {
   if (!m.installed) pills.push(`<span class="pill bad">MakeMKV missing</span>`);
   else if (m.days_left != null && m.days_left < 8)
     pills.push(`<span class="pill warn">Key expires in ${m.days_left}d</span>`);
+  else if (m.key_stale)
+    pills.push(`<span class="pill warn">Newer key published</span>`);
   if (!st.share) pills.push(`<span class="pill warn">No share</span>`);
   if (!st.wifi.connected) pills.push(`<span class="pill bad">Offline</span>`);
   $("#health-pills").innerHTML = pills.join("");

@@ -395,8 +395,27 @@ def _task_key_check():
     This is the single most likely way for a working box to quietly stop working, so it
     gets its own daily task rather than being folded into the health check.
     """
+    # Ask the sources first, so the countdown does not depend on somebody having opened
+    # the Settings page recently. This is a daily task and can afford the wait; the
+    # lookup is cached and falls back to the backup service when the forum is unusable,
+    # which it frequently is.
+    from . import makemkv as MK
+    try:
+        MK.beta_key()
+    except Exception:
+        pass                              # a stale date still counts down correctly
+
     st = P.makemkv_status()
     days = st.get("days_left")
+    if st.get("key_stale"):
+        component("MakeMKV").warning("A newer beta key has been published")
+        from . import notify
+        notify.send(
+            "key_expiring",
+            title="A newer MakeMKV key has been published",
+            body=("The key on this box is an older one and may already have lapsed. "
+                  "Settings \u2192 General fetches the current one in a click."))
+        return "A newer key has been published"
     if days is None:
         return "No MakeMKV key registered"
     if days <= db.get("warn_key_days", 7):
