@@ -560,3 +560,71 @@ def probe_writable(dev):
         return True, ""
     except OSError as e:
         return False, explain_write_error(str(e), "", e.errno, rdev)
+
+
+# ───────────────────────────── Updating itself ─────────────────────────────
+#
+# An app cannot replace itself while it is running, so none of this happens in this
+# process. A shell script is written out, launched detached, and told the PID to wait
+# for; this process then quits, the script swaps the bundle and opens the new one. The
+# user sees the window close and come back.
+
+UPDATE_SUFFIX = ".dmg"
+
+
+def update_target(executable):
+    r"""The thing to replace: the .app bundle, found by walking up from the binary.
+
+    A PyInstaller --windowed build puts the executable at
+    `Riparr Preparer.app/Contents/MacOS/Riparr Preparer`, so the bundle is three levels
+    up. Returning None means this is not a bundled app -- a source checkout -- and
+    self-update refuses rather than moving somebody's working tree around.
+    """
+    marker = ".app/Contents/MacOS/"
+    if marker not in executable:
+        return None
+    return executable.split(".app/Contents/MacOS/")[0] + ".app"
+
+
+def swap_and_relaunch(archive, target, pid, rundir):
+    """Mount the .dmg, copy the bundle over the old one, relaunch. (ok, detail)."""
+    if not os.access(os.path.dirname(target) or "/", os.W_OK):
+        return False, ("Riparr Preparer cannot update itself because %s is not "
+                       "writable by you.\n\nMove the app somewhere you own, or "
+                       "download the new version yourself."
+                       % (os.path.dirname(target) or "/"))
+
+    script = os.path.join(rundir, "update.sh")
+    with open(script, "w") as f:
+        f.write("""#!/bin/sh
+# Wait for the app to actually exit. Copying over a running bundle corrupts it.
+n=0
+while kill -0 %(pid)d 2>/dev/null && [ $n -lt 200 ]; do sleep 0.3; n=$((n+1)); done
+
+mnt=$(mktemp -d /tmp/riparr-update.XXXXXX) || exit 1
+hdiutil attach %(dmg)s -nobrowse -quiet -mountpoint "$mnt" || exit 1
+app=$(find "$mnt" -maxdepth 1 -name '*.app' -print -quit)
+[ -n "$app" ] || { hdiutil detach "$mnt" -quiet; exit 1; }
+
+# ditto, not cp: it keeps the bundle's structure and extended attributes intact.
+rm -rf %(target)s.new
+ditto "$app" %(target)s.new || { hdiutil detach "$mnt" -quiet; exit 1; }
+hdiutil detach "$mnt" -quiet
+
+rm -rf %(target)s.old
+mv %(target)s %(target)s.old 2>/dev/null
+mv %(target)s.new %(target)s || { mv %(target)s.old %(target)s; exit 1; }
+rm -rf %(target)s.old
+
+# The download came from the internet, so it carries a quarantine flag that would make
+# macOS refuse to open it without the user right-clicking. It was checked against the
+# release checksum before it got here.
+xattr -dr com.apple.quarantine %(target)s 2>/dev/null
+
+open %(target)s
+rm -f %(dmg)s
+""" % {"pid": pid, "dmg": shlex.quote(archive), "target": shlex.quote(target)})
+    os.chmod(script, 0o700)
+    subprocess.Popen(["/bin/sh", script], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True, ""

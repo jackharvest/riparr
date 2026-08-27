@@ -99,3 +99,14 @@ def elevate(argv, rundir, progress_path=""):
 
 def probe_writable(dev):
     return False, "Riparr cannot write an SD card on %s." % sys.platform
+
+
+UPDATE_SUFFIX = ""
+
+
+def update_target(executable):
+    return None
+
+
+def swap_and_relaunch(archive, target, pid, rundir):
+    return False, "Riparr cannot update itself on %s." % sys.platform

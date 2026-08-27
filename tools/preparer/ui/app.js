@@ -719,14 +719,71 @@ async function startConnect() {
 }
 
 /* ── updates ────────────────────────────────────────────── */
+/* Updating is one click and then nothing. The app downloads the release for this
+   operating system, checks it against the published checksum, replaces itself and
+   starts again -- the window closing and reopening is the update finishing.
+
+   Opening the releases page in a browser, which is what this used to do, is not an
+   update. It is homework. The link survives only for the case where this copy genuinely
+   cannot replace itself: a source checkout, or a release with no build for this
+   platform. */
 async function checkUpdate() {
   let u;
   try { u = await riparr.check_update(); } catch (e) { return; }
   if (u.status !== "update") return;
-  $("#update-slot").innerHTML =
+
+  const slot = $("#update-slot");
+  slot.innerHTML =
     `<button class="update-pill"><b>Version ${esc(u.version)} available</b>
-     You have ${esc(u.current)}</button>`;
-  $("#update-slot .update-pill").onclick = () => riparr.open_url(u.url);
+     ${u.can_install ? "Click to update" : "You have " + esc(u.current)}</button>`;
+
+  if (!u.can_install) {
+    slot.querySelector(".update-pill").onclick = () => riparr.open_url(u.url);
+    if (u.why_not) slot.querySelector(".update-pill").title = u.why_not;
+    return;
+  }
+  slot.querySelector(".update-pill").onclick = () => runUpdate(u);
+}
+
+async function runUpdate(u) {
+  const slot = $("#update-slot");
+  const paint = (msg, pct) => {
+    slot.innerHTML =
+      `<div class="update-pill busy"><b>${esc(msg)}</b>
+       <span class="update-bar"><i style="width:${pct == null ? 0 : pct}%"></i></span></div>`;
+  };
+  paint("Starting", 0);
+
+  /* Poll the same way the card write does: the download runs on a thread and the page
+     would otherwise sit silent through the largest part of the wait. */
+  let polling = true;
+  (async function tick() {
+    while (polling) {
+      let st;
+      try { st = await riparr.update_status(); } catch (e) { st = null; }
+      if (st && st.phase === "downloading" && st.total) {
+        paint(st.message || "Downloading", Math.round((st.done / st.total) * 100));
+      } else if (st && st.message) {
+        paint(st.message, st.phase === "installing" || st.phase === "restarting" ? 100 : null);
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+  })();
+
+  let r;
+  try { r = await riparr.install_update(); } catch (e) { r = { ok: false, message: String(e) }; }
+  polling = false;
+
+  if (r.ok) {
+    /* The app is about to be replaced and relaunched under us. Say so and stop -- there
+       is deliberately nothing to click, because there is nothing left to do. */
+    paint("Restarting into " + (r.version || "the new version"), 100);
+    return;
+  }
+  slot.innerHTML =
+    `<button class="update-pill warn"><b>${esc(r.message || "The update failed")}</b>
+     ${esc(r.detail || "Nothing was changed.")}</button>`;
+  slot.querySelector(".update-pill").onclick = () => riparr.open_url(u.url);
 }
 
 /* ── wiring ─────────────────────────────────────────────── */

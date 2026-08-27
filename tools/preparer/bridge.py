@@ -27,7 +27,11 @@ import core
 import finish
 import hostos
 
-VERSION = "1.0.0"
+# Must equal server/riparr/__version__ and the release tag. It used to read "1.0.0"
+# against releases tagged v0.1.x, which made every update check answer "you are up to
+# date" for ever -- a self-update that never fires is indistinguishable from one that
+# was never built. release.yml now fails if these three ever drift apart.
+VERSION = "0.1.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -100,6 +104,10 @@ class Bridge:
         self.image_thread = None
         # ── the second half ──
         self.setup_path = os.path.join(RUNDIR, "setup.json")
+        self.update_path = os.path.join(RUNDIR, "update.json")
+        # A shell sets this so the window closes properly rather than the
+        # process being shot from under it. shell.py registers window.destroy.
+        self.on_quit = None
         self.finisher = None
         self.setup_thread = None
         self.nosleep = NoSleep()
@@ -215,7 +223,105 @@ class Bridge:
         return {"disks": core.list_disks()}
 
     def check_update(self):
-        return core.check_for_update(VERSION)
+        """What is available, and whether this copy can install it itself."""
+        info = core.check_for_update(VERSION)
+        if info.get("status") == "update":
+            asset = core.update_asset_for_host(info.get("assets"))
+            target, why = core.update_install_target()
+            info["asset"] = asset
+            info["can_install"] = bool(asset) and bool(target)
+            info["why_not"] = (
+                "" if (asset and target)
+                else why if not target
+                else "This release has no download for %s." % hostos.NAME)
+        return info
+
+    def install_update(self):
+        """Download it, check it, swap it, come back. Returns once the swap is armed.
+
+        The last two steps happen after this process is gone -- an app cannot overwrite
+        itself while it is running -- so `swap_and_relaunch` hands the work to a detached
+        script that waits for this PID, replaces the install and starts it again. The
+        window closing and reopening *is* the update finishing.
+
+        Refused outright while a card is being written. Quitting mid-write with a raw
+        device open is the one thing here that damages something the user cares about.
+        """
+        busy = self.busy_reason()
+        if busy:
+            return {"ok": False,
+                    "message": "Riparr is busy: %s" % busy.get("body", "please wait"),
+                    "detail": "Updating would interrupt it. Try again when it finishes."}
+
+        info = core.check_for_update(VERSION)
+        if info.get("status") != "update":
+            return {"ok": False, "message": "There is nothing newer to install."}
+
+        target, why = core.update_install_target()
+        if not target:
+            return {"ok": False, "message": "This copy cannot update itself.",
+                    "detail": why}
+
+        asset = core.update_asset_for_host(info.get("assets"))
+        if not asset:
+            return {"ok": False,
+                    "message": "This release has no download for %s." % hostos.NAME}
+
+        core_publish(self.update_path, phase="checking",
+                     message="Checking the release")
+
+        def progress(done, total):
+            core_publish(self.update_path, phase="downloading", done=done, total=total,
+                         message="Downloading version %s" % info["version"])
+
+        expected = core.published_sha256(info["repo"], info["version"], asset["name"])
+        path, err = core.download_update(asset, RUNDIR, expected, progress)
+        if not path:
+            core_publish(self.update_path, phase="error", message=err)
+            return {"ok": False, "message": err}
+
+        core_publish(self.update_path, phase="installing",
+                     message="Installing version %s" % info["version"])
+        ok, detail = hostos.swap_and_relaunch(path, target, os.getpid(), RUNDIR)
+        if not ok:
+            core_publish(self.update_path, phase="error", message=detail)
+            return {"ok": False, "message": "The update could not be installed.",
+                    "detail": detail}
+
+        core_publish(self.update_path, phase="restarting",
+                     message="Riparr Preparer is restarting")
+        # The swapper is waiting on this process to exit, so quitting is the last step
+        # of the update rather than a separate thing the user has to do.
+        self._quit_soon()
+        return {"ok": True, "version": info["version"],
+                "message": "Riparr Preparer is restarting into version %s."
+                           % info["version"]}
+
+    def update_status(self):
+        """Polled while an update runs, the same way the card write is."""
+        try:
+            with open(self.update_path) as f:
+                return json.load(f)
+        except Exception:
+            return {"phase": "idle"}
+
+    def _quit_soon(self):
+        """Give the reply time to reach the page, then go.
+
+        Quitting inside the call means the JavaScript that asked for the update never
+        hears back, and the window vanishes with no explanation of why.
+        """
+        def go():
+            time.sleep(1.2)
+            self.nosleep.release()
+            try:
+                if self.on_quit:
+                    self.on_quit()
+                    return
+            except Exception:
+                pass
+            os._exit(0)
+        threading.Thread(target=go, daemon=True).start()
 
     def preview_toml(self, cfg):
         return {"toml": self._toml(cfg), "conf": core.build_conf(cfg)}

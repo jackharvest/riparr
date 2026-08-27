@@ -146,9 +146,58 @@ jobs:
             riparr-preparer-*.tar.gz
           if-no-files-found: error
 
+  # The appliance payload. The box updates itself by downloading this, verifying it
+  # against SHA256SUMS.txt, unpacking it over /opt/riparr and restarting -- so what is
+  # in here has to be exactly what `tools/install.sh` puts there on a fresh install:
+  # the working tree, minus the things that are built on the box rather than shipped to
+  # it. `server/riparr/updater.py` refuses any archive without server/riparr/main.py in
+  # it, which is the check that would have caught this being wrong.
+  appliance:
+    name: Appliance payload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Three places have to agree or self-update silently stops working: the tag, the
+      # appliance version and the Preparer version. A mismatch is a release that tells
+      # every installed copy it is already current.
+      - name: Versions agree with the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          SRV=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' server/riparr/__init__.py)
+          PRE=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' tools/preparer/bridge.py)
+          echo "tag=$TAG appliance=$SRV preparer=$PRE"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            [ "$TAG" = "$SRV" ] || { echo "::error::appliance version $SRV != tag $TAG"; exit 1; }
+            [ "$TAG" = "$PRE" ] || { echo "::error::preparer version $PRE != tag $TAG"; exit 1; }
+          fi
+          [ "$SRV" = "$PRE" ] || { echo "::error::appliance $SRV != preparer $PRE"; exit 1; }
+
+      - name: Build riparr-server.tar.gz
+        run: |
+          mkdir -p stage/riparr
+          tar -cf - \
+            --exclude=./.git \
+            --exclude=./.github \
+            --exclude=./.venv \
+            --exclude=__pycache__ \
+            --exclude='*.pyc' \
+            --exclude=./stage \
+            . | tar -xf - -C stage/riparr
+          # The updater looks for this exact file before it will swap anything.
+          test -f stage/riparr/server/riparr/main.py
+          tar czf riparr-server.tar.gz -C stage riparr
+          ls -lh riparr-server.tar.gz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: riparr-server
+          path: riparr-server.tar.gz
+          if-no-files-found: error
+
   release:
     name: Publish
-    needs: build
+    needs: [build, appliance]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -168,9 +217,7 @@ jobs:
         with:
           files: artifacts/*
           draft: false
-          # Pre-1.0, with two of the three platforms still beta. Marking it a
-          # pre-release is the honest label and it stays fully downloadable.
-          prerelease: true
+          prerelease: false
           generate_release_notes: true
           body: |
             ## Riparr ${{ github.ref_name }}
@@ -193,5 +240,10 @@ jobs:
             None of these are code-signed, so both macOS and Windows will warn you the
             first time. On macOS, right-click the app and choose Open. On Windows,
             More info → Run anyway.
+
+            `riparr-server.tar.gz` is the appliance itself. You do not need to
+            download it — a running Riparr fetches it, checks it against the
+            checksums below, installs it and restarts itself from **System →
+            Updates**.
 
             Checksums are in `SHA256SUMS.txt`.

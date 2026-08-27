@@ -17,6 +17,7 @@ import secrets
 import shutil
 import string
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -1058,3 +1059,113 @@ def _newer(a, b):
     pa += [0] * (n - len(pa))
     pb += [0] * (n - len(pb))
     return pa > pb
+
+
+# ────────────────────────────── Updating itself ──────────────────────────────
+#
+# "There is a new version, here is a link" is not an update, it is homework. The whole
+# point of shipping an app rather than a repository is that the person running it should
+# never have to think about versions at all, so this downloads, verifies, swaps and
+# relaunches -- and the only decision left to the user is whether to say yes.
+#
+# What is *not* automatic is doing it without being asked. Replacing the program someone
+# is in the middle of using, unprompted, is a different thing from updating it promptly,
+# and only one of those is a courtesy.
+
+SUMS_NAMES = ("SHA256SUMS.txt", "sha256sums.txt")
+
+
+def update_asset_for_host(assets, suffix=None):
+    """The asset this operating system installs, out of everything the release carries.
+
+    Matched on the suffix the backend declares, so macOS takes the .dmg and never the
+    Windows .exe. A release with nothing for this platform returns None, which the
+    caller reports rather than guessing with.
+    """
+    suffix = hostos.UPDATE_SUFFIX if suffix is None else suffix
+    if not suffix:
+        return None
+    for a in assets or []:
+        name = (a.get("name") or "")
+        if name.lower().endswith(suffix) and name.lower().startswith("riparr-preparer"):
+            return a
+    return None
+
+
+def published_sha256(repo, tag, name, timeout=30):
+    """The release's published checksum for one asset, or None if it cannot be read."""
+    for sums in SUMS_NAMES:
+        url = "https://github.com/%s/releases/download/v%s/%s" % (repo, tag, sums)
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "riparr-preparer"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                body = r.read().decode()
+        except Exception:
+            continue
+        for line in body.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[-1].lstrip("*") == name:
+                return parts[0]
+    return None
+
+
+def download_update(asset, dest_dir, expected=None, progress=None):
+    """Fetch an asset and check it. (path, error).
+
+    The checksum is required, not preferred. This file is about to become the program
+    the user runs, and "the server said so" is not a good enough reason to execute
+    something -- so a release with no published checksum is a refusal, exactly as it is
+    on the appliance.
+    """
+    if not expected:
+        return None, ("This release does not publish a checksum for %s, so the download "
+                      "cannot be verified. Nothing was changed."
+                      % (asset.get("name") or "the update"))
+
+    path = os.path.join(dest_dir, asset["name"])
+    total = int(asset.get("size") or 0)
+    h = hashlib.sha256()
+    try:
+        req = urllib.request.Request(asset["url"],
+                                     headers={"User-Agent": "riparr-preparer"})
+        with urllib.request.urlopen(req, timeout=120) as r, open(path, "wb") as f:
+            done = 0
+            while True:
+                chunk = r.read(1 << 20)
+                if not chunk:
+                    break
+                f.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
+    except Exception as e:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None, "The download failed: %s" % e
+
+    if h.hexdigest() != expected:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None, ("The download did not match its published checksum, so it was "
+                      "discarded. Nothing was changed.")
+    return path, ""
+
+
+def update_install_target():
+    """What self-update would replace, or None with the reason it cannot.
+
+    Running from a source checkout is the common None: there is no bundle to swap, and
+    moving somebody's working tree would be a genuinely bad surprise.
+    """
+    if not getattr(sys, "frozen", False):
+        return None, ("This is running from a source checkout, so there is nothing to "
+                      "replace. `git pull` is the update here.")
+    target = hostos.update_target(sys.executable)
+    if not target:
+        return None, "Riparr Preparer could not work out where it is installed."
+    return target, ""

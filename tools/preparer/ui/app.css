@@ -153,6 +153,20 @@ body { display: grid; grid-template-columns: 208px 1fr; }
 .update-pill:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .update-pill b { display: block; font-size: 12px; }
 
+/* Mid-update: not a button any more, because there is nothing to click. */
+.update-pill.busy { cursor: default; }
+.update-pill.busy:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.update-pill.warn { border-color: var(--warn); color: var(--warn); }
+.update-bar {
+  display: block; height: 3px; margin-top: 5px; border-radius: 2px;
+  background: color-mix(in srgb, currentColor 20%, transparent);
+  overflow: hidden;
+}
+.update-bar i {
+  display: block; height: 100%; background: currentColor;
+  transition: width .25s ease;
+}
+
 /* ── pane ───────────────────────────────────────────────── */
 .pane { position: relative; overflow: hidden; }
 

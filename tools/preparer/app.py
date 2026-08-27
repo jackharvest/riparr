@@ -341,6 +341,8 @@ def main():
         pass
 
     bridge = _bridge.Bridge(assets)
+    # See shell.py: a self-update quits through the app's own terminate path.
+    bridge.on_quit = lambda: NSApplication.sharedApplication().terminate_(None)
     delegate.bridge = bridge
     handler = Handler.alloc().initWithBridge_webview_(bridge, webview)
     ucc.addScriptMessageHandler_name_(handler, "riparr")

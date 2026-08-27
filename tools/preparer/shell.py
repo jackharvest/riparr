@@ -97,6 +97,9 @@ def build(assets, shot="", evaluate=""):
         confirm_close=False,          # handled by on_closing, which knows what is busy
     )
     shell.window = window
+    # Closing the window is how the app quits, so a self-update quits through the same
+    # door rather than calling os._exit and skipping every teardown the shell does.
+    shell.bridge.on_quit = window.destroy
     window.events.closing += shell.on_closing
 
     # The `window.riparr` alias is ui/bridge-shim.js, loaded by the page ahead of

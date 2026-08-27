@@ -51,6 +51,9 @@ the operations that sequence is made of. Every one of them is required, and
     eject(dev)                      best effort; a refused eject is not a failed write
     explain_write_error(...)        -> a sentence naming the cause and the fix
     elevate(argv, rundir)           -> (rc, stderr, cancelled). Runs argv as root
+    UPDATE_SUFFIX                   the release asset this platform installs
+    update_target(executable)       what to replace, or None if not a built app
+    swap_and_relaunch(...)          -> (ok, detail). Replaces it after we exit
 
 `open_sink` is where the three genuinely part company. macOS and Linux both hand the
 bytes to `dd`; Windows has no dd and no raw device, and writes through a locked handle
@@ -95,3 +98,7 @@ mount_boot = _impl.mount_boot
 eject = _impl.eject
 explain_write_error = _impl.explain_write_error
 elevate = _impl.elevate
+
+UPDATE_SUFFIX = _impl.UPDATE_SUFFIX
+update_target = _impl.update_target
+swap_and_relaunch = _impl.swap_and_relaunch

@@ -19,6 +19,7 @@ silently trying to join a protected network without one.
 """
 import ctypes
 import json
+import os
 import re
 import subprocess
 import time
@@ -898,3 +899,84 @@ def probe_writable(dev):
         return False, explain_write_error(str(e), "", 0, dev)
     _close(h)
     return True, ""
+
+
+# ───────────────────────────── Updating itself ─────────────────────────────
+
+UPDATE_SUFFIX = ".exe"
+
+
+def update_target(executable):
+    r"""The running .exe itself -- the Windows build is --onefile.
+
+    `sys.executable` is python.exe when running from source, and the only honest answer
+    then is None: replacing a system Python with a Riparr build would be a remarkable
+    thing to do to somebody.
+    """
+    exe = os.path.abspath(executable)
+    if os.path.basename(exe).lower() in ("python.exe", "pythonw.exe"):
+        return None
+    return exe
+
+
+def swap_and_relaunch(archive, target, pid, rundir):
+    r"""Wait for this process to exit, replace the .exe, start it again.
+
+    Windows holds an executable open for as long as it is running and will not let it be
+    replaced, which is the whole reason this is a separate process that waits. PowerShell
+    rather than a .bat: quoting a path with spaces in cmd is its own small tragedy, and
+    `C:\Users\Firstname Lastname\Downloads` is the normal case here.
+    """
+    parent = os.path.dirname(target) or "."
+    if not os.access(parent, os.W_OK):
+        return False, ("Riparr Preparer cannot update itself because %s is not "
+                       "writable by you.\n\nMove it somewhere you own, or download the "
+                       "new version yourself." % parent)
+
+    script = os.path.join(rundir, "update.ps1")
+    ps = r'''
+$ErrorActionPreference = "Stop"
+$pidToWait = %(pid)d
+$src    = %(src)s
+$target = %(target)s
+
+# Wait for the app to exit. Get-Process throws when the process is gone, which is the
+# signal we are waiting for rather than an error.
+for ($i = 0; $i -lt 200; $i++) {
+  if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }
+  Start-Sleep -Milliseconds 300
+}
+
+# Even after the process is gone the file can stay locked for a moment. Retry rather
+# than failing the update on a race that resolves itself.
+$backup = "$target.old"
+Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+for ($i = 0; $i -lt 40; $i++) {
+  try {
+    Move-Item -LiteralPath $target -Destination $backup -Force
+    Move-Item -LiteralPath $src -Destination $target -Force
+    break
+  } catch { Start-Sleep -Milliseconds 250 }
+}
+
+if (-not (Test-Path -LiteralPath $target)) {
+  # The swap did not complete; put the old one back so the user still has an app.
+  if (Test-Path -LiteralPath $backup) { Move-Item -LiteralPath $backup -Destination $target -Force }
+}
+Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+Start-Process -FilePath $target
+''' % {"pid": pid, "src": _ps_quote(archive), "target": _ps_quote(target)}
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(ps)
+
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+         "-ExecutionPolicy", "Bypass", "-File", script],
+        creationflags=_NOWINDOW | 0x00000008,      # DETACHED_PROCESS
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True, ""
+
+
+def _ps_quote(s):
+    """A PowerShell single-quoted string; the only escape inside one is a doubled quote."""
+    return "'" + str(s).replace("'", "''") + "'"

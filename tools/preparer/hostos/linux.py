@@ -13,6 +13,7 @@ import errno
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -583,3 +584,58 @@ def probe_writable(dev):
         return True, ""
     except OSError as e:
         return False, explain_write_error(str(e), "", e.errno, node)
+
+
+# ───────────────────────────── Updating itself ─────────────────────────────
+
+UPDATE_SUFFIX = ".tar.gz"
+
+
+def update_target(executable):
+    """The directory PyInstaller's onedir build lives in.
+
+    The layout is `Riparr Preparer/Riparr Preparer` plus an `_internal/` beside it, so
+    the thing to replace is the parent directory -- and only when that parent actually
+    looks like the bundle, never a directory somebody happens to be running from.
+    """
+    root = os.path.dirname(os.path.abspath(executable))
+    if not os.path.isdir(os.path.join(root, "_internal")):
+        return None
+    return root
+
+
+def swap_and_relaunch(archive, target, pid, rundir):
+    """Unpack beside the install, swap the directory, exec the new binary."""
+    parent = os.path.dirname(target) or "."
+    if not os.access(parent, os.W_OK):
+        return False, ("Riparr Preparer cannot update itself because %s is not "
+                       "writable by you.\n\nMove it somewhere you own, or download the "
+                       "new version yourself." % parent)
+
+    script = os.path.join(rundir, "update.sh")
+    name = os.path.basename(target)
+    with open(script, "w") as f:
+        f.write("""#!/bin/sh
+n=0
+while kill -0 %(pid)d 2>/dev/null && [ $n -lt 200 ]; do sleep 0.3; n=$((n+1)); done
+
+tmp=$(mktemp -d) || exit 1
+tar xzf %(archive)s -C "$tmp" || { rm -rf "$tmp"; exit 1; }
+# The tarball holds one top-level directory; take whatever it is called rather than
+# assuming, so a rename upstream does not break updating.
+new=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print -quit)
+[ -n "$new" ] || { rm -rf "$tmp"; exit 1; }
+[ -x "$new/%(name)s" ] || { rm -rf "$tmp"; exit 1; }
+
+rm -rf %(target)s.old
+mv %(target)s %(target)s.old 2>/dev/null
+mv "$new" %(target)s || { mv %(target)s.old %(target)s; rm -rf "$tmp"; exit 1; }
+rm -rf %(target)s.old "$tmp" %(archive)s
+
+exec %(target)s/%(name)s
+""" % {"pid": pid, "archive": shlex.quote(archive),
+       "target": shlex.quote(target), "name": name})
+    os.chmod(script, 0o700)
+    subprocess.Popen(["/bin/sh", script], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True, ""
