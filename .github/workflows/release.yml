@@ -37,10 +37,10 @@ jobs:
             artifact: riparr-preparer-macos
           - os: windows-latest
             label: Windows (x64)
-            artifact: riparr-preparer-windows
+            artifact: riparr-preparer-windows-beta
           - os: ubuntu-latest
             label: Linux (x64)
-            artifact: riparr-preparer-linux
+            artifact: riparr-preparer-linux-beta
 
     steps:
       - uses: actions/checkout@v4
@@ -98,13 +98,13 @@ jobs:
         shell: pwsh
         run: |
           Compress-Archive -Path "tools/preparer/dist/Riparr Preparer/*" `
-            -DestinationPath "riparr-preparer-windows.zip"
+            -DestinationPath "riparr-preparer-windows-beta.zip"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
           cd tools/preparer/dist
-          tar czf ../../../riparr-preparer-linux.tar.gz "Riparr Preparer"
+          tar czf ../../../riparr-preparer-linux-beta.tar.gz "Riparr Preparer"
 
       - name: Smoke test
         shell: bash
@@ -164,12 +164,12 @@ jobs:
             | | |
             |---|---|
             | macOS | `riparr-preparer-macos.zip` |
-            | Windows | `riparr-preparer-windows.zip` |
-            | Linux | `riparr-preparer-linux.tar.gz` |
+            | Windows | `riparr-preparer-windows-beta.zip` |
+            | Linux | `riparr-preparer-linux-beta.tar.gz` |
 
-            Writing an SD card works on macOS today. On Windows and Linux the app does
-            the second half — finding the box and installing Riparr on it — and says so
-            on its first screen. Write the card with Raspberry Pi Imager or
-            balenaEtcher, then come back.
+            Writing an SD card now works on all three. The Windows and Linux builds
+            are marked **beta** in their filenames: same code path, verified as it
+            writes and read back before it is called done, but nobody has yet confirmed
+            a card written on those two that went on to boot a board. Reports welcome.
 
             Checksums are in `SHA256SUMS.txt`.
