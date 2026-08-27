@@ -96,10 +96,37 @@ jobs:
             echo "  ok  $f"
           done
 
+      # The app shipped with PyInstaller's stock icon because --icon was never passed,
+      # so the product mark that every other surface uses was missing from the one place
+      # people actually look at it: the Dock, the disk image, Get Info.
+      - name: Application icon
+        shell: bash
+        run: |
+          set -e
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            bash packaging/dmg/make-icns.sh server/static/img/riparr-512.png \
+                 tools/preparer/riparr.icns
+          else
+            python -m pip install --quiet pillow
+            python - <<'PY'
+          from PIL import Image
+          src = Image.open("server/static/img/riparr-512.png").convert("RGBA")
+          # Every size Windows asks for; leaving one out makes Explorer upscale a
+          # neighbour and it shows at 16px in the title bar.
+          src.save("tools/preparer/riparr.ico",
+                   sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
+                          (128, 128), (256, 256)])
+          print("wrote tools/preparer/riparr.ico")
+          PY
+          fi
+
       - name: Build
         shell: bash
         run: |
           cd tools/preparer
+          ICON="riparr.icns"; [ "$RUNNER_OS" = "Windows" ] && ICON="riparr.ico"
+          [ "$RUNNER_OS" = "Linux" ] && ICON=""
+          [ -n "$ICON" ] && ICON_ARG="--icon $ICON" || ICON_ARG=""
           # --add-data puts ui/ (html, css, js, fonts, the mark) inside the bundle;
           # shell.py resolves it relative to __file__, which PyInstaller points at the
           # unpacked directory at runtime.
@@ -112,6 +139,7 @@ jobs:
           # nothing -- which is precisely what v0.1.2 shipped.
           pyinstaller --noconfirm --clean --windowed --name "Riparr Preparer" \
             ${ONEFILE} \
+            ${ICON_ARG} \
             --osx-bundle-identifier com.jackharvest.riparr-preparer \
             --collect-all webview \
             --add-data "ui${PATHSEP:-:}ui" \
@@ -187,17 +215,91 @@ jobs:
           echo "stamped $V"
           plutil -p "$PL" | grep -i CFBundle
 
+      # Editing Info.plist breaks the seal PyInstaller's ad-hoc signature put on the
+      # bundle, and on Apple silicon a broken signature is not "unidentified developer",
+      # it is "damaged and can't be opened -- move it to the Trash". v0.1.3 shipped
+      # exactly that, because the stamping step above was added without this one.
+      - name: Re-sign after editing the bundle (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          APP="tools/preparer/dist/Riparr Preparer.app"
+          codesign --force --deep --sign - "$APP"
+          echo "re-signed ad-hoc"
+
+      # An unsigned app is a dialog the user can click through. An invalidly signed one
+      # is a dead end, so validity is a release gate now rather than a thing discovered
+      # by the person who downloaded it.
+      - name: The signature is valid (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          APP="tools/preparer/dist/Riparr Preparer.app"
+          codesign --verify --deep --strict "$APP"
+          echo "signature verifies"
+
       # A .dmg with an Applications symlink in it, which is the gesture every Mac user
       # already knows. UDZO compresses it; -ov because a re-run must not stop to ask.
+      # dmgbuild, not hdiutil and not create-dmg. hdiutil produced the white box with two
+      # icons that this used to ship. create-dmg drives Finder over AppleScript to set the
+      # icon view, and on a real Mac it silently wrote backgroundType 0 and iconSize 48 --
+      # the same white box -- which a headless runner is not going to do better. dmgbuild
+      # writes the .DS_Store itself, so the window looks the same everywhere and does not
+      # depend on a Finder session co-operating.
       - name: Package (macOS)
         if: runner.os == 'macOS'
+        shell: bash
         run: |
-          cd tools/preparer/dist
-          mkdir -p dmg
-          cp -R "Riparr Preparer.app" dmg/
-          ln -s /Applications dmg/Applications
-          hdiutil create -volname "Riparr Preparer" -srcfolder dmg \
-            -ov -format UDZO "$GITHUB_WORKSPACE/riparr-preparer-macos.dmg"
+          set -e
+          python -m pip install --quiet dmgbuild
+          cp tools/preparer/riparr.icns packaging/dmg/riparr.icns
+          RIPARR_APP="$PWD/tools/preparer/dist/Riparr Preparer.app" \
+          RIPARR_DMG_DIR="$PWD/packaging/dmg" \
+            dmgbuild -s packaging/dmg/settings.py "Riparr Preparer" \
+              "$GITHUB_WORKSPACE/riparr-preparer-macos.dmg"
+
+      # The window settings are the whole point of the step above, and they are invisible
+      # until somebody opens the image. Read them back instead.
+      - name: The disk image is styled (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          python -m pip install --quiet ds_store
+          MNT=$(mktemp -d)
+          hdiutil attach "$GITHUB_WORKSPACE/riparr-preparer-macos.dmg" \
+            -nobrowse -readonly -mountpoint "$MNT" -quiet
+          python - "$MNT" <<'PY'
+          import sys
+          from ds_store import DSStore
+          mnt = sys.argv[1]
+          want = {"backgroundType": 2, "iconSize": 128.0}
+          bad = []
+          with DSStore.open(mnt + "/.DS_Store", "r") as d:
+              seen = {}
+              for e in d:
+                  if e.code == b"icvp":
+                      v = e.value
+                      for k, exp in want.items():
+                          if v.get(k) != exp:
+                              bad.append("%s is %r, wanted %r" % (k, v.get(k), exp))
+                      if not v.get("backgroundImageAlias"):
+                          bad.append("no background image")
+                  elif e.code == b"Iloc":
+                      seen[e.filename] = e.value
+          for n in ("Riparr Preparer.app", "Applications"):
+              if n not in seen:
+                  bad.append("no icon position for " + n)
+          for b in bad:
+              print("::error::disk image styling: " + b)
+          print("icon positions:", seen)
+          sys.exit(1 if bad else 0)
+          PY
+          rc=$?
+          hdiutil detach "$MNT" -quiet || true
+          exit $rc
 
       # --onefile already produced exactly one file. Renaming it is the whole job.
       - name: Package (Windows)

@@ -44,3 +44,8 @@ docs/design/
 # Staged by the release build: the appliance tree copied next to the Preparer so it
 # can be bundled with one --add-data. Never committed; rebuilt on every release.
 tools/preparer/payload/
+
+# Generated from the mark at build time by packaging/dmg/make-icns.sh.
+packaging/dmg/riparr.icns
+tools/preparer/riparr.icns
+tools/preparer/riparr.ico
