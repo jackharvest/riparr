@@ -51,28 +51,41 @@ faster band matters here. The passphrase is turned into a derived key before it'
 so your actual Wi-Fi password never touches the card.
 
 **5. Name it and write.** Give it a hostname (`riparr` by default — that's how you'll reach
-it), then write. macOS asks for your password **once**, and the Preparer writes the image,
+it), then write. Your computer asks for permission **once** — your password on macOS, a
+polkit prompt on Linux, a UAC prompt on Windows — and the Preparer writes the image,
 provisions your settings, verifies what it wrote, and ejects the card.
 
-> **Writing a card is macOS-only for now**, and the app says so on its first screen
-> rather than letting you get as far as choosing a disk and typing a Wi-Fi password. The
-> card write speaks `diskutil`, `/dev/rdiskN` and macOS's rules about which application
-> owns removable-media consent; none of that has a tested equivalent elsewhere yet
-> ([cross-platform.md](../design/cross-platform.md)).
->
-> **On Windows or Linux**, do stage 1 with a tool you already trust — [Raspberry Pi
-> Imager](https://www.raspberrypi.com/software/) or
-> [balenaEtcher](https://etcher.balena.io/) — writing the image for your board from
-> [armbian.com](https://www.armbian.com/) or
-> [raspberrypi.com](https://www.raspberrypi.com/software/operating-systems/). Then open
-> the Preparer and take the **"Set up a box that already has a card"** route, which finds
-> the box on your network and installs Riparr onto it. That is the longer half and it
-> works the same on every system.
->
-> One thing you lose that way: the card will not have your Wi-Fi on it. Raspberry Pi
-> Imager can write Wi-Fi settings for a Pi; for an Armbian board, plug the box into
-> Ethernet for the first boot, or edit
-> `/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` on the card before you eject it.
+### Writing a card works on macOS, Linux and Windows
+
+It used to be macOS-only. It isn't any more, and the app tells you on its first screen if
+your system is one it can't write from, rather than letting you get as far as choosing a
+disk and typing a Wi-Fi password.
+
+> **Honest status:** the macOS path has written cards that went on to boot real boards.
+> The Linux and Windows paths are complete and the parts that can be checked without a
+> card are checked, but as of this writing **neither has yet been run against a real
+> board**. If you hit something, an issue with your OS version and card reader is the
+> most useful thing you can send.
+
+**On Windows, one combination is refused up front:** an image whose settings live in a
+Linux (ext4) filesystem. Windows can't write into one, so the Preparer says so before it
+touches your card rather than spending ten minutes writing and failing at the end. Use a
+Riparr image with a FAT boot partition, or prepare that card from macOS or Linux.
+
+### If you'd rather use a tool you already trust
+
+Any of this also works with [Raspberry Pi Imager](https://www.raspberrypi.com/software/)
+or [balenaEtcher](https://etcher.balena.io/), writing the image for your board from
+[armbian.com](https://www.armbian.com/) or
+[raspberrypi.com](https://www.raspberrypi.com/software/operating-systems/). Then open the
+Preparer and take the **"Set up a box that already has a card"** route, which finds the
+box on your network and installs Riparr onto it.
+
+One thing you lose that way: the card will not have your Wi-Fi on it, and **this board
+has no Ethernet socket** — so a card with no Wi-Fi credentials produces a box that boots
+perfectly and never appears on your network. Raspberry Pi Imager can write Wi-Fi settings
+for a Pi; for an Armbian board, edit
+`/etc/wpa_supplicant/wpa_supplicant-wlan0.conf` on the card before you eject it.
 
 ---
 

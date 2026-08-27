@@ -84,10 +84,6 @@ def core_publish(path, **kw):
     os.replace(tmp, path)
 
 
-def _q(s):
-    return "'" + str(s).replace("'", "'\\''") + "'"
-
-
 # ─────────────────────────── the bridge plumbing ───────────────────────────
 
 
@@ -267,14 +263,13 @@ class Bridge:
         })
 
     def start_write(self, cfg):
-        if sys.platform != "darwin":
+        if not hostos.CAN_WRITE:
             return {"ok": False,
-                    "error": "Writing a card isn't supported on %s yet."
-                             % hostos.NAME,
+                    "error": "Writing a card isn't supported on %s." % hostos.NAME,
                     "detail": "Everything else works here — the disk list, the Wi-Fi "
                               "scan, and setting up a box that already has a card. "
-                              "Elevation and the raw write are the last part of the "
-                              "port (docs/design/cross-platform.md, step 6)."}
+                              "Adding this platform means one module in hostos/; the "
+                              "contract is at the top of hostos/__init__.py."}
 
         # allow_other is set only by the user revealing "other disks" and picking one
         # there. Anything else, including a device that has re-classified itself since
@@ -294,9 +289,9 @@ class Bridge:
         if missing:
             return {
                 "ok": False,
-                "error": "Riparr needs %s, which %s not installed on this Mac."
+                "error": "Riparr needs %s, which %s not available on this %s."
                          % (" and ".join(m["tool"] for m in missing),
-                            "is" if len(missing) == 1 else "are"),
+                            "is" if len(missing) == 1 else "are", hostos.NAME),
                 "detail": "\n\n".join(
                     "%s — %s\n    %s" % (m["tool"], m["why"], m["fix"])
                     for m in missing)
@@ -332,59 +327,39 @@ class Bridge:
 
     def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv="",
                         conf=""):
-        """One authorization dialog covers write, provision and eject.
+        """One authorization prompt covers write, provision and eject.
 
-        Elevation is `sudo -A`, deliberately, and not osascript's `with administrator
-        privileges`. The latter runs the helper through security_authtrampoline, which
-        re-parents it away from the launching application — and macOS attributes disk
-        and removable-volume consent to the *responsible* application, not to the user
-        and not to root. A trampolined helper therefore inherits no consent at all and
-        is refused with EPERM on /dev/rdiskN even as root, while the terminal it was
-        launched from can write the very same card. sudo keeps the writer a direct
-        descendant, so the consent that is already granted still applies.
+        *How* the prompt is raised is the platform's business and lives in
+        `hostos.elevate` — sudo with an osascript askpass on macOS, pkexec on Linux, UAC
+        on Windows. What is the same everywhere is that the elevated child cannot talk
+        back: it publishes to the progress file and this side polls it. That was forced
+        by macOS first and turns out to be the only shape UAC allows either.
         """
-        script = os.path.join(RUNDIR, "write.sh")
-        with open(script, "w") as f:
-            f.write("#!/bin/sh\nexec %s %s --image %s --dev %s --toml %s "
-                    "--progress %s --total %d --sha256 %s%s\n" % (
-                        _q(sys.executable), _q(os.path.join(HERE, "writer.py")),
-                        _q(image), _q(dev), _q(toml_path),
-                        _q(self.progress_path), total, _q(sha),
-                        (" --verify" if verify else "")
-                        + ((" --makemkv " + _q(mkv)) if mkv else "")
-                        + ((" --conf " + _q(conf)) if conf else "")))
-        os.chmod(script, 0o700)
+        argv = [sys.executable, os.path.join(HERE, "writer.py"),
+                "--image", image, "--dev", dev, "--toml", toml_path,
+                "--progress", self.progress_path, "--total", str(total),
+                "--sha256", sha]
+        if verify:
+            argv.append("--verify")
+        if mkv:
+            argv += ["--makemkv", mkv]
+        if conf:
+            argv += ["--conf", conf]
 
-        # sudo asks for the password up to three times. The sentinel makes a cancelled
-        # dialog cancel the whole write instead of asking twice more.
-        cancel = os.path.join(RUNDIR, "cancelled")
-        askpass = os.path.join(RUNDIR, "askpass.sh")
-        with open(askpass, "w") as f:
-            f.write(
-                '#!/bin/sh\n'
-                '[ -f %s ] && exit 1\n'
-                'pw=$(osascript -e \'display dialog "Riparr needs permission to write '
-                'to your SD card." with title "Riparr Preparer" default answer "" '
-                'with hidden answer with icon caution\' -e \'text returned of result\' '
-                '2>/dev/null) || { : > %s; exit 1; }\n'
-                'printf %%s "$pw"\n' % (_q(cancel), _q(cancel)))
-        os.chmod(askpass, 0o700)
-
-        env = dict(os.environ, SUDO_ASKPASS=askpass)
-        p = subprocess.run(["sudo", "-A", "/bin/sh", script],
-                           capture_output=True, text=True, env=env)
-        if p.returncode != 0:
-            err = (p.stderr or "").strip()
-            if os.path.exists(cancel):
-                core_publish(self.progress_path, phase="cancelled",
-                             message="Cancelled. Nothing was written to the card.")
-            else:
-                # If the helper itself failed it already published a real error.
-                cur = self.write_status()
-                if cur.get("phase") not in ("error", "done"):
-                    core_publish(self.progress_path, phase="error",
-                                 message="Could not get permission to write the card.",
-                                 detail=err or "sudo exited %d." % p.returncode)
+        rc, err, cancelled = hostos.elevate(argv, RUNDIR, self.progress_path)
+        if rc == 0:
+            return
+        if cancelled:
+            core_publish(self.progress_path, phase="cancelled",
+                         message="Cancelled. Nothing was written to the card.")
+            return
+        # If the helper itself failed it already published a real error, and that one
+        # names the actual cause. Only speak up when nothing did.
+        cur = self.write_status()
+        if cur.get("phase") not in ("error", "done"):
+            core_publish(self.progress_path, phase="error",
+                         message="Could not get permission to write the card.",
+                         detail=err or "the writer exited %d." % rc)
 
     # ── the second half: from a powered-on board to a running Riparr ──
     def start_setup(self, cfg):
@@ -491,17 +466,3 @@ class Bridge:
                 "quit": "Quit anyway",
             }
         return ""
-
-
-def core_publish(path, **kw):
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(kw, f)
-    os.replace(tmp, path)
-
-
-def _q(s):
-    return "'" + str(s).replace("'", "'\\''") + "'"
-
-
-# ─────────────────────────── the bridge plumbing ───────────────────────────

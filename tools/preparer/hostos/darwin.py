@@ -9,9 +9,15 @@ returns unredacted SSIDs without a Location Services grant -- `airport` was remo
 macOS 26 and `system_profiler` redacts), `security` for saved passphrases, `diskutil`
 and `ioreg` for disks.
 """
+import errno
+import os
 import plistlib
 import re
+import shlex
 import subprocess
+import time
+
+from ._dd import DDSink
 
 NAME = "macOS"
 
@@ -299,3 +305,258 @@ def keep_awake_command(pid):
     and locks normally. Closing the lid sleeps regardless; nothing in userspace
     prevents that, which is what the setup screen's copy has to be honest about."""
     return ["caffeinate", "-i", "-w", str(pid)]
+
+
+# ────────────────────────────── The card write ──────────────────────────────
+#
+# Everything below was `writer.py`'s body until the Linux and Windows ports needed the
+# same shapes. It is the same code, moved, not rewritten -- this is the only one of the
+# three that has written a card that then booted, and it does not get quietly changed
+# while porting the other two.
+
+def valid_device_id(dev):
+    """diskN and nothing else. The last line of defence before a raw write."""
+    return bool(re.fullmatch(r"disk\d+", dev or ""))
+
+
+def block_device(dev):
+    return "/dev/%s" % dev
+
+
+def raw_device(dev):
+    """The character device. Markedly faster than the buffered one for a bulk write."""
+    return "/dev/r%s" % dev
+
+
+def partition_devices(dev, partno):
+    """Candidates for a partition, best first.
+
+    Raw is much faster for the MakeMKV copy, but raw nodes on macOS demand aligned IO,
+    so the buffered node stays as a fallback rather than being the single point of
+    failure.
+    """
+    return ["/dev/r%ss%d" % (dev, partno), "/dev/%ss%d" % (dev, partno)]
+
+
+def unmount_disk(dev):
+    """Unmount every volume on the disk, and confirm it actually happened.
+
+    diskutil returning is not the same as the volumes having released. Writing to the
+    raw device while anything is still mounted fails with EBUSY, which previously
+    surfaced only as a dead `dd` and no explanation.
+    """
+    node = block_device(dev)
+    p = subprocess.run(["diskutil", "unmountDisk", node], capture_output=True, text=True)
+    if p.returncode != 0:
+        p = subprocess.run(["diskutil", "unmountDisk", "force", node],
+                           capture_output=True, text=True)
+        if p.returncode != 0:
+            return False, ((p.stderr or p.stdout).strip()
+                           + "\n\nClose anything using the card and try again.")
+
+    for _ in range(20):
+        mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
+        if not any(("/dev/%s" % dev) in line for line in mounts.splitlines()):
+            break
+        time.sleep(0.5)
+    else:
+        return False, ("Volumes on %s are still mounted after ten seconds." % node)
+
+    # Disappearing from `mount` is NOT the same as the device being free. On macOS 26
+    # FAT volumes are served by a userspace FSKit extension
+    # (com.apple.fskit.msdos.appex), which keeps /dev/rdiskNs1 open and can outlive the
+    # unmount by a few seconds. The old check passed here and dd then died on EBUSY.
+    # The only honest test of "can we write this" is to open it.
+    rdev = raw_device(dev)
+    last = ""
+    for _ in range(30):
+        try:
+            fd = os.open(rdev, os.O_WRONLY)
+            os.close(fd)
+            return True, ""
+        except OSError as e:
+            last = str(e)
+            if e.errno == errno.EBUSY:
+                time.sleep(0.5)     # something still holds it; give it a moment
+                continue
+            # Not busy, but not openable either -- a permission refusal, most likely.
+            # The unmount genuinely did succeed, and saying "could not be unmounted"
+            # here would send the user hunting the wrong problem. Hand off to the
+            # pre-open probe in writer.py, which routes the real errno through
+            # explain_write_error().
+            return True, ""
+    return False, ("%s is still busy fifteen seconds after unmounting.\n\n"
+                   "Something still has the card open. Ejecting it in Finder and "
+                   "re-inserting it clears this.\n\n%s" % (rdev, last))
+
+
+def open_sink(dev, total=0):
+    """dd, kept.
+
+    It handles the block alignment the raw device demands, and on the one platform that
+    has actually written a booting card it is not worth replacing with something that
+    has not. Windows, which has no dd, writes through its own sink; see hostos/windows.
+    """
+    return DDSink(raw_device(dev))
+
+
+def open_reader(dev):
+    return open(raw_device(dev), "rb")
+
+
+def flush():
+    subprocess.run(["sync"])
+
+
+def rescan_partitions(dev):
+    """Nudge the kernel into re-reading the partition table after a raw write."""
+    subprocess.run(["diskutil", "list", block_device(dev)], capture_output=True)
+
+
+def eject(dev):
+    subprocess.run(["diskutil", "eject", block_device(dev)], capture_output=True)
+
+
+def _looks_like_pi_boot(path):
+    """A Raspberry Pi boot partition always carries these. An unrelated FAT volume won't."""
+    return (os.path.exists(os.path.join(path, "config.txt"))
+            and os.path.exists(os.path.join(path, "cmdline.txt")))
+
+
+def mount_boot(dev, partno):
+    """Where the FAT boot partition landed. (path, release, detail).
+
+    diskutil remounts it on its own once the write settles, so there is nothing to
+    mount and nothing to release -- hence a no-op `release`. The other two platforms
+    have to do the mounting themselves and give back a real one.
+    """
+    for _ in range(40):
+        mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
+        for line in mounts.splitlines():
+            if "msdos" in line and "/Volumes/" in line and dev in line:
+                return line.split(" on ")[1].split(" (")[0], (lambda: None), ""
+        time.sleep(1.5)
+
+    # Some readers omit the device from the mount line, so fall back to scanning FAT
+    # volumes -- but ONLY ones that actually look like a freshly written Pi boot
+    # partition. Taking any msdos volume would, on a machine with a camera card or USB
+    # stick attached, write custom.toml (containing the derived Wi-Fi PSK and the
+    # account password hash) onto unrelated removable media.
+    mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
+    for line in mounts.splitlines():
+        if "msdos" not in line or "/Volumes/" not in line:
+            continue
+        cand = line.split(" on ")[1].split(" (")[0]
+        if _looks_like_pi_boot(cand):
+            return cand, (lambda: None), ""
+    return None, (lambda: None), ("Unplug and replug the card, then use "
+                                  "Apply settings only.")
+
+
+def _responsible_app():
+    """The application macOS holds responsible for what this process does.
+
+    TCC attributes consent to the nearest enclosing .app bundle up the process tree, so
+    that is the one the user has to grant -- naming it saves them guessing which of the
+    dozen entries in the list matters.
+    """
+    pid, found = os.getpid(), None
+    for _ in range(12):
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        if not out:
+            break
+        parent, _, comm = out.partition(" ")
+        if ".app/Contents/MacOS/" in comm:
+            # Keep walking rather than returning here: an interpreter run from a
+            # terminal sits inside Python.app, which owns no consent. The application
+            # that matters is the outermost one, nearest launchd.
+            found = comm.split(".app/")[0].rsplit("/", 1)[-1] + ".app"
+        try:
+            pid = int(parent)
+        except ValueError:
+            break
+        if pid <= 1:
+            break
+    return found or "the application you launched this from"
+
+
+def explain_write_error(err, xerr, rc, rdev):
+    """Turn a terse dd failure into something the user can act on."""
+    blob = (str(err) + " " + str(xerr)).lower()
+    if "operation not permitted" in blob or "not permitted" in blob:
+        return ("macOS blocked access to %s.\n\n"
+                "This is a privacy refusal, not a file permission — running as root "
+                "does not lift it. macOS grants disk access to the *application* the "
+                "write is attributed to, which here is %s.\n\n"
+                "Grant it in System Settings > Privacy & Security > Full Disk Access, "
+                "quit that application completely, reopen it and run this again.\n\n%s"
+                % (rdev, _responsible_app(), err or "(no detail)"))
+    if "resource busy" in blob or "busy" in blob or "errno 16" in blob:
+        return ("%s is still in use.\n\nThe card had not finished unmounting. Eject it "
+                "in Finder, re-insert it, and try again.\n\n%s" % (rdev, err or ""))
+    if "no such file" in blob:
+        return ("%s disappeared.\n\nThe card was removed or the reader dropped it.\n\n%s"
+                % (rdev, err or ""))
+    return (err or xerr or "the writer exited %s having written nothing." % rc)
+
+
+# ───────────────────────────────── Elevation ─────────────────────────────────
+
+CAN_WRITE = True
+
+
+def elevate(argv, rundir, progress_path=""):
+    """One authorization dialog covers write, provision and eject. (rc, stderr, cancelled).
+
+    Elevation is `sudo -A`, deliberately, and not osascript's `with administrator
+    privileges`. The latter runs the helper through security_authtrampoline, which
+    re-parents it away from the launching application — and macOS attributes disk and
+    removable-volume consent to the *responsible* application, not to the user and not to
+    root. A trampolined helper therefore inherits no consent at all and is refused with
+    EPERM on /dev/rdiskN even as root, while the terminal it was launched from can write
+    the very same card. sudo keeps the writer a direct descendant, so the consent that is
+    already granted still applies.
+    """
+    script = os.path.join(rundir, "write.sh")
+    with open(script, "w") as f:
+        f.write("#!/bin/sh\nexec %s\n" % " ".join(shlex.quote(str(a)) for a in argv))
+    os.chmod(script, 0o700)
+
+    # sudo asks for the password up to three times. The sentinel makes a cancelled
+    # dialog cancel the whole write instead of asking twice more.
+    cancel = os.path.join(rundir, "cancelled")
+    if os.path.exists(cancel):
+        os.remove(cancel)
+    askpass = os.path.join(rundir, "askpass.sh")
+    with open(askpass, "w") as f:
+        f.write(
+            '#!/bin/sh\n'
+            '[ -f %s ] && exit 1\n'
+            'pw=$(osascript -e \'display dialog "Riparr needs permission to write '
+            'to your SD card." with title "Riparr Preparer" default answer "" '
+            'with hidden answer with icon caution\' -e \'text returned of result\' '
+            '2>/dev/null) || { : > %s; exit 1; }\n'
+            'printf %%s "$pw"\n' % (shlex.quote(cancel), shlex.quote(cancel)))
+    os.chmod(askpass, 0o700)
+
+    env = dict(os.environ, SUDO_ASKPASS=askpass)
+    p = subprocess.run(["sudo", "-A", "/bin/sh", script],
+                       capture_output=True, text=True, env=env)
+    return p.returncode, (p.stderr or "").strip(), os.path.exists(cancel)
+
+
+def probe_writable(dev):
+    """Can this device be opened for writing right now? (ok, detail).
+
+    Run before the image is opened and before anything is decompressed, so that a
+    refusal names its real cause instead of being inferred from a child process that has
+    already exited.
+    """
+    rdev = raw_device(dev)
+    try:
+        fd = os.open(rdev, os.O_WRONLY)
+        os.close(fd)
+        return True, ""
+    except OSError as e:
+        return False, explain_write_error(str(e), "", e.errno, rdev)

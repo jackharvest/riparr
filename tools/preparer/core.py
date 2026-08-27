@@ -544,25 +544,24 @@ def build_toml(cfg):
 
 # ─────────────────── what this operating system can do ───────────────────
 #
-# The Preparer has two halves and they port very differently.
+# The Preparer has two halves.
 #
 # The *setup* half -- find a box on the network, install Riparr on it over SSH, finish
 # in a browser -- is stdlib and SSH, and works anywhere Python does.
 #
-# The *card-writing* half is not portable and pretending otherwise would be the worst
-# kind of lie: it would fail at the last step, after the user had entered a Wi-Fi
-# password and chosen a disk, with the card possibly half written. writer.py speaks
-# `diskutil`, `/dev/rdiskN`, macOS's fskit mount daemon and macOS's rules about which
-# application owns removable-media consent. None of that has an equivalent elsewhere
-# that has been tested.
+# The *card-writing* half used to be macOS-only, and this function existed to say so on
+# the first screen rather than fail at the last step with a Wi-Fi password already
+# entered. It now runs on all three, so what it reports is `hostos.CAN_WRITE` -- one
+# flag, set by the backend that would have to do the work, rather than a platform name
+# checked in eight places. An operating system with no backend still gets the honest
+# answer and the greyed-out button.
 #
-# So the app says which half it can do, on the first screen, before anything is chosen.
-# A Windows or Linux user writes the image with the tool they already have and comes
-# back for the setup half, which is the longer and more valuable half anyway.
+# What is *not* claimed here is that the write has been proven on this platform's
+# hardware. That belongs in the release notes and the journal, not in a capability
+# flag, because a flag that means "probably" cannot be acted on by anything.
 
 def host_capabilities():
     import sys
-    darwin = sys.platform == "darwin"
     devices = []
     try:
         devices = hostos.list_block_devices()
@@ -576,17 +575,15 @@ def host_capabilities():
     return {
         "name": hostos.NAME,
         "platform": sys.platform,
-        "write_card": darwin,
-        # Everything below works on every platform with a backend, which is why the
-        # setup route is offered regardless.
-        "list_disks": bool(devices) or darwin,
+        "write_card": bool(hostos.CAN_WRITE),
+        "list_disks": bool(devices) or bool(hostos.CAN_WRITE),
         "scan_wifi": wifi_method != "none",
         "setup": True,
-        "write_note": "" if darwin else (
-            "Writing an SD card is macOS-only for now. On %s, write the OS image with "
-            "Raspberry Pi Imager or balenaEtcher, put the card in the box, and come "
-            "back here to set it up — that is the longer half and it works the same on "
-            "every system." % hostos.NAME),
+        "write_note": "" if hostos.CAN_WRITE else (
+            "Riparr can't write an SD card on %s. Write the OS image with Raspberry Pi "
+            "Imager or balenaEtcher, put the card in the box, and come back here to set "
+            "it up — that is the longer half and it works the same on every system."
+            % hostos.NAME),
     }
 
 
@@ -836,29 +833,69 @@ def image_layout(path):
 
 
 def missing_tools(image=None):
-    """Everything this write will shell out to that is not installed.
+    """Everything this write needs that is not here. Checked *before* the prompt.
 
-    Checked *before* the authorization dialog. Discovering a missing tool afterwards
-    means the user has already typed an admin password and the card has already been
-    unmounted, and the failure arrives as "The write stopped unexpectedly" with an
-    errno -- which names neither the cause nor the fix.
+    Discovering a missing tool afterwards means the user has already authorised the
+    write and the card has already been unmounted, and the failure arrives as "The write
+    stopped unexpectedly" with an errno -- which names neither the cause nor the fix.
     """
+    import shutil
+    import sys
+
     out = []
+
     # Only ask for debugfs when the image actually needs it. Warning about a tool this
     # particular write will never run is its own kind of wrong.
     if image and image_layout(image) in ("ext4-root", "unknown"):
-        try:
-            import armbian
-            have = armbian.find_debugfs()
-        except Exception:
-            have = None
-        if not have:
+        if sys.platform in ("win32", "cygwin"):
+            # Not a missing tool -- a missing possibility. There is no debugfs for
+            # Windows and no way to mount ext4 from it, so this image cannot be
+            # configured here however long anyone spends installing things. Saying so
+            # now costs nothing; saying so after the write costs a card that boots,
+            # joins no network, and cannot be reached because the board has no Ethernet.
             out.append({
-                "tool": "debugfs",
-                "why": "needed to write settings into the card's Linux partition, "
-                       "which macOS cannot mount",
-                "fix": "brew install e2fsprogs",
+                "tool": "a way to write into the card's Linux partition",
+                "why": "this image keeps its settings in an ext4 filesystem, which "
+                       "Windows cannot mount or write",
+                "fix": "Use a Riparr image with a FAT boot partition. Writing the "
+                       "plain image and configuring it later is not an option — the "
+                       "board has no Ethernet, so a card without Wi-Fi credentials "
+                       "produces a box that never appears.",
             })
+        else:
+            try:
+                import armbian
+                have = armbian.find_debugfs()
+            except Exception:
+                have = None
+            if not have:
+                out.append({
+                    "tool": "debugfs",
+                    "why": "needed to write settings into the card's Linux partition, "
+                           "which %s cannot mount" % hostos.NAME,
+                    "fix": ("brew install e2fsprogs" if sys.platform == "darwin"
+                            else "Install e2fsprogs — on Debian and Ubuntu that is "
+                                 "`sudo apt install e2fsprogs`, on Fedora "
+                                 "`sudo dnf install e2fsprogs`."),
+                })
+
+    # The elevation prompt itself. macOS always has sudo and Windows always has UAC;
+    # Linux is the one that can genuinely be without either, on a bare window manager or
+    # a session started outside a desktop.
+    if sys.platform.startswith("linux"):
+        if not shutil.which("pkexec") and not shutil.which("sudo"):
+            out.append({
+                "tool": "pkexec",
+                "why": "needed to ask for permission to write to the card",
+                "fix": "Install policykit-1 (Debian, Ubuntu) or polkit (Fedora, Arch).",
+            })
+        if not shutil.which("dd"):
+            out.append({
+                "tool": "dd",
+                "why": "needed to write the image to the card",
+                "fix": "Install coreutils.",
+            })
+
     return out
 
 

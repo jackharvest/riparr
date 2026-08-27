@@ -745,7 +745,8 @@ async function init() {
   renderBoards();
   renderGuide(state.boot.size_guide);
 
-  // Card writing is macOS-only today. Say so here, before anything is chosen, rather
+  // Card writing runs on macOS, Linux and Windows. Where it does not -- an operating
+  // system with no hostos backend -- say so here, before anything is chosen, rather
   // than failing at the last step with a Wi-Fi password entered and possibly a card
   // half written. The setup half works everywhere and is the longer half.
   const host = state.boot.host || {};

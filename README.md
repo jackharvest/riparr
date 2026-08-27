@@ -45,13 +45,21 @@ first time it is powered on. Nothing is typed into a terminal.
 There is no screen on the box, so everything it needs to reach your network has to be on
 the card *before* it boots. That is the whole reason this stage exists.
 
-| Your computer | What the Preparer can do |
-|---|---|
-| **macOS** | Everything: write the card, then set the box up |
-| **Windows** | Set the box up. Write the card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) or [balenaEtcher](https://etcher.balena.io/) first |
-| **Linux** | Set the box up. Write the card with Imager or Etcher first |
+| Your computer | Write the card | Set the box up | Proven on real hardware |
+|---|---|---|---|
+| **macOS** | Yes | Yes | Yes |
+| **Linux** | Yes | Yes | Not yet |
+| **Windows** | Yes, except for images that keep their settings in a Linux filesystem — the app says so before it touches the card | Yes | Not yet |
 
-The app says which of these it can do on its first screen, before you choose anything.
+Your computer asks for permission once — your password on macOS, polkit on Linux, UAC on
+Windows — and that covers writing, provisioning and ejecting. If the Preparer can't write
+a card from your system it says so on its first screen, before you choose anything.
+
+You can also write the card with [Raspberry Pi
+Imager](https://www.raspberrypi.com/software/) or
+[balenaEtcher](https://etcher.balena.io/) and come back for setup — but the box has **no
+Ethernet socket**, so a card written that way needs its Wi-Fi added by hand or it will
+boot and never appear.
 → [Preparing the card, in detail](docs/guide/02-prepare-sd-card.md)
 
 ### 2 · Setup — the box installs itself, about 10 minutes unattended
@@ -110,7 +118,9 @@ interface bugs in one session, all of them now fixed and written down in
 
 **This is still pre-1.0.** It has run on one board, with one drive, against one NAS. The
 parts most likely to surprise you are the ones that have met the fewest configurations:
-other boards, other drives, and Windows or Linux for the Preparer.
+other boards, other drives, and **card writing from Windows or Linux** — which is written
+and checked but has not yet produced a card that booted a board. If you are the first to
+try one, an issue with your OS version and card reader is genuinely useful.
 
 **Known and deliberate:**
 

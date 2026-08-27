@@ -1,22 +1,30 @@
 """
-Privileged SD writer. Runs as root, launched once via the macOS authorization dialog.
+Privileged SD writer. Runs as root, launched once through the host's own authorization
+dialog — macOS's sudo askpass, polkit on Linux, UAC on Windows.
 
 Everything that needs privilege happens inside a single invocation — image write,
 custom.toml placement, eject — so the user authenticates exactly once and never sees a
 terminal. Progress is published as JSON to a file the GUI polls, because a root process
-launched through osascript has no usable pipe back to the parent.
+launched through an elevation prompt has no usable pipe back to the parent. That was a
+macOS constraint originally and turned out to be the only design that survives all
+three: UAC in particular hands back a process handle and nothing else.
+
+**This file is the sequence, not the mechanics.** Verify the image, unmount, write,
+verify the card, provision, eject — in that order, on every platform. Every operation
+that differs between operating systems lives in `hostos/`, behind the contract written
+down in `hostos/__init__.py`. Nothing below should ever name a device path, a command,
+or an errno directly; if it starts to, the fix is a new function there, not a branch
+here.
 """
 import argparse
-import errno
 import hashlib
 import lzma
 import json
 import os
-import subprocess
 import sys
-import tempfile
-import threading
 import time
+
+import hostos
 
 
 def _sha256(path):
@@ -35,143 +43,60 @@ def publish(path, **kw):
     os.replace(tmp, path)
 
 
-def _read_back(rdev, count, st):
-    """Read `count` bytes back off the raw device and hash them."""
+def _read_back(dev, count, st):
+    """Read `count` bytes back off the card and hash them."""
     h = hashlib.sha256()
     done = 0
     t0 = time.time()
     try:
-        with open(rdev, "rb") as f:
-            while done < count:
-                chunk = f.read(min(4 << 20, count - done))
-                if not chunk:
-                    return None
-                h.update(chunk)
-                done += len(chunk)
-                el = time.time() - t0
-                publish(st, phase="verify-card", written=done, total=count,
-                        rate=(done / el) if el else 0,
-                        eta=((count - done) / (done / el)) if done and el else 0,
-                        message="Checking the card reads back correctly")
+        f = hostos.open_reader(dev)
     except OSError:
         return None
+    try:
+        while done < count:
+            chunk = f.read(min(4 << 20, count - done))
+            if not chunk:
+                return None
+            h.update(chunk)
+            done += len(chunk)
+            el = time.time() - t0
+            publish(st, phase="verify-card", written=done, total=count,
+                    rate=(done / el) if el else 0,
+                    eta=((count - done) / (done / el)) if done and el else 0,
+                    message="Checking the card reads back correctly")
+    except OSError:
+        return None
+    finally:
+        try:
+            f.close()
+        except Exception:
+            pass
     return h.hexdigest()
 
 
-def _unmount(dev):
-    """Unmount every volume on the disk, and confirm it actually happened.
-
-    diskutil returning is not the same as the volumes having released. Writing to the
-    raw device while anything is still mounted fails with EBUSY, which previously
-    surfaced only as a dead `dd` and no explanation.
-    """
-    p = subprocess.run(["diskutil", "unmountDisk", dev], capture_output=True, text=True)
-    if p.returncode != 0:
-        p = subprocess.run(["diskutil", "unmountDisk", "force", dev],
-                           capture_output=True, text=True)
-        if p.returncode != 0:
-            return False, ((p.stderr or p.stdout).strip()
-                           + "\n\nClose anything using the card and try again.")
-
-    ident = os.path.basename(dev)
-    for _ in range(20):
-        mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
-        if not any(("/dev/%s" % ident) in line for line in mounts.splitlines()):
-            break
-        time.sleep(0.5)
-    else:
-        return False, ("Volumes on %s are still mounted after ten seconds." % dev)
-
-    # Disappearing from `mount` is NOT the same as the device being free. On macOS 26
-    # FAT volumes are served by a userspace FSKit extension
-    # (com.apple.fskit.msdos.appex), which keeps /dev/rdiskNs1 open and can outlive the
-    # unmount by a few seconds. The old check passed here and dd then died on EBUSY.
-    # The only honest test of "can we write this" is to open it.
-    rdev = "/dev/r" + ident
-    last = ""
-    for _ in range(30):
-        try:
-            fd = os.open(rdev, os.O_WRONLY)
-            os.close(fd)
-            return True, ""
-        except OSError as e:
-            last = str(e)
-            if e.errno == errno.EBUSY:
-                time.sleep(0.5)     # something still holds it; give it a moment
-                continue
-            # Not busy, but not openable either -- a permission refusal, most likely.
-            # The unmount genuinely did succeed, and saying "could not be unmounted"
-            # here would send the user hunting the wrong problem. Hand off to the
-            # pre-open probe below, which routes the real errno through _explain().
-            return True, ""
-    return False, ("%s is still busy fifteen seconds after unmounting.\n\n"
-                   "Something still has the card open. Ejecting it in Finder and "
-                   "re-inserting it clears this.\n\n%s" % (rdev, last))
-
-
-def _responsible_app():
-    """The application macOS holds responsible for what this process does.
-
-    TCC attributes consent to the nearest enclosing .app bundle up the process tree, so
-    that is the one the user has to grant — naming it saves them guessing which of the
-    dozen entries in the list matters.
-    """
-    pid, found = os.getpid(), None
-    for _ in range(12):
-        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
-                             capture_output=True, text=True).stdout.strip()
-        if not out:
-            break
-        parent, _, comm = out.partition(" ")
-        if ".app/Contents/MacOS/" in comm:
-            # Keep walking rather than returning here: an interpreter run from a
-            # terminal sits inside Python.app, which owns no consent. The application
-            # that matters is the outermost one, nearest launchd.
-            found = comm.split(".app/")[0].rsplit("/", 1)[-1] + ".app"
-        try:
-            pid = int(parent)
-        except ValueError:
-            break
-        if pid <= 1:
-            break
-    return found or "the application you launched this from"
-
-
-def _explain(err, xerr, rc, rdev):
-    """Turn a terse dd failure into something the user can act on."""
-    blob = (str(err) + " " + str(xerr)).lower()
-    if "operation not permitted" in blob or "not permitted" in blob:
-        return ("macOS blocked access to %s.\n\n"
-                "This is a privacy refusal, not a file permission — running as root "
-                "does not lift it. macOS grants disk access to the *application* the "
-                "write is attributed to, which here is %s.\n\n"
-                "Grant it in System Settings > Privacy & Security > Full Disk Access, "
-                "quit that application completely, reopen it and run this again.\n\n%s"
-                % (rdev, _responsible_app(), err or "(no detail)"))
-    if "resource busy" in blob or "busy" in blob or "errno 16" in blob:
-        return ("%s is still in use.\n\nThe card had not finished unmounting. Eject it "
-                "in Finder, re-insert it, and try again.\n\n%s" % (rdev, err or ""))
-    if "no such file" in blob:
-        return ("%s disappeared.\n\nThe card was removed or the reader dropped it.\n\n%s"
-                % (rdev, err or ""))
-    return (err or xerr or "dd exited %s having written nothing." % rc)
-
-
-def _partition_layout(rdev):
+def _partition_layout(dev):
     """Read the MBR and classify the image we just wrote.
 
     Raspberry Pi images are FAT boot + Linux root, and are provisioned by dropping a
     file onto the FAT partition. Allwinner images -- Armbian on the Orange Pi Zero 2W --
     are a single ext4 partition with U-Boot in the raw sectors ahead of it. There is no
-    FAT partition to write to and macOS cannot mount ext4, so those are provisioned
-    through debugfs instead. Getting this wrong means a card that boots and does
-    nothing, which is exactly how the first night was lost.
+    FAT partition to write to and neither macOS nor Windows can mount ext4, so those are
+    provisioned through debugfs instead. Getting this wrong means a card that boots and
+    does nothing, which is exactly how the first night was lost.
     """
     try:
-        with open(rdev, "rb") as f:
-            mbr = f.read(512)
+        f = hostos.open_reader(dev)
     except OSError:
         return "unknown", None
+    try:
+        mbr = f.read(512)
+    except OSError:
+        return "unknown", None
+    finally:
+        try:
+            f.close()
+        except Exception:
+            pass
     if len(mbr) < 512:
         return "unknown", None
     parts = []
@@ -188,15 +113,38 @@ def _partition_layout(rdev):
     return "unknown", None
 
 
-def _looks_like_pi_boot(path):
-    """A Raspberry Pi boot partition always carries these. An unrelated FAT volume won't."""
-    return (os.path.exists(os.path.join(path, "config.txt"))
-            and os.path.exists(os.path.join(path, "cmdline.txt")))
+def _copy_makemkv(destdir, srcdir, st):
+    """Carry MakeMKV across on the card itself.
+
+    It is ~25 MB against a 512 MiB boot partition, and it removes an scp step from the
+    first session. The service looks for /boot/firmware/makemkv before it tries to
+    download anything. Not fatal if it fails: the packages can still be copied over by
+    hand later, and a card that boots and joins the network is worth far more than one
+    that does not exist because a nice-to-have threw.
+    """
+    publish(st, phase="extras", message="Copying MakeMKV onto the card")
+    try:
+        os.makedirs(destdir, exist_ok=True)
+        for name in sorted(os.listdir(srcdir)):
+            if not name.endswith(".tar.gz"):
+                continue
+            with open(os.path.join(srcdir, name), "rb") as a, \
+                    open(os.path.join(destdir, name), "wb") as b:
+                while True:
+                    chunk = a.read(4 << 20)
+                    if not chunk:
+                        break
+                    b.write(chunk)
+        hostos.flush()
+    except OSError as e:
+        publish(st, phase="extras",
+                message="Could not copy MakeMKV onto the card", detail=str(e))
+        time.sleep(1.5)
 
 
 def run(args):
-    dev = "/dev/%s" % args.dev
-    rdev = "/dev/r%s" % args.dev          # raw device: markedly faster than buffered
+    dev = args.dev
+    node = hostos.raw_device(dev)         # for messages; hostos does the opening
     st = args.progress
 
     if args.sha256:
@@ -209,23 +157,20 @@ def run(args):
             return 1
 
     publish(st, phase="unmount", message="Unmounting the card")
-    ok, why = _unmount(dev)
+    ok, why = hostos.unmount_disk(dev)
     if not ok:
         publish(st, phase="error",
                 message="The card could not be unmounted, so nothing was written.",
                 detail=why)
         return 1
 
-    # Open the raw device before building the pipeline. A failure here names the real
-    # reason -- busy, permissions, gone -- instead of leaving it to be inferred from a
-    # child process that has already exited.
-    try:
-        probe = os.open(rdev, os.O_WRONLY)
-        os.close(probe)
-    except OSError as e:
+    # Before building the pipeline. A failure here names the real reason -- busy,
+    # permissions, gone -- instead of leaving it to be inferred from a write that has
+    # already half happened.
+    ok, why = hostos.probe_writable(dev)
+    if not ok:
         publish(st, phase="error",
-                message="The card could not be opened for writing.",
-                detail=_explain(str(e), "", e.errno, rdev))
+                message="The card could not be opened for writing.", detail=why)
         return 1
 
     total = args.total
@@ -236,11 +181,8 @@ def run(args):
     #
     # xz is Homebrew-only on macOS and does not exist on Windows at all, and Python has
     # linked liblzma -- the same library macOS already ships inside libarchive -- since
-    # forever. Dropping the subprocess removes a dependency here and removes the
+    # forever. Dropping the subprocess removed a dependency on macOS and removed the
     # question entirely from the Windows and Linux ports.
-    #
-    # dd stays: it handles the block alignment the raw device demands, and it is the
-    # half that was never the portability problem.
     #
     # Measured on the real image, 1.54 GB expanded, hashing as it goes:
     #   xz -dc      2.1s   (~735 MB/s)
@@ -257,45 +199,34 @@ def run(args):
                 detail="%s\n\nThe download may be incomplete or corrupt." % e)
         return 1
 
-    dd = subprocess.Popen(["dd", "of=%s" % rdev, "ibs=1m", "obs=4m"],
-                          stdin=subprocess.PIPE,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-
-    # Drain both stderr streams on threads. Left unread, a child that fails early fills
-    # its stderr pipe and blocks, and its message -- the one thing that explains the
-    # failure -- is never seen.
-    errs = {}
-
-    def drain(name, stream):
-        try:
-            errs[name] = stream.read().decode("utf-8", "replace")
-        except Exception:
-            errs[name] = ""
-
-    threads = [threading.Thread(target=drain, args=(n, f), daemon=True)
-               for n, f in (("dd", dd.stderr),)]
-    for t in threads:
-        t.start()
+    try:
+        sink = hostos.open_sink(dev, total)
+    except Exception as e:
+        src.close()
+        publish(st, phase="error",
+                message="The card could not be opened for writing.",
+                detail=hostos.explain_write_error(str(e), "", 1, node))
+        return 1
 
     written, t0, last = 0, time.time(), 0.0
     digest = hashlib.sha256()
     broke = False
-    lzma_err = ""
+    read_err = ""
     try:
         while True:
             try:
                 chunk = src.read(4 << 20)
             except Exception as e:
                 # A truncated or corrupt .xz raises here rather than at open time.
-                lzma_err = str(e)
+                read_err = str(e)
                 broke = True
                 break
             if not chunk:
                 break
             try:
-                dd.stdin.write(chunk)
+                sink.write(chunk)
             except (BrokenPipeError, OSError):
-                # dd is gone. Do not keep feeding a dead pipe.
+                # The sink is gone. Do not keep feeding it.
                 broke = True
                 break
             digest.update(chunk)
@@ -310,36 +241,21 @@ def run(args):
                         message="Writing the operating system")
                 last = now
     finally:
-        # Closing dd's stdin is what lets it finish and flush. There is no second
-        # process to unblock any more -- the decompressor is in this one.
-        try:
-            dd.stdin.close()
-        except Exception:
-            pass
-        try:
-            dd_rc = dd.wait(timeout=120)
-        except subprocess.TimeoutExpired:
-            dd.kill()
-            dd_rc = -1
+        sink_rc, err = sink.close()
         try:
             src.close()
         except Exception:
             pass
-        for t in threads:
-            t.join(timeout=5)
-
-    err = (errs.get("dd") or "").strip()
-    xerr = lzma_err
 
     if broke or written == 0:
         publish(st, phase="error",
                 message="The card could not be written to.",
-                detail=_explain(err, xerr, dd_rc, rdev))
+                detail=hostos.explain_write_error(err, read_err, sink_rc, node))
         return 1
-    if dd_rc != 0:
+    if sink_rc != 0:
         publish(st, phase="error",
                 message="The write failed before it finished.",
-                detail=(err or xerr or "dd exited %s." % dd_rc))
+                detail=(err or read_err or "the writer exited %s." % sink_rc))
         return 1
     if total and written < total:
         publish(st, phase="error",
@@ -349,13 +265,13 @@ def run(args):
 
     publish(st, phase="flush", written=written, total=total,
             message="Flushing to the card")
-    subprocess.run(["sync"])
+    hostos.flush()
 
     if args.verify:
         # Failing and counterfeit cards accept writes happily and return garbage on read.
         # The source image was already checked; this checks what actually landed.
         expect = digest.hexdigest()
-        got = _read_back(rdev, written, st)
+        got = _read_back(dev, written, st)
         if got is None:
             publish(st, phase="error",
                     message="Could not read the card back to check it.",
@@ -369,183 +285,160 @@ def run(args):
                            "wrote %s\nread  %s" % (expect[:32], got[:32]))
             return 1
 
-    layout, partno = _partition_layout(rdev)
+    layout, partno = _partition_layout(dev)
 
     if layout == "single-ext4":
-        # Armbian on Allwinner. No FAT partition exists; configuration is written into
-        # the ext4 root filesystem directly. See tools/preparer/armbian.py for why
-        # Armbian's own PRESET_* mechanism cannot be used on a headless box.
-        publish(st, phase="provision", message="Applying your settings")
+        rc = _provision_ext4(args, dev, partno, st)
+    else:
+        rc = _provision_fat(args, dev, partno or 1, st)
+    if rc:
+        return rc
 
-        # After a raw whole-disk write, macOS has to notice the new partition table
-        # before /dev/*s1 exists. It usually rescans when the device is closed, but not
-        # always instantly, and provisioning a node that is not there yet would fail for
-        # a reason nobody could act on.
-        base = "%ss%d" % (dev, partno)          # buffered, e.g. /dev/disk4s1
-        raw = "%ss%d" % (rdev, partno)          # raw, e.g. /dev/rdisk4s1
-        for attempt in range(20):
-            if os.path.exists(base) or os.path.exists(raw):
+    hostos.flush()
+    publish(st, phase="eject", message="Ejecting")
+    hostos.eject(dev)
+    publish(st, phase="done", written=written, total=total,
+            message="Your Riparr card is ready")
+    return 0
+
+
+def _provision_ext4(args, dev, partno, st):
+    """Armbian on Allwinner. No FAT partition exists; configuration is written into the
+    ext4 root filesystem directly. See tools/preparer/armbian.py for why Armbian's own
+    PRESET_* mechanism cannot be used on a headless box.
+    """
+    publish(st, phase="provision", message="Applying your settings")
+
+    # After a raw whole-disk write the OS has to notice the new partition table before
+    # the partition node exists. It usually rescans when the device is closed, but not
+    # always instantly, and provisioning a node that is not there yet would fail for a
+    # reason nobody could act on.
+    hostos.rescan_partitions(dev)
+    cands = hostos.partition_devices(dev, partno)
+    if not cands:
+        publish(st, phase="error",
+                message="The card was written, but could not be configured.",
+                detail="This image keeps its settings in a Linux filesystem, and %s "
+                       "has no way to write into one. Use a Riparr image with a FAT "
+                       "boot partition." % hostos.NAME)
+        return 1
+
+    present = []
+    for _ in range(20):
+        present = [c for c in cands if os.path.exists(c)]
+        if present:
+            break
+        time.sleep(0.5)
+    else:
+        publish(st, phase="error",
+                message="The card was written, but its partitions never appeared.",
+                detail="Expected %s. Unplug and replug the card, then try again."
+                       % cands[0])
+        return 1
+
+    # A card that was written but not configured is a card that boots, joins nothing,
+    # and cannot be reached — there is no Ethernet on this board and no second way in.
+    # So the desktop is given no chance to remount the partition underneath debugfs.
+    hostos.unmount_disk(dev)
+
+    try:
+        import armbian
+        port = 9797
+        if args.conf and os.path.exists(args.conf):
+            for line in open(args.conf):
+                if line.startswith("RIPARR_PORT="):
+                    port = int(line.split("=", 1)[1].strip())
+        cfg = armbian.cfg_from_custom_toml(args.toml, port)
+
+        # Try each candidate in turn -- on macOS the raw node is much faster for the
+        # MakeMKV copy but demands aligned IO, and that path has never been exercised on
+        # hardware, so it does not get to be the single point of failure.
+        rootpart, first_err = None, None
+        for cand in present:
+            try:
+                armbian.provision(cand, cfg)
+                rootpart = cand
                 break
-            if attempt == 4:
-                # Nudge the kernel into re-reading the partition table.
-                subprocess.run(["diskutil", "list", dev], capture_output=True)
-            time.sleep(0.5)
-        else:
+            except Exception as e:
+                first_err = first_err or e
+        if rootpart is None:
+            raise first_err or RuntimeError("no usable partition device")
+
+        failed = [lbl for lbl, ok, _ in armbian.verify(rootpart, cfg) if not ok]
+        if failed:
             publish(st, phase="error",
-                    message="The card was written, but its partitions never appeared.",
-                    detail="Expected %s. Unplug and replug the card, then try again."
-                           % base)
+                    message="Settings did not verify after writing.",
+                    detail="These did not read back correctly:\n  " + "\n  ".join(failed))
             return 1
 
-        try:
-            import armbian
-            port = 9797
-            if args.conf and os.path.exists(args.conf):
-                for line in open(args.conf):
-                    if line.startswith("RIPARR_PORT="):
-                        port = int(line.split("=", 1)[1].strip())
-            cfg = armbian.cfg_from_custom_toml(args.toml, port)
+        if args.makemkv and os.path.isdir(args.makemkv):
+            publish(st, phase="extras", message="Copying MakeMKV onto the card")
+            try:
+                armbian.copy_makemkv(rootpart, args.makemkv)
+            except Exception as e:
+                publish(st, phase="extras",
+                        message="Could not copy MakeMKV onto the card", detail=str(e))
+                time.sleep(1.5)
+    except Exception as e:
+        publish(st, phase="error",
+                message="The card was written, but could not be configured.",
+                detail=str(e))
+        return 1
+    return 0
 
-            # Prefer the raw node -- it is much faster for the MakeMKV copy -- but fall
-            # back to the buffered one. Raw devices on macOS demand aligned IO, and this
-            # path has never been exercised on hardware, so it does not get to be the
-            # single point of failure.
-            rootpart = None
-            first_err = None
-            for cand in ([raw] if os.path.exists(raw) else []) + \
-                        ([base] if os.path.exists(base) else []):
-                try:
-                    armbian.provision(cand, cfg)
-                    rootpart = cand
-                    break
-                except Exception as e:
-                    first_err = first_err or e
-            if rootpart is None:
-                raise first_err or RuntimeError("no usable partition device")
 
-            failed = [lbl for lbl, ok, _ in armbian.verify(rootpart, cfg) if not ok]
-            if failed:
-                publish(st, phase="error",
-                        message="Settings did not verify after writing.",
-                        detail="These did not read back correctly:\n  "
-                               + "\n  ".join(failed))
-                return 1
-
-            if args.makemkv and os.path.isdir(args.makemkv):
-                publish(st, phase="extras", message="Copying MakeMKV onto the card")
-                try:
-                    armbian.copy_makemkv(rootpart, args.makemkv)
-                except Exception as e:
-                    # Not fatal: the packages can still be copied over later by hand.
-                    publish(st, phase="extras",
-                            message="Could not copy MakeMKV onto the card", detail=str(e))
-                    time.sleep(1.5)
-        except Exception as e:
-            publish(st, phase="error",
-                    message="The card was written, but could not be configured.",
-                    detail=str(e))
-            return 1
-
-        subprocess.run(["sync"])
-        publish(st, phase="eject", message="Ejecting")
-        subprocess.run(["diskutil", "eject", dev], capture_output=True)
-        publish(st, phase="done", written=written, total=total,
-                message="Your Riparr card is ready")
-        return 0
-
-    # diskutil remounts the FAT32 boot partition on its own once the write settles.
+def _provision_fat(args, dev, partno, st):
+    """Raspberry Pi style, and what the Riparr image will be: drop files onto the FAT
+    boot partition. This is the path that works the same on all three operating systems,
+    which is the entire argument behind D25.
+    """
     publish(st, phase="mount", message="Waiting for the boot partition")
-    boot = None
-    for _ in range(40):
-        mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
-        for line in mounts.splitlines():
-            if "msdos" in line and "/Volumes/" in line and args.dev in line:
-                boot = line.split(" on ")[1].split(" (")[0]
-                break
-        if boot:
-            break
-        time.sleep(1.5)
-    if not boot:
-        # Some readers omit the device from the mount line, so fall back to scanning FAT
-        # volumes — but ONLY ones that actually look like a freshly written Pi boot
-        # partition. The old code took any msdos volume, which on a machine with a camera
-        # card or USB stick attached would have written custom.toml (containing the
-        # derived Wi-Fi PSK and the account password hash) onto unrelated removable media.
-        mounts = subprocess.run(["mount"], capture_output=True, text=True).stdout
-        for line in mounts.splitlines():
-            if "msdos" not in line or "/Volumes/" not in line:
-                continue
-            cand = line.split(" on ")[1].split(" (")[0]
-            if not _looks_like_pi_boot(cand):
-                continue
-            boot = cand
-            break
+    hostos.rescan_partitions(dev)
+    boot, release, why = hostos.mount_boot(dev, partno)
     if not boot:
         publish(st, phase="error",
                 message="The card was written, but its boot partition never mounted.",
-                detail="Unplug and replug the card, then use Apply settings only.")
+                detail=why)
         return 1
 
-    publish(st, phase="provision", message="Applying your settings")
-    dest = os.path.join(boot, "custom.toml")
-    with open(args.toml) as f:
-        body = f.read()
-    with open(dest, "w") as f:
-        f.write(body)
-    subprocess.run(["sync"])
+    try:
+        publish(st, phase="provision", message="Applying your settings")
+        with open(args.toml) as f:
+            body = f.read()
+        dest = os.path.join(boot, "custom.toml")
+        with open(dest, "w") as f:
+            f.write(body)
+        hostos.flush()
 
-    # Read it back. A FAT32 write that returns success is not proof of a good file,
-    # and this one file is the difference between a box that joins the network and a
-    # box that needs re-flashing.
-    with open(dest) as f:
-        if f.read() != body:
-            publish(st, phase="error",
-                    message="Settings did not verify after writing.",
-                    detail="custom.toml read back differently than it was written")
-            return 1
+        # Read it back. A FAT32 write that returns success is not proof of a good file,
+        # and this one file is the difference between a box that joins the network and a
+        # box that needs re-flashing.
+        with open(dest) as f:
+            if f.read() != body:
+                publish(st, phase="error",
+                        message="Settings did not verify after writing.",
+                        detail="custom.toml read back differently than it was written")
+                return 1
 
-    # Carry MakeMKV across on the card itself. It is ~25 MB against a 512 MiB boot
-    # partition, and it removes an scp step from the first session. The service looks
-    # for /boot/firmware/makemkv before it tries to download anything.
-    if args.makemkv and os.path.isdir(args.makemkv):
-        publish(st, phase="extras", message="Copying MakeMKV onto the card")
-        dest = os.path.join(boot, "makemkv")
-        try:
-            os.makedirs(dest, exist_ok=True)
-            for name in sorted(os.listdir(args.makemkv)):
-                if not name.endswith(".tar.gz"):
-                    continue
-                src = os.path.join(args.makemkv, name)
-                with open(src, "rb") as a, open(os.path.join(dest, name), "wb") as b:
-                    while True:
-                        chunk = a.read(4 << 20)
-                        if not chunk:
-                            break
-                        b.write(chunk)
-            subprocess.run(["sync"])
-        except OSError as e:
-            # Not fatal: the packages can still be copied over later by hand.
-            publish(st, phase="extras",
-                    message="Could not copy MakeMKV onto the card", detail=str(e))
-            time.sleep(1.5)
+        if args.makemkv and os.path.isdir(args.makemkv):
+            _copy_makemkv(os.path.join(boot, "makemkv"), args.makemkv, st)
 
-    if args.conf:
-        with open(os.path.join(boot, "riparr.conf"), "w") as f:
-            f.write(open(args.conf).read())
-        subprocess.run(["sync"])
-
-    publish(st, phase="eject", message="Ejecting")
-    subprocess.run(["diskutil", "eject", dev], capture_output=True)
-
-    publish(st, phase="done", written=written, total=total,
-            message="Your Riparr card is ready")
+        if args.conf:
+            with open(os.path.join(boot, "riparr.conf"), "w") as f:
+                f.write(open(args.conf).read())
+            hostos.flush()
+    finally:
+        # Whatever happened, give the volume back. On Linux this is our own mount in a
+        # temp directory and leaving it behind would hold the card open for good.
+        release()
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--image", required=True)
-    ap.add_argument("--dev", required=True, help="diskN (no /dev prefix)")
+    ap.add_argument("--dev", required=True,
+                    help=r"whole-disk identifier: disk4, sdb, \\.\PHYSICALDRIVE2")
     ap.add_argument("--toml", required=True)
     ap.add_argument("--progress", required=True)
     ap.add_argument("--total", type=int, default=0)
@@ -557,7 +450,10 @@ def main():
                     help="read the card back after writing and compare")
     args = ap.parse_args()
 
-    if not args.dev.startswith("disk") or "/" in args.dev:
+    # The device identifier arrives from a GUI that already validated it, and is about
+    # to be handed to something that writes raw sectors. It is checked again here,
+    # against a per-platform whitelist, because this is the process with the privilege.
+    if not hostos.valid_device_id(args.dev):
         print("refusing: bad device identifier", file=sys.stderr)
         return 2
     try:

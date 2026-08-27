@@ -22,12 +22,17 @@ import shutil
 import subprocess
 import tempfile
 
-# Homebrew keeps e2fsprogs keg-only, so it is not on PATH by default.
+# Homebrew keeps e2fsprogs keg-only, so it is not on PATH by default. On Linux it is in
+# every distribution and lives in an sbin that an unprivileged PATH often omits -- which
+# is the same problem from the other direction, so both are listed rather than trusting
+# `which`. There is no entry for Windows because there is no debugfs for Windows; see
+# `core.missing_tools`, which refuses that combination before the card is touched.
 DEBUGFS_CANDIDATES = [
-    "/opt/homebrew/opt/e2fsprogs/sbin/debugfs",
-    "/usr/local/opt/e2fsprogs/sbin/debugfs",
+    "/opt/homebrew/opt/e2fsprogs/sbin/debugfs",     # macOS, Apple silicon
+    "/usr/local/opt/e2fsprogs/sbin/debugfs",        # macOS, Intel
     "/opt/homebrew/sbin/debugfs",
-    "/sbin/debugfs",
+    "/sbin/debugfs",                                # Linux, most distributions
+    "/usr/sbin/debugfs",                            # Linux, merged-usr
 ]
 
 

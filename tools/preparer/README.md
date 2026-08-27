@@ -12,23 +12,53 @@ From a checkout:
 pip install -r requirements.txt
 python3 shell.py                    # any operating system
 python3 app.py                      # macOS only; the hand-built NSWindow
+python3 selftest.py                 # checks that need no card
 ```
 
-No terminal interaction, no arrow-key menus. On macOS the system asks for your password
-once, in its own dialog, and that single authorization covers writing the image, applying
-your settings and ejecting the card.
+No terminal interaction, no arrow-key menus. The system asks for permission once, in its
+own dialog — the password prompt on macOS, a polkit prompt on Linux, UAC on Windows — and
+that single authorization covers writing the image, applying your settings and ejecting
+the card.
 
-## Two halves, which port very differently
+## Both halves work on all three
 
 **Setting a box up** — finding it on the network, installing Riparr onto it over SSH,
-handing you a browser — is stdlib and SSH, and works on macOS, Windows and Linux.
+handing you a browser — is stdlib and SSH, and has always worked everywhere.
 
-**Writing an SD card** is macOS-only today. `writer.py` speaks `diskutil`,
-`/dev/rdiskN`, macOS's fskit mount daemon, and macOS's rules about which application owns
-removable-media consent; none of that has a tested equivalent elsewhere. `core.host_capabilities()`
-answers this, and the welcome screen greys the card route out with the reason **before**
-anything is chosen — the alternative is failing at the last step with a card possibly half
-written, which is the worst possible place to learn it.
+**Writing an SD card** now does too, as of 2026-08-26. It used to be macOS-only; see
+**D30** for how the split is arranged and **[`docs/design/cross-platform.md`](../../docs/design/cross-platform.md)**
+for how it got there.
+
+> **Verified on macOS, checked but not yet proven on hardware elsewhere.** The macOS path
+> has written cards that booted, and was re-verified end to end after the refactor. The
+> Linux and Windows paths are written and their off-platform-testable logic is covered by
+> `selftest.py`, but neither has yet written a card that then booted a board. If you are
+> the first, the journal would like to hear about it.
+
+`core.host_capabilities()` still answers the question and the welcome screen still greys
+the card route out **with the reason** before anything is chosen — that mechanism (D29) is
+unchanged, it is only the answer that moved. It now reads `hostos.CAN_WRITE`, so an
+operating system with no backend gets the honest refusal instead of a hardcoded platform
+name.
+
+### One thing that is still refused
+
+An **ext4-root image on Windows**: there is no `debugfs` for Windows and no way to mount
+ext4 from it. `core.missing_tools()` says so before the card is touched rather than
+writing 1.5 GB and failing at the last step. This is D25 arriving on schedule — the
+FAT-boot Riparr image makes provisioning a plain file copy everywhere.
+
+## Checks that do not need a card
+
+```sh
+python3 selftest.py
+```
+
+Sector arithmetic, device-name matching, partition classification, command-line quoting.
+It runs on any operating system and checks all three backends, because the pieces most
+likely to corrupt a card silently are the ones that can only be exercised on one platform
+at a time. It also asserts every backend implements the whole `hostos` contract, so a
+half-added platform fails at the desk rather than at the card.
 
 ## What it is
 
@@ -100,13 +130,15 @@ network and a card that has to be redone.
 | `ui/` | The interface. Hosted by either shell, unchanged |
 | `bridge.py` | Every method JavaScript can call. **One copy, both shells** |
 | `core.py` | The rules: PSK derivation, `$6$` hashing, the TOML and conf schemas, disk classification, card sizing. No platform code |
-| `hostos/` | The facts: disks, Wi-Fi, desktop integration. One module per platform |
+| `hostos/` | The facts *and* the actions: disks, Wi-Fi, desktop integration, and every step of the write. One module per platform; the contract is at the top of `__init__.py` |
 | `shell.py` | The window, on **any** OS, via pywebview |
 | `app.py` | The window on macOS, hand-built in AppKit. Being replaced by `shell.py` |
 | `shots.py` | `--shot` fixtures, shared by both shells |
-| `writer.py` | Runs as root. Image write, provisioning, verification, eject. **macOS only so far** |
+| `writer.py` | Runs as root. **The sequence** — image write, provisioning, verification, eject. Names no device path, command or errno |
+| `hostos/_dd.py` | A `dd` subprocess presented as something you can write bytes into. Shared by macOS and Linux |
+| `selftest.py` | Checks that need no card, and the assertion that every backend is complete |
 
-**`core.py` decides; `hostos/` gathers.** Whether a device is a card (D24) is one
+**`core.py` decides; `hostos/` gathers and acts; `writer.py` sequences.** Whether a device is a card (D24) is one
 function applied to all three operating systems, because all three expose the same
 underlying SCSI removable-medium bit under different names — `RemovableMedia` on macOS,
 a `"Removable Media"` MediaType on Windows, `/sys/block/*/removable` on Linux. Adding a
@@ -151,27 +183,43 @@ far is that there is no `.app` bundle.
 
 ## Platform
 
-**This is a macOS application, and always has been.** It is not portable and nothing in
-it is written to be: the window is `NSWindow` + `WKWebView` through PyObjC, the Wi-Fi
-scan is CoreWLAN, disks come from `diskutil` and `ioreg`, elevation is `sudo -A` driven
-by an `osascript` dialog, and the card is written with `dd` to `/dev/rdiskN`. The
-appliance is Linux and the web interface is a browser, so **the Preparer is the only
-component with an operating system in it** — which also makes it the only thing standing
-between a non-Mac owner and a working Riparr.
+**This started as a macOS application and grew out of it.** The appliance is Linux and
+the web interface is a browser, so **the Preparer is the only component with an operating
+system in it** — which made it the only thing standing between a non-Mac owner and a
+working Riparr, and is why it stopped being macOS-only.
+
+Nothing platform-specific is written twice. `ui/` is hosted by the operating system's own
+web view through pywebview; `core.py` holds the rules; `hostos/` holds every fact and
+every action that differs; `writer.py` holds the order they happen in.
+
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| **Window** | `shell.py` (pywebview → WKWebView), or `app.py`'s hand-built `NSWindow` | `shell.py` → WebKitGTK | `shell.py` → WebView2 |
+| **Disks** | `diskutil`, `ioreg` | `lsblk -J -b -O` | CIM (`MSFT_Disk` + `Win32_DiskDrive`) |
+| **Wi-Fi** | CoreWLAN, keychain | `nmcli` | `netsh` |
+| **Elevation** | `sudo -A` + osascript | `pkexec`, or `sudo -A` + zenity | UAC (`ShellExecuteExW`) |
+| **Write** | `dd` → `/dev/rdiskN` | `dd conv=fsync` → `/dev/sdX` | own sink → `\\.\PHYSICALDRIVEn` |
+| **ext4 provisioning** | `debugfs` (Homebrew) | `debugfs` (e2fsprogs) | **refused up front** — no debugfs exists |
+| **Verified on hardware** | **Yes** — macOS 26.6.1, Apple Silicon | Not yet | Not yet |
 
 | | |
 |---|---|
-| **Runs on** | macOS only |
 | **Floor** | macOS 13 Ventura — set by CSS `color-mix()` (WebKit 16.2) in `ui/app.css`. macOS 12 works only with a current Safari, since WKWebView uses the system WebKit. **Derived from feature availability, not tested** — this has only ever run on macOS 26. |
 | **Architecture** | Intel and Apple Silicon. Both Homebrew prefixes are searched; no arch-specific paths. |
 | **Python** | 3.9, which is what macOS ships. Every module compiles under it, so no user-installed Python is needed. |
-| **Verified on** | macOS 26.6.1, Apple Silicon |
 
-### One tool macOS does not ship
+### One tool macOS does not ship — and Windows cannot have
 
-`debugfs` (e2fsprogs) is **Homebrew-only**, and keg-only, so it is not even linked onto
-`PATH`. It is needed because the Armbian image is a single ext4 partition and macOS
-cannot mount ext4 — see `armbian.py`.
+`debugfs` (e2fsprogs) is **Homebrew-only** on macOS, and keg-only, so it is not even
+linked onto `PATH`. It is needed because the Armbian image is a single ext4 partition and
+macOS cannot mount ext4 — see `armbian.py`. On Linux it is in every distribution, in an
+`sbin` that an unprivileged `PATH` often omits, which is the same problem from the other
+direction; both are resolved by absolute path.
+
+**On Windows there is no answer at all**, so there is no port. `core.missing_tools()`
+refuses an ext4-root image on Windows before the card is touched, and names the reason.
+That refusal is the clearest statement of why the FAT-boot Riparr image (D25) has to
+exist: it turns provisioning into a file copy on all three.
 
 `xz` used to be here too, and is gone: both uses moved to the **stdlib `lzma` module**,
 which links the same liblzma macOS already ships inside libarchive.
