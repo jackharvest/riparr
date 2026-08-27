@@ -126,9 +126,13 @@ jobs:
             # to _MEIPASS at runtime, so there is nothing on disk to stat. PyInstaller's
             # own table of contents is the record of what it collected.
             echo "one-file build: checking PyInstaller's TOC"
-            toc=$(find tools/preparer/build -name "*.toc" | head -20)
-            [ -n "$toc" ] || { echo "::error::no PyInstaller TOC to check"; exit 1; }
-            norm=$(cat $toc | tr '\\' '/')
+            # -exec cat {} + rather than $(find ...) unquoted: the build directory is
+            # named after the app, which has a space in it. The TOC is a Python repr, so
+            # a Windows path arrives with its backslashes already doubled and tr turns
+            # those into '//' -- hence the squeeze.
+            norm=$(find tools/preparer/build -name "*.toc" -exec cat {} + \
+                   | tr '\\' '/' | tr -s '/')
+            [ -n "$norm" ] || { echo "::error::no PyInstaller TOC to check"; exit 1; }
             for f in $NEED; do
               if printf '%s' "$norm" | grep -q "payload/$f"; then echo "ok  $f"
               else echo "::error::payload is missing $f"; fail=1; fi
