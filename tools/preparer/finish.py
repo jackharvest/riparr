@@ -36,7 +36,18 @@ import time
 from collections import deque
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+
+
+def _default_repo():
+    """The tree to install from -- the checkout, or the copy inside the packaged app."""
+    try:
+        import core
+        return core.payload_root()
+    except Exception:
+        return os.path.abspath(os.path.join(HERE, "..", ".."))
+
+
+REPO = _default_repo()
 
 # Kept short enough that a stalled step is obvious rather than mysterious, and long
 # enough that a slow board is not mistaken for a broken one. pip on a 1 GB A53 is the

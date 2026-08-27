@@ -833,6 +833,45 @@ def image_layout(path):
     return "unknown"
 
 
+def payload_root():
+    """The Riparr tree that stage 2 sends to the box.
+
+    From a checkout this is the checkout itself, which is what someone working on Riparr
+    means by "install it" -- their tree, not whatever `main` happens to be today.
+
+    From the packaged app there is no checkout, so the tree is carried *inside* the
+    bundle. It has to be: `finish.py` streams a directory over SSH and then runs
+    `tools/install.sh` inside it, and a bundle without that file produced a stage 2 that
+    could not work at all -- the downloaded Preparer wrote a perfect card and then had
+    nothing to install. install.sh can clone from GitHub when it finds no tree beside
+    it, but that fallback is unreachable when the script itself never arrives.
+
+    Shipping the tree rather than fetching it also means the Preparer installs exactly
+    the appliance it was built alongside, instead of whichever release is newest by the
+    time somebody runs it.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "payload")
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                        "..", ".."))
+
+
+def payload_ok(root=None):
+    """Whether the tree that would be sent can actually install. (ok, what is missing).
+
+    Checked before the box is touched, for the same reason `missing_tools` is checked
+    before the card is: a stage 2 that fails after the card is written and the board has
+    booted is a failure the user cannot act on.
+    """
+    root = root or payload_root()
+    needed = [os.path.join("server", "riparr", "main.py"),
+              os.path.join("server", "requirements.txt"),
+              os.path.join("tools", "install.sh"),
+              os.path.join("packaging", "riparr.service")]
+    missing = [n for n in needed if not os.path.exists(os.path.join(root, n))]
+    return (not missing), missing
+
+
 def missing_tools(image=None):
     """Everything this write needs that is not here. Checked *before* the prompt.
 

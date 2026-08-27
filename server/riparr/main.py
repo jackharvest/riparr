@@ -1476,11 +1476,55 @@ def config_export(user=Depends(require_user)):
 
 @app.post("/api/config/import")
 async def config_import(request: Request, user=Depends(require_user)):
+    """Restore settings *and* shares, and say plainly what could not be restored.
+
+    This used to import settings, ignore the `shares` list it had itself exported, and
+    answer `{"ok": true}` -- so restoring onto a fresh box looked like it had worked,
+    and the share, which is the one thing without which nothing rips, was quietly not
+    there.
+
+    Share passwords are deliberately not exported, so a restored share arrives without
+    one and is reported as needing it rather than being silently created broken. That
+    keeps the export file from being a credential for your NAS on top of everything else
+    it already carries.
+    """
     body = await request.json()
-    for k, v in (body.get("settings") or {}).items():
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected an object")
+
+    settings = body.get("settings") or {}
+    for k, v in settings.items():
         if k != "session_secret":
             db.set(k, v)
-    return {"ok": True}
+
+    # Registering the key is not a db.set -- see put_settings.
+    if "makemkv_key" in settings:
+        MK.apply_key(settings["makemkv_key"])
+        MK.record_expiry_for(settings["makemkv_key"])
+
+    existing = {(s["host"], s["path"]) for s in db.list_shares()}
+    restored, need_password = [], []
+    for sh in (body.get("shares") or []):
+        host, path = sh.get("host"), sh.get("path")
+        if not host or not path or (host, path) in existing:
+            continue
+        db.add_share(sh.get("name") or "%s/%s" % (host, path), host, path,
+                     sh.get("username") or "", "",
+                     make_default=bool(sh.get("is_default")))
+        existing.add((host, path))
+        restored.append("%s/%s" % (host, path))
+        need_password.append("%s/%s" % (host, path))
+
+    parts = ["%d setting%s restored" % (len(settings), "" if len(settings) == 1 else "s")]
+    if restored:
+        parts.append("%d share%s restored" % (len(restored),
+                                              "" if len(restored) == 1 else "s"))
+    if need_password:
+        parts.append("re-enter the password for %s before it can be used"
+                     % ", ".join(need_password))
+    return {"ok": True, "settings_imported": len(settings),
+            "shares_restored": restored, "shares_need_password": need_password,
+            "message": ". ".join(parts) + "."}
 
 
 # ──────────────────── system: tasks, events, logs, backups ────────────────────
