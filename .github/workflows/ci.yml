@@ -1,0 +1,88 @@
+# The cheap checks, on every push.
+#
+# There is no test suite yet and this does not pretend there is one. What it does is
+# catch the three ways this repository has actually broken: a Python file that no longer
+# parses, a JavaScript file with an unbalanced template literal (the whole interface is
+# template literals, and one bad backtick blanks every page), and a shell script with a
+# syntax error — which for the installer means a box that will not install.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python parses
+        run: |
+          python -m compileall -q server/riparr tools/preparer tools/flasher
+
+      - name: JavaScript parses
+        run: |
+          for f in server/static/app.js server/static/icons.js \
+                   tools/preparer/ui/app.js tools/preparer/ui/bridge-shim.js; do
+            node --check "$f" && echo "ok  $f"
+          done
+
+      - name: Shell parses
+        run: |
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" && echo "ok  $f"
+          done
+
+      - name: systemd units are well formed
+        run: |
+          # No systemd-analyze on the runner for a unit that names paths which do not
+          # exist here, so this is the shape check: every unit has a [Unit] section and
+          # every .path has a [Path] with something to watch.
+          fail=0
+          for f in $(git ls-files 'packaging/*.service' 'packaging/*.path'); do
+            grep -q '^\[Unit\]' "$f" || { echo "no [Unit] in $f"; fail=1; }
+            case "$f" in
+              *.path) grep -qE '^Path(Exists|Changed|Modified|ExistsGlob)=' "$f" \
+                        || { echo "no Path*= in $f"; fail=1; } ;;
+              *.service) grep -q '^\[Service\]' "$f" \
+                        || { echo "no [Service] in $f"; fail=1; } ;;
+            esac
+            echo "ok  $f"
+          done
+          exit $fail
+
+      - name: The MakeMKV manifest is readable and pinned
+        run: |
+          python - <<'PY'
+          import json
+          m = json.load(open("packaging/makemkv-manifest.json"))
+          assert m["packages"], "no packages"
+          for p in m["packages"]:
+              assert len(p["sha256"]) == 64, p["name"]
+              assert p["urls"], p["name"]
+              print(p["name"], len(p["urls"]), "sources")
+          PY
+
+      - name: The service starts and answers
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q -r server/requirements.txt
+          cd server
+          RIPARR_DB=/tmp/ci.db /tmp/venv/bin/python -m uvicorn riparr.main:app \
+            --host 127.0.0.1 --port 9797 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:9797/api/status >/dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9797/api/status | head -c 200; echo
+          curl -fsS http://127.0.0.1:9797/api/setup/state
