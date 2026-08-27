@@ -126,50 +126,48 @@ jobs:
       # packaged, signed, published and downloaded before anyone noticed that stage 2
       # had nothing to install -- so the presence of the payload is now a release gate
       # rather than something to discover on somebody else's Mac.
+      # Written in Python, not shell. The shell version spent four release cycles
+      # disagreeing with its own diagnostics: the TOC is a Python repr full of escaped
+      # backslashes, and normalising that through tr and matching it through grep was
+      # three layers of quoting to get wrong at once. Python reads the file and does a
+      # substring test.
       - name: The bundle carries the appliance it installs
         shell: bash
         run: |
-          set -e
-          NEED="server/riparr/main.py server/requirements.txt tools/install.sh packaging/riparr.service"
-          fail=0
+          python - <<'PY'
+          import glob, os, sys
 
-          root=$(find tools/preparer/dist -type d -name payload -print -quit || true)
-          if [ -n "$root" ]; then
-            # One-directory build: the files are on disk, so look at them.
-            echo "checking the unpacked bundle at $root"
-            for f in $NEED; do
-              if [ -f "$root/$f" ]; then echo "ok  $f"
-              else echo "::error::payload is missing $f"; fail=1; fi
-            done
-          else
-            # One-file build (Windows): --add-data lives inside the .exe and is unpacked
-            # to _MEIPASS at runtime, so there is nothing on disk to stat. PyInstaller's
-            # own table of contents is the record of what it collected.
-            echo "one-file build: checking PyInstaller's TOC"
-            # -exec cat {} + rather than $(find ...) unquoted: the build directory is
-            # named after the app, which has a space in it. The TOC is a Python repr, so
-            # a Windows path arrives with its backslashes already doubled and tr turns
-            # those into '//' -- hence the squeeze.
-            norm=$(find tools/preparer/build -name "*.toc" -exec cat {} + \
-                   | tr '\\' '/' | tr -s '/')
-            [ -n "$norm" ] || { echo "::error::no PyInstaller TOC to check"; exit 1; }
-            for f in $NEED; do
-              if printf '%s' "$norm" | grep -q "payload/$f"; then echo "ok  $f"
-              else echo "::error::payload is missing $f"; fail=1; fi
-            done
-            if [ $fail -ne 0 ]; then
-              # A gate that fails should say what it looked at, not just that it
-              # disagreed. Every previous failure here cost a full release cycle to
-              # diagnose because it printed nothing.
-              echo "--- payload entries the TOC does contain ---"
-              printf '%s' "$norm" | grep -o "payload[^']*" | sort -u | head -30
-              echo "--- a sample of collected data entries ---"
-              printf '%s' "$norm" | grep -o "('[^']*', '[^']*', 'DATA')" | head -10
-              echo "--- toc files read ---"
-              find tools/preparer/build -name "*.toc"
-            fi
-          fi
-          exit $fail
+          NEED = ["server/riparr/main.py", "server/requirements.txt",
+                  "tools/install.sh", "packaging/riparr.service"]
+
+          # One-directory build: the files are on disk, so look at them.
+          dirs = [d for d in glob.glob("tools/preparer/dist/**/payload", recursive=True)
+                  if os.path.isdir(d)]
+          if dirs:
+              root = dirs[0]
+              print("checking the unpacked bundle at", root)
+              missing = [f for f in NEED if not os.path.isfile(os.path.join(root, *f.split("/")))]
+          else:
+              # One-file build: --add-data lives inside the .exe and is unpacked to
+              # _MEIPASS at runtime, so nothing is on disk. PyInstaller's own table of
+              # contents is the record of what it collected.
+              tocs = glob.glob("tools/preparer/build/**/*.toc", recursive=True)
+              if not tocs:
+                  print("::error::no PyInstaller TOC to check")
+                  sys.exit(1)
+              print("one-file build: checking", len(tocs), "TOC files")
+              blob = ""
+              for t in tocs:
+                  with open(t, encoding="utf-8", errors="replace") as fh:
+                      blob += fh.read()
+              # In the repr a Windows separator is written as two characters.
+              blob = blob.replace("\\\\", "/").replace("\\", "/")
+              missing = [f for f in NEED if ("payload/" + f) not in blob]
+
+          for f in NEED:
+              print(("::error::payload is missing " if f in missing else "ok  ") + f)
+          sys.exit(1 if missing else 0)
+          PY
 
       # PyInstaller's command line cannot set CFBundleShortVersionString, so the bundle
       # reported 0.0.0 in Get Info and in the version picker of anything that reads it.
