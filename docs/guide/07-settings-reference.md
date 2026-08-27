@@ -33,7 +33,7 @@ the only recurring chore in the entire product.
 
 > MakeMKV is made by GuinpinSoft, not by Riparr, and its licence agreement is between
 > you and them. Riparr asks you to read and accept it during setup, then downloads and
-> installs it for you. See [D14](../../DECISIONS.md).
+> installs it for you.
 
 **makemkv.com goes down for weeks at a time**, so Riparr does not depend on it. It tries
 makemkv.com first, then Launchpad's `~heyarje/makemkv-beta` PPA, then the Internet

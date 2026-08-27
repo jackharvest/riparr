@@ -8,7 +8,7 @@
 
 | Part | Notes |
 |---|---|
-| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. See [board support](../design/board-support.md). Whichever you pick, the Preparer downloads the right OS for it. |
+| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. Whichever you pick, the Preparer downloads the right OS for it. |
 | **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most. |
 | **microSD card** | 32GB for DVDs, 128GB for Blu-ray, 256GB for 4K. See [which card](#which-card). |
 | **USB-C power supply** | 30W for a Slim build, 100W PD for a Full build. |
@@ -82,7 +82,7 @@ the box's own diagnosis cannot disagree.
 
 **"USB to SATA" on a listing says nothing about optical-drive support.** Many adapters in
 this class carry an explicit *"Do NOT support BLU-RAY, CD-ROM, DVD-ROM"* warning. The
-bridge must **name** optical/ATAPI support — see [hardware notes](../design/hardware.md).
+bridge must **name** optical/ATAPI support.
 A drive that is natively USB skips this problem entirely.
 
 ## Which card
@@ -104,7 +104,7 @@ failing partway through.
 > follow the file out to your library as MakeMKV writes it, which would make any card size
 > work for any disc. It is designed and not built: it depends on a question about MakeMKV's
 > output that needs a disc and a working drive to answer. Until then the numbers above are
-> what the box actually does. See [risks](../design/risks.md) R8.
+> what the box actually does.
 
 Two card notes:
 

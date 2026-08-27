@@ -5,10 +5,13 @@
 # and the point of building it here rather than asking people to install Python is that
 # nobody should need a toolchain to write an SD card.
 #
-# Card writing is macOS-only today (see core.host_capabilities): writer.py speaks
-# diskutil and /dev/rdiskN. The Windows and Linux builds still do the longer half --
-# find the box, install Riparr on it over SSH, finish in a browser -- and say so on
-# their first screen rather than failing at the last step.
+# Each build is packaged the way its own platform expects a program to arrive: a .dmg
+# you drag into Applications, a single .exe you double-click, a .tar.gz you unpack.
+# Handing somebody a zip of a directory and calling it an app is how this used to work
+# and it asked them to know things they should not have to know.
+#
+# The Windows and Linux downloads carry `-beta` in the name. Card writing works on all
+# three, but only macOS has produced a card that went on to boot a board.
 name: Release
 
 on:
@@ -38,14 +41,19 @@ jobs:
           - os: windows-latest
             label: Windows (x64)
             artifact: riparr-preparer-windows-beta
+            # One file, so what lands in Downloads is the program itself rather than a
+            # folder of DLLs with an .exe somewhere inside it. It costs a second or two
+            # of start-up while PyInstaller unpacks, which is a fair trade for something
+            # run once per card.
+            onefile: "--onefile"
           - os: ubuntu-latest
             label: Linux (x64)
             artifact: riparr-preparer-linux-beta
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -76,29 +84,34 @@ jobs:
           # runtime, so static analysis does not find it and the bundle starts, opens
           # nothing, and exits 0.
           pyinstaller --noconfirm --clean --windowed --name "Riparr Preparer" \
+            ${ONEFILE} \
             --collect-all webview \
             --add-data "ui${PATHSEP:-:}ui" \
             --add-data "hostos${PATHSEP:-:}hostos" \
             shell.py
         env:
           PATHSEP: ${{ runner.os == 'Windows' && ';' || ':' }}
+          ONEFILE: ${{ matrix.onefile }}
 
-      # A directory is not something anyone can download and double-click, and macOS
-      # strips the quarantine-safe structure out of a plain zip of a .app made by some
-      # tools. `ditto` keeps the bundle intact.
+      # A .dmg with an Applications symlink in it, which is the gesture every Mac user
+      # already knows. UDZO compresses it; -ov because a re-run must not stop to ask.
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
           cd tools/preparer/dist
-          ditto -c -k --sequesterRsrc --keepParent "Riparr Preparer.app" \
-            "../../../riparr-preparer-macos.zip"
+          mkdir -p dmg
+          cp -R "Riparr Preparer.app" dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Riparr Preparer" -srcfolder dmg \
+            -ov -format UDZO "$GITHUB_WORKSPACE/riparr-preparer-macos.dmg"
 
+      # --onefile already produced exactly one file. Renaming it is the whole job.
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "tools/preparer/dist/Riparr Preparer/*" `
-            -DestinationPath "riparr-preparer-windows-beta.zip"
+          Move-Item "tools/preparer/dist/Riparr Preparer.exe" `
+            "riparr-preparer-windows-beta.exe"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -124,11 +137,12 @@ jobs:
           print('boards:', len(boards.all_boards()))
           "
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: |
-            riparr-preparer-*.zip
+            riparr-preparer-*.dmg
+            riparr-preparer-*.exe
             riparr-preparer-*.tar.gz
           if-no-files-found: error
 
@@ -138,8 +152,8 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -150,10 +164,13 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
-          draft: true
+          draft: false
+          # Pre-1.0, with two of the three platforms still beta. Marking it a
+          # pre-release is the honest label and it stays fully downloadable.
+          prerelease: true
           generate_release_notes: true
           body: |
             ## Riparr ${{ github.ref_name }}
@@ -161,15 +178,20 @@ jobs:
             **Download the Preparer for your computer**, then follow
             [the guide](docs/guide/README.md).
 
-            | | |
-            |---|---|
-            | macOS | `riparr-preparer-macos.zip` |
-            | Windows | `riparr-preparer-windows-beta.zip` |
-            | Linux | `riparr-preparer-linux-beta.tar.gz` |
+            | | | |
+            |---|---|---|
+            | macOS | `riparr-preparer-macos.dmg` | Open it, drag Riparr Preparer to Applications |
+            | Windows | `riparr-preparer-windows-beta.exe` | Double-click it |
+            | Linux | `riparr-preparer-linux-beta.tar.gz` | Unpack and run `Riparr Preparer` |
 
-            Writing an SD card now works on all three. The Windows and Linux builds
-            are marked **beta** in their filenames: same code path, verified as it
-            writes and read back before it is called done, but nobody has yet confirmed
-            a card written on those two that went on to boot a board. Reports welcome.
+            Writing an SD card works on all three. The Windows and Linux downloads say
+            **beta** in the name: same code, and the card is verified as it is written
+            and read back and compared before it is called done — but nobody has yet
+            confirmed a card written on those two that went on to boot a board. If you
+            do, [say so](../../issues); that is what takes them off beta.
+
+            None of these are code-signed, so both macOS and Windows will warn you the
+            first time. On macOS, right-click the app and choose Open. On Windows,
+            More info → Run anyway.
 
             Checksums are in `SHA256SUMS.txt`.

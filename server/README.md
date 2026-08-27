@@ -34,7 +34,7 @@ All colour resolves through **theme.park**'s custom-property contract, so a user
 theming their *arr stack themes Riparr for free. Eleven palettes ship, totalling 14 KB.
 
 > **`servarr.css` carries Sonarr's exact palette and dimensions, and Sonarr is GPL-3.0.**
-> See [D12](../DECISIONS.md) — the licensing consequence is unresolved and deliberately
+> The licensing consequence is unresolved and deliberately
 > confined to that one file plus a handful of constants in `app.css`.
 
 ## Two things worth knowing

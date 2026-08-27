@@ -26,8 +26,7 @@ the card.
 handing you a browser — is stdlib and SSH, and has always worked everywhere.
 
 **Writing an SD card** now does too, as of 2026-08-26. It used to be macOS-only; see
-**D30** for how the split is arranged and **[`docs/design/cross-platform.md`](../../docs/design/cross-platform.md)**
-for how it got there.
+the design notes for how the split is arranged and how it got there.
 
 > **Verified on macOS, checked but not yet proven on hardware elsewhere.** The macOS path
 > has written cards that booted, and was re-verified end to end after the refactor. The
@@ -117,7 +116,7 @@ startup disk is never in the list at all. Prior art and the full rule: **D24**.
 **It tells you what a card size actually buys.** Under D11 every size rips every disc,
 4K included — what a bigger card buys is early eject and batch feeding. The panel on the
 card screen is computed by `core.size_guide()` from the same constants as the rest of the
-design, so it cannot drift away from `docs/design/storage-sizing.md`.
+design, so it cannot drift away from the sizing notes.
 
 **It verifies the settings file after writing it.** A FAT32 write returning success is not
 proof of a good file, and `custom.toml` is the difference between a box that joins your
@@ -176,7 +175,7 @@ Use [`tools/flasher/`](../flasher/README.md) instead. It takes `--ssid`, `--disk
 
 ## Scenarios
 
-[`docs/design/scenarios-preparer.md`](../../docs/design/scenarios-preparer.md) walks
+The scenario walkthrough covers
 thirty-five things a person does between opening the app and having a browser open on
 their box, with a verdict against the code for each. Four are still open; the largest by
 far is that there is no `.app` bundle.
@@ -248,7 +247,7 @@ authorization dialog, with the reason and the command that fixes it.
 MBR through `lzma` — no external tool, so the check works on the machine being diagnosed.
 
 > **`debugfs` has no stdlib equivalent**, and it is the hardest thing to carry to Windows.
-> [`docs/design/cross-platform.md`](../../docs/design/cross-platform.md) sets out the
+> The cross-platform notes set out the
 > three ways out, of which giving the image a FAT boot partition is the one that deletes
 > the problem rather than porting it.
 
@@ -271,7 +270,7 @@ enabled-unit symlink, the root SSH key and its mode, the port in `/boot/riparr.c
 `/root/.not_logged_in_yet` removed. The write only reports `done` if all fifteen pass.
 
 Not yet exercised: the second half — find, connect, install — because the board is
-unplugged waiting on a USB-to-SATA adapter. See [`JOURNAL.md`](../../JOURNAL.md).
+unplugged waiting on a USB-to-SATA adapter.
 
 ---
 

@@ -30,3 +30,13 @@ tools/preparer/dist/
 
 # ── macOS ─────────────────────────────────────────────────────────────
 .DS_Store
+
+# ── Kept, but not published ───────────────────────────────────────────
+# The decision log, the working journal and the design notes are the record of how this
+# was built and why. They stay on disk and out of the repository: they are working
+# notes, not documentation, and publishing them puts the process on show rather than
+# the product. A copy lives in ~/riparr-private-docs.
+JOURNAL.md
+DECISIONS.md
+server/DECISIONS.md
+docs/design/

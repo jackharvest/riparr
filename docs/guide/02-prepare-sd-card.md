@@ -15,14 +15,20 @@ your network in before the card ever boots, and downloads the right operating sy
 whichever board you have — so the box comes up on your network by itself the first time you
 plug it in.
 
-**Download it from [Releases](../../../../releases)** and open it — there is no installer
-and nothing to configure. Pick the file for your computer:
+**Download it from [Releases](../../../../releases)** and open it — there is nothing to
+configure. Pick the file for your computer:
 
-| | |
-|---|---|
-| macOS | `riparr-preparer-macos.zip` |
-| Windows | `riparr-preparer-windows.zip` |
-| Linux | `riparr-preparer-linux.tar.gz` |
+| | | |
+|---|---|---|
+| macOS | `riparr-preparer-macos.dmg` | Open it, drag **Riparr Preparer** to Applications |
+| Windows | `riparr-preparer-windows-beta.exe` | Double-click it |
+| Linux | `riparr-preparer-linux-beta.tar.gz` | Unpack it and run **Riparr Preparer** |
+
+> **It isn't code-signed, so your computer will warn you the first time.** Riparr is a
+> one-person project and a signing certificate is a yearly fee from Apple and from
+> Microsoft. On macOS, right-click the app and choose **Open**. On Windows, click
+> **More info** then **Run anyway**. Check the download against `SHA256SUMS.txt` on the
+> release if you would rather verify it than trust it.
 
 From a checkout instead, `python3 tools/preparer/shell.py` is the same app.
 
@@ -31,7 +37,7 @@ A window opens and walks you through it:
 **1. Pick your board.** The first thing on the card screen is a **Board** dropdown. Choose
 the one you have. It decides which operating system gets written — the Orange Pi Zero 2W is
 the default and the tested board; the others are marked **beta** (they should work, and
-you'd be helping confirm them). See [board support](../design/board-support.md) for the
+you'd be helping confirm them). See the board list in the app for the
 full list.
 
 **2. Download the OS.** If the image for your board isn't already in your build folder, the

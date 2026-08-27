@@ -101,9 +101,9 @@ way to reach somebody who did.
 
 | | |
 |---|---|
-| **A board** | Orange Pi Zero 2W is the reference. [Others are supported](docs/design/board-support.md), some still marked beta |
+| **A board** | Orange Pi Zero 2W is the reference. Others are supported, some still marked beta |
 | **An optical drive** | A USB one, or an internal one plus a bridge that **names** optical/ATAPI support. [This is the part people get wrong](docs/guide/01-what-you-need.md#which-drive) |
-| **An SD card** | 32 GB is enough for DVDs. Blu-ray wants more, or writing straight to your library — [the maths](docs/design/storage-sizing.md) |
+| **An SD card** | 32 GB is enough for DVDs. Blu-ray wants more, or write straight to your library instead |
 | **A network share** | SMB. Any NAS, or a folder shared from a computer that is usually on |
 | **4K UHD?** | That is a *drive* decision, not a setting. [Read this first](docs/guide/01-what-you-need.md#which-drive) |
 
@@ -113,8 +113,7 @@ way to reach somebody who did.
 
 **Riparr rips discs, end to end, on real hardware.** On 2026-08-26 a Blu-ray went in and a
 verified MKV came out on the library share, unattended. Getting there took eleven
-interface bugs in one session, all of them now fixed and written down in
-[`JOURNAL.md`](JOURNAL.md).
+interface bugs in one session, all of them now fixed.
 
 **This is still pre-1.0.** It has run on one board, with one drive, against one NAS. The
 parts most likely to surprise you are the ones that have met the fewest configurations:
@@ -166,18 +165,15 @@ observed rather than by subsystem.
 
 **For anyone working on it:**
 
-| Doc | What's in it |
+| Where | What's in it |
 |---|---|
-| [`DECISIONS.md`](DECISIONS.md) | Every settled decision and why. **Read this first.** |
-| [`JOURNAL.md`](JOURNAL.md) | Where things actually are, and every finding that cost more than ten minutes to discover |
-| [`docs/design/concept.md`](docs/design/concept.md) | What this is for, and the principles that decide arguments |
-| [`docs/design/architecture.md`](docs/design/architecture.md) | Stack, partitions, the rip pipeline |
-| [`docs/design/hardware.md`](docs/design/hardware.md) | BOM, power, thermal, form factors |
-| [`docs/design/board-support.md`](docs/design/board-support.md) | Every supported board, tiered by how much is proven |
-| [`docs/design/risks.md`](docs/design/risks.md) | Open risks and the tests that retire them |
-| [`docs/design/security.md`](docs/design/security.md) | Threat model and pen-test findings |
-| [`docs/design/backlog.md`](docs/design/backlog.md) | What is not built yet |
 | [`server/`](server/) | The appliance service — FastAPI + SQLite, one process |
+| [`tools/preparer/`](tools/preparer/) | The desktop app that writes the card and sets the box up |
+| [`packaging/`](packaging/) | systemd units and the first-boot provisioner |
+
+The design notes, decision log and working journal are kept privately rather than
+published. If a choice here looks arbitrary and you want the reasoning behind it, ask in
+an issue — the answer exists, it just isn't a file in this repository.
 
 ---
 
@@ -195,7 +191,7 @@ Bugs and ideas: [Issues](../../issues).
 
 **Riparr is [GPL-3.0](LICENSE)** — the same licence as Sonarr, Radarr, Lidarr, Prowlarr,
 Readarr and Bazarr, and for the same reason: the interface derives from Sonarr's design
-tokens, and copyleft propagates. See [D12](DECISIONS.md).
+tokens, and copyleft propagates.
 
 You may use, modify and redistribute Riparr. If you redistribute it, modified or not, you
 must ship source under GPL-3.0 too.
@@ -209,7 +205,7 @@ must ship source under GPL-3.0 too.
 | Icons | [Font Awesome Free](https://fontawesome.com/license/free) — CC BY 4.0 · brand marks from [Simple Icons](https://simpleicons.org/) — CC0 |
 | Wordmark face | [Russo One](server/static/fonts/RussoOne-OFL.txt) — SIL OFL 1.1 |
 | Window shell | [pywebview](https://pywebview.flowrl.com/) — BSD-3-Clause |
-| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not distributed with Riparr**; fetched and accepted during setup ([D14](DECISIONS.md)) |
+| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not distributed with Riparr**; fetched and accepted during setup |
 
 Riparr is not affiliated with, endorsed by, or connected to Sonarr, Radarr, GuinpinSoft
 or any other project named here. Those names and logos belong to their respective owners.
@@ -225,14 +221,14 @@ any project you are about to run on your own network.
 
 What that does and does not mean here:
 
-- **Every decision is a human one.** `DECISIONS.md` records what was chosen and why, and
-  each entry was settled by me, not generated. Where the reasoning was mine and the prose
-  was not, the reasoning is still mine.
+- **Every decision is a human one.** I keep a decision log and a working journal, and
+  each entry in them was settled by me, not generated. Where the reasoning was mine and
+  the prose was not, the reasoning is still mine.
 - **Nothing ships on the strength of looking correct.** The claims in this repository are
   the ones that were run: checksums verified against two independent sources, PSK
   derivation checked against the IEEE 802.11i reference vectors, the write test that
-  reads a file back before a share is trusted. `JOURNAL.md` is the record, including the
-  wrong turns.
+  reads a file back before a share is trusted — and the wrong turns are on the record
+  too, alongside the right ones.
 - **The bugs are mine.** If something here breaks your setup, that is on the person who
   shipped it. [Open an issue](../../issues).
 

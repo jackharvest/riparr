@@ -91,7 +91,7 @@ it's browning out the Pi.
 - Use a higher-wattage USB-C supply — 30W minimum for a Slim build, 100W PD for Full
 - Try a shorter, thicker cable
 - If you built it yourself: the Pi and the drive need **separate buck outputs**, and the
-  5V rail needs bulk capacitance. See [`docs/design/hardware.md`](../design/hardware.md).
+  5V rail needs bulk capacitance.
 
 ## Red LED — the rip failed
 
