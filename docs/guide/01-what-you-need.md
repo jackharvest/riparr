@@ -6,17 +6,23 @@
 
 ## Parts
 
+**Start with the drive you already own.** This project exists to give an old optical
+drive somewhere to live. Everything else on this list is either cheap or something
+that's been in a drawer since 2014.
+
 | Part | Notes |
 |---|---|
-| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. Whichever you pick, the Preparer downloads the right OS for it. |
-| **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most. |
+| **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most, and the only one you can get expensively wrong. |
+| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board — the **1 GB** model is plenty. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. Whichever you pick, the Preparer downloads the right OS for it. |
 | **microSD card** | 8GB runs it. Bigger only buys staging room — see [which card](#which-card). |
-| **USB-C power supply** | 30W for a Slim build, 100W PD for a Full build. |
-| **Enclosure** | 3D printed. **PETG or ASA — not PLA.** A drive plus a Pi in a sealed box gets hot enough to soften PLA. |
+| **USB-C PD brick** | **45W or more.** It's the volts that matter, not the watts — see [how it's powered](#how-its-powered). |
+| **The power bits inside** | A PD trigger board and two buck converters. About $20 all in, and [the list is below](#how-its-powered). |
+| **Enclosure** | 3D printed. **PETG or ASA — not PLA.** A drive plus a board in a sealed box gets hot enough to soften PLA. |
 
-**[unresolved]** The published parts list and printable enclosure files aren't finalized.
-Riparr Slim (5V only, smaller, simpler) and Riparr Full (5V + 12V, larger, cheaper drive)
-are likely to ship as two builds.
+**The board is the one that got expensive.** The Orange Pi Zero 2W was $21 in August
+2025 and is mid $40s now, when you can find it in stock at all — it goes in and out on
+every seller. It's still the right board: it's as low-power as you dare go for this and
+it does the job. Just don't expect last year's price.
 
 ## Which drive
 
@@ -43,21 +49,23 @@ drives.
 So there is no clever software fix available to us, and no drive advertises this. It is a
 buying decision.
 
-### 2. How is it powered?
+### 2. What size is it?
 
-**Slim (laptop-style) drives are 5V-only. Full-size 5.25" drives also need 12V.** That is
-what decides whether you are building **Riparr Slim** (smaller box, simpler harness, 30W
-supply) or **Riparr Full** (bigger box, cheaper and faster drive, 100W PD supply).
+**Slim (laptop-style) drives are 5V-only. Full-size 5.25" drives also need 12V.** So the
+size of the drive decides how much is inside the box: a slim drive skips the 12V buck
+entirely, and a full-size one needs it. Either way the outside is the same single USB-C
+cable — see [how it's powered](#how-its-powered).
 
 This is *independent* of the first question. There are slim 4K drives and full-size DVD
-drives. Buying a full-size UHD drive for a Slim enclosure gets you the right capability in
-a box it will not fit.
+drives. A full-size drive is bigger, usually cheaper, and usually faster. A slim one
+makes a smaller box with less wiring in it. Pick the box you want to print, then buy a
+drive that fits it *and* reads what you want.
 
 ### The list
 
 | Drive | Size | Reads | Notes |
 |---|---|---|---|
-| **LG BU40N** | Slim | DVD · Blu-ray · **4K UHD** | **The one to buy for a Slim 4K build.** The most commonly confirmed LibreDrive UHD reader in this form factor. |
+| **LG BU40N** | Slim | DVD · Blu-ray · **4K UHD** | **The one to buy for a slim 4K build.** The most commonly confirmed LibreDrive UHD reader in this form factor. |
 | **LG BU50N** | Slim | DVD · Blu-ray · 4K on the right firmware | The BU40N's successor, same shape. Newer units ship firmware that closes LibreDrive — check before buying, not after. |
 | **LG WH16NS40 / WH16NS60** | Full | DVD · Blu-ray · 4K on the right firmware | The full-size answer, and what most of the UHD ripping community runs. Usually needs crossflashing first. Needs the 12V rail. |
 | **ASUS BW-16D1HT** | Full | DVD · Blu-ray · 4K on the right firmware | Firmware-dependent in the same way. The external BW-16D1X-U is the same drive in a shell. |
@@ -77,12 +85,107 @@ disc in a drive that cannot read it, Riparr says so and ejects it instead of fai
 minutes later. The same list lives in `server/riparr/drives.py`, so the advice above and
 the box's own diagnosis cannot disagree.
 
-### If you use a USB-to-SATA adapter
+### If your drive is SATA
 
-**"USB to SATA" on a listing says nothing about optical-drive support.** Many adapters in
-this class carry an explicit *"Do NOT support BLU-RAY, CD-ROM, DVD-ROM"* warning. The
-bridge must **name** optical/ATAPI support.
-A drive that is natively USB skips this problem entirely.
+A drive that is natively USB plugs straight into the board and you can skip this whole
+section. A bare SATA drive out of a PC needs two more parts, and both of them are fussier
+than they look.
+
+**The bridge: "USB to SATA" on a listing says nothing about optical-drive support.** Many
+adapters in this class carry an explicit *"Do NOT support BLU-RAY, CD-ROM, DVD-ROM"*
+warning. The bridge must **name** optical/ATAPI support, and it must be one that *doesn't*
+try to power the drive — the drive gets its power from the bucks, not from the adapter.
+That combination is oddly rare. The one that works here is a plain
+[USB 3.0 to SATA converter](https://www.amazon.com/dp/B0CS5XV3LM) (~$10, JMicron chipset,
+data only, no bundled brick).
+
+It's a no-name part with mixed reviews, and one of mine died on the bench. Buy it
+somewhere that takes returns and test it before you close the case — because when it does
+fail, it fails confusingly: **a drive whose tray opens has proved its power rail and
+nothing at all about its data path.** If the tray works but Riparr never sees a disc,
+suspect the bridge or the cable, not the drive.
+
+**The cable, which matters more than it sounds:** a
+[22-pin SATA male-to-female left-angle extension](https://www.amazon.com/dp/B00A9LUBKO),
+about $1.50. It carries data *and* power in one run, and the right-angle end takes the
+connector off the back of the drive sideways instead of straight out, which is the
+difference between a drive that fits the case and one that doesn't. At the far end you get
+the same 22-pin connector a foot away, where there's room to plug in the bridge's data lead
+and the 15-pin power lead side by side.
+
+This is a full-size-drive part. Slim drives use a slimline connector instead, and need a
+slimline-SATA adapter in the same role.
+
+## How it's powered
+
+**One USB-C cable goes in and nothing else does.** Inside, that gets turned into the 12V
+and 5V the drive and the board actually want.
+
+```
+  USB-C brick          PD trigger                    bucks
+  45W or more   ──▶   set to 15V or 20V   ──┬──▶   down to 12V  ──▶  drive: motor + laser
+                       (DIP switch)         │
+                                            └──▶   down to  5V  ──┬─▶ drive: logic
+                                                                  └─▶ board, via a
+                                                                      USB-C pigtail
+```
+
+**The whole box peaks at 18W** — drive spinning up, board busy, everything at once. It is
+not a hungry machine.
+
+### It's the volts you need, not the watts
+
+18W sounds like any phone charger will do. It won't, and this is the one place people get
+stuck.
+
+The trigger board's job is to *ask* the brick for a voltage, and the bucks want something
+comfortably above 12V to work with. A brick can only offer what it was built to offer,
+and USB-C ties that to its wattage — the more powerful it is, the more voltages it has
+to carry:
+
+| Brick | Voltages it must offer |
+|---|---|
+| Up to 15W | 5V |
+| 15–27W | 5V, 9V |
+| 27–45W | 5V, 9V, **15V** |
+| 45W and up | 5V, 9V, **15V, 20V** |
+
+So **45W or more** and you're certain of both. Any laptop-class charger you already own
+is almost certainly fine — you're buying its voltage list, not its wattage.
+
+**Set the trigger to 15V or 20V.** Both bucks are happy anywhere from 15V to 32V in, so
+either works.
+
+**Don't set it to 12V and skip a buck.** It's the obvious shortcut and it's the one that
+fails. Look at the table again: **12V isn't on it.** It's optional in USB-C, plenty of
+bricks don't do it at all, and the reviews on every trigger board on the market are full
+of people who discovered that with a multimeter. 15V and 20V you can count on.
+
+### Why not just require a 12V brick?
+
+Because it would be restrictive and buy you nothing. USB-C chargers are everywhere and
+you probably have a spare in a drawer; a 12V barrel supply is one more specific thing to
+order and one more thing to lose. Given the price of drives, storage and boards right
+now, spending $20 on trigger-and-bucks to turn "this exact brick" into "any laptop
+charger" is a good trade.
+
+### The power parts
+
+| Part | What it is | Roughly |
+|---|---|---|
+| **PD trigger** | [Solderless board, voltage set with a DIP switch](https://www.amazon.com/dp/B0DPHHX2ZT). No soldering iron needed | $10 for four |
+| **Buck → 12V** | [12V 5A, takes 15–32V in](https://www.amazon.com/dp/B0CSPK54RC). Drive motor and laser. **Skip this on a slim drive** | $10 |
+| **Buck → 5V** | [5V 5A, takes 12–32V in](https://www.amazon.com/dp/B0CSPTCT2H). Drive logic and the board | $10 |
+| **USB-C pigtail** | [Bare red-and-black to a USB-C plug](https://www.amazon.com/dp/B0DCGN8ZG3). Runs from the 5V buck to the board's power port | $6 |
+
+Both bucks are rated 5A, so at 18W total the box is loafing — which is what you want,
+because cheap converters run hot and unhappy near their ratings.
+
+**One wiring rule.** Feed the drive and the board from **separate buck outputs**, not off
+one shared node, and put some bulk capacitance on the 5V rail. Optical drives pull a
+sharp surge when they spin up, and if the board is sharing an unbuffered rail with it,
+that surge reboots the board — at disc insertion, which makes it look like a software
+bug. It isn't.
 
 ## Which card
 

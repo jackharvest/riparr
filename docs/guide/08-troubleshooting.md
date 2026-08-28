@@ -14,7 +14,7 @@ Organized by **what you actually observed**, since there's no screen to read.
 
 | What you see | Meaning | Do this |
 |---|---|---|
-| Drive tray won't open, nothing at all | No power | Try another USB-C cable and supply. Charge-only cables are the usual culprit. |
+| Drive tray won't open, nothing at all | No power | Try another USB-C cable and supply. Charge-only cables are the usual culprit, and a brick with no 15V/20V profile is the next one. |
 | Drive spins up, box never appears | Booting, or it couldn't join Wi-Fi | Wait two minutes, then see below |
 | Another device can reach it by IP but not by name | Name resolution, not the box | See below |
 
@@ -87,10 +87,12 @@ problem inside the box.
 **Power problem, not software.** Optical drives pull a big surge when they spin up, and
 it's browning out the Pi.
 
-- Use a higher-wattage USB-C supply — 30W minimum for a Slim build, 100W PD for Full
+- **Check what your brick actually offers.** The trigger board can only ask; if the brick
+  has no 15V or 20V profile you'll be running on 9V or 5V and browning out. 45W or more
+  usually has them, small phone chargers usually don't.
 - Try a shorter, thicker cable
-- If you built it yourself: the Pi and the drive need **separate buck outputs**, and the
-  5V rail needs bulk capacitance.
+- If you built it yourself: the board and the drive need **separate buck outputs**, and
+  the 5V rail needs bulk capacitance. Sharing one node is exactly what causes this.
 
 ## The rip failed
 
