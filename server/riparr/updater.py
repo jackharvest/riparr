@@ -80,6 +80,11 @@ def check(repo=REPO, timeout=8):
 # has no screen to say so.
 SERVER_ASSET = "riparr-server.tar.gz"
 
+# Both live *inside* the install directory, which is the only place this service has
+# permission to create anything. See install().
+VENV_DIR = ".venv"
+PREV_DIR = ".previous"
+
 
 def _pick_asset(assets):
     for a in assets:
@@ -121,8 +126,17 @@ def install(repo=REPO):
                 "message": "That release has no appliance archive, so there is nothing "
                            "to install. The download page has the desktop app only."}
 
+    # Asked before anything is downloaded or moved. The service owns /opt/riparr but not
+    # /opt, and finding that out half way through an update is how the venv was lost.
+    if not os.access(INSTALL_DIR, os.W_OK):
+        return {"ok": False,
+                "message": "Riparr cannot update itself: %s is not writable by the "
+                           "service. Nothing was changed." % INSTALL_DIR,
+                "detail": "Re-run the installer over SSH to repair the permissions: "
+                          "sudo bash %s/tools/install.sh" % INSTALL_DIR}
+
     tmp = tempfile.mkdtemp(prefix="riparr-update-")
-    backup = INSTALL_DIR + ".previous"
+    backup = os.path.join(INSTALL_DIR, PREV_DIR)
     swapped = False
     try:
         archive = os.path.join(tmp, asset["name"])
@@ -159,15 +173,30 @@ def install(repo=REPO):
                     "message": "That archive does not look like Riparr, so it was not "
                                "installed. Nothing was changed."}
 
-        # Carry the virtualenv across before anything moves. See the docstring.
-        venv = os.path.join(INSTALL_DIR, ".venv")
-        if os.path.isdir(venv):
-            shutil.move(venv, os.path.join(root, ".venv"))
-
+        # The directory is replaced from the inside, and the virtualenv never moves.
+        #
+        # /opt is root-owned and this service runs as `riparr`, so renaming /opt/riparr
+        # raises PermissionError -- which is how appliance self-update managed never to
+        # work at all, on any release. What the service *can* do is add and remove
+        # entries inside the directory it owns, so the swap moves contents rather than
+        # the directory itself and needs no privilege it does not have.
+        #
+        # The venv used to be carried into the staging directory before that failing
+        # step, and the `finally` below deletes the staging directory -- so a failed
+        # update took the interpreter with it. The box kept serving, because the running
+        # process holds its own files open, and would not have come back from the next
+        # restart. It stays exactly where it is now, and a failed update cannot reach it.
+        keep = {VENV_DIR, PREV_DIR}
         shutil.rmtree(backup, ignore_errors=True)
-        if os.path.exists(INSTALL_DIR):
-            shutil.move(INSTALL_DIR, backup)
-        shutil.move(root, INSTALL_DIR)
+        os.makedirs(backup)
+        for name in os.listdir(INSTALL_DIR):
+            if name in keep:
+                continue
+            shutil.move(os.path.join(INSTALL_DIR, name), os.path.join(backup, name))
+        for name in os.listdir(root):
+            if name in keep:
+                continue
+            shutil.move(os.path.join(root, name), os.path.join(INSTALL_DIR, name))
         swapped = True
 
         # A release may add a dependency, and the venv that just came across predates
@@ -202,11 +231,25 @@ def install(repo=REPO):
 
 
 def _rollback(backup):
-    """Put the previous install back. Best effort, and better than leaving a hole."""
+    """Put the previous contents back. Best effort, and better than leaving a hole.
+
+    Contents, not the directory: the same permission that stops the swap renaming
+    /opt/riparr stops the rollback renaming it back. The virtualenv is untouched by
+    either direction, because it never left.
+    """
     try:
-        if os.path.isdir(backup):
-            shutil.rmtree(INSTALL_DIR, ignore_errors=True)
-            shutil.move(backup, INSTALL_DIR)
+        if not os.path.isdir(backup):
+            return
+        keep = {VENV_DIR, PREV_DIR}
+        for name in os.listdir(INSTALL_DIR):
+            if name in keep:
+                continue
+            target = os.path.join(INSTALL_DIR, name)
+            shutil.rmtree(target, ignore_errors=True)
+            if os.path.exists(target):
+                os.remove(target)
+        for name in os.listdir(backup):
+            shutil.move(os.path.join(backup, name), os.path.join(INSTALL_DIR, name))
     except Exception:
         pass
 

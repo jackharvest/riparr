@@ -153,6 +153,21 @@ jobs:
               print("ok  %s" % f)
           PY
 
+      # The update swap, against the failure that ate a live box's virtualenv.
+      #
+      # v0.1.18 moved /opt/riparr aside to put the new version in its place. The service
+      # runs as `riparr` and /opt is root-owned, so that raised PermissionError every
+      # time -- appliance self-update had never once worked. And it carried the venv into
+      # a temp directory *before* that step, which the `finally` then deleted: a failed
+      # update reported "Nothing was changed" while removing the interpreter the service
+      # is defined to run. The box kept serving from open file handles and would not have
+      # survived its next restart.
+      #
+      # Run against that version this fails on "THE VIRTUALENV SURVIVED".
+      - name: The update swap keeps the virtualenv
+        run: |
+          python server/updater-swap.test.py
+
       - name: Shell parses
         run: |
           for f in $(git ls-files '*.sh'); do

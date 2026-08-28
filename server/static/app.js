@@ -2755,6 +2755,8 @@ systemPages.updates = async () => {
           <a href="https://github.com/${esc(u.repo)}" target="_blank" rel="noopener">github.com/${esc(u.repo)}</a></div>
       </div>
       <div class="alert ${u.status === "update" ? "warn" : ""}">${esc(u.message || "")}</div>
+      <!-- Where the result of pressing Install lands, and stays. -->
+      <div id="upd-result" hidden></div>
       ${!u.can_install && u.status === "update"
         ? `<p class="muted" style="font-size:13px">Updates install on the appliance
            itself. This process is running in development mode.</p>` : ""}
@@ -3674,8 +3676,21 @@ function wireContent(section, sub) {
   const inst = $("#upd-install");
   if (inst) inst.onclick = async () => {
     inst.disabled = true;
-    const r = await api.post("/api/update/install");
+    let r;
+    try { r = await api.post("/api/update/install"); }
+    catch (e) { r = { ok: false, message: e.message || "The update failed." }; }
     toast(r.message, r.ok ? "ok" : "bad");
+    // A toast is the wrong place for the only copy of a diagnosis. It vanishes, it
+    // cannot be selected, and `detail` — the one field that says *why* — was being
+    // dropped on the floor entirely: an update that failed on a permission error read
+    // as "The update failed. Nothing was changed." and nothing else, anywhere.
+    const out = $("#upd-result");
+    if (out) {
+      out.hidden = false;
+      out.className = `alert ${r.ok ? "ok" : "warn"}`;
+      out.innerHTML = `<b>${esc(r.message || "")}</b>${
+        r.detail ? `<div class="why" style="margin-top:6px;user-select:text">${esc(r.detail)}</div>` : ""}`;
+    }
     inst.disabled = false;
   };
 
