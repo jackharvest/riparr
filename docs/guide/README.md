@@ -1,82 +1,113 @@
-# Riparr — User Guide
+# Build one
 
-Insert a disc. Walk away. It ends up in your library, correctly named.
+One box. One cable. Discs go in, files land on your NAS.
 
-This guide takes you from a blank SD card to a working appliance in about five minutes of
-actual effort. **Read it in order the first time.** After that, you should never need it
-again — that's the whole point of the product.
-
-> **Pre-1.0.** Riparr rips discs end to end on real hardware — a Blu-ray went in and a
-> verified file came out on the library share, unattended. What it has not done is meet
-> many *different* configurations: it has run on one board, with one drive, against one
-> NAS. Anything designed but not built is still marked **[unresolved]** inline.
+<!-- TODO(mike): hero photo of the finished unit, ideally with a disc going in.
+     Drop it at docs/img/unit-hero.jpg and uncomment.
+<img src="../img/unit-hero.jpg" alt="The finished Riparr box">
+-->
 
 ---
 
-## There are three stages, and then you are done
+## What it costs
 
-Knowing which one you are in makes the rest of this guide much easier to follow. They
-happen in this order, once.
+Roughly, and it's mostly the drive. Prices move and vary by where you are — treat these
+as ballpark, not a quote.
 
-**1 · Preparation — on your own computer.** Writing Riparr onto an SD card, with your
-Wi-Fi and your account already on it. The box has no screen, so everything it needs to
-reach your network has to be on the card *before* it is switched on. That is the whole
-reason this stage exists.
-
-**2 · Setup — the box installs itself.** You put the card in and plug the cable in. It
-joins your Wi-Fi, the Preparer finds it and installs Riparr onto it, and then a browser
-opens on a short wizard: a password, MakeMKV, your library share, and where films and
-television should go.
-
-**3 · Using it — from a browser, or not at all.** The daily loop needs no browser: put a
-disc in, take it out when it comes back. The web interface is for the times you want to
-look.
-
----
-
-## Stages 1 and 2 — do this once
-
-| | | Time |
+| Part | What I used | Roughly |
 |---|---|---|
-| **1** | [What you need](01-what-you-need.md) — parts list, and which card to buy | — |
-| **2** | [Prepare the SD card](02-prepare-sd-card.md) — the Preparer: pick your board, Wi-Fi, headless | 3 min |
-| **3** | [First boot](03-first-boot.md) — find the box, set your password | 1 min |
-| **4** | [Connect your library](04-connect-your-library.md) — pick a share, test the write | 1 min |
-| **5** | [Library layout & naming](05-library-layout.md) — Plex/Jellyfin conventions | 1 min |
+| Board | Orange Pi Zero 2W (2 GB) | $20–30 |
+| Optical drive | USB Blu-ray writer — [read this before you buy](01-what-you-need.md#which-drive) | $30–90 |
+| SD card | Any 8 GB or bigger. Riparr uses about 2.3 GB | $5 |
+| USB-C PD supply | 30 W for a slim drive, 100 W for a full-size one | $10–20 |
+| Cable | One USB-C, that's the whole external interface | $5 |
+| Filament | A few hundred grams | $5 |
 
-## Stage 3 — forever after
+**4K UHD costs more**, and it's a *drive* decision you make once at purchase — not a
+setting you can flip later. [Read this first](01-what-you-need.md#which-drive).
+
+---
+
+## What's inside
+
+<!-- TODO(mike): two internal shots — one with the case open showing the drive and board,
+     one close on the power board / USB-C entry. docs/img/unit-internal-*.jpg
+<img src="../img/unit-internal-1.jpg" alt="Inside the case: drive above, board below">
+<img src="../img/unit-internal-2.jpg" alt="USB-C entry and power conversion">
+-->
+
+A drive, a board, and a bit of power conversion. That's it.
+
+```
+                    ┌──────────────────────────────────┐
+                    │            the case              │
+   USB-C ───────────┤                                  │
+  (power + nothing  │   ┌────────────┐                 │
+   else leaves the  │   │  optical   │◀── data (USB) ─┐│
+   box)             │   │   drive    │                ││
+                    │   └─────▲──────┘                ││
+                    │         │ power                 ││
+                    │   ┌─────┴──────┐                ││
+                    │   │   power    │                ││
+                    │   │ conversion ├── 5V ──┐       ││
+                    │   └────────────┘        ▼       ││
+                    │                   ┌───────────┐ ││
+                    │                   │   board   ├─┘│
+                    │                   │  (Pi Zero │  │
+                    │                   │    2W)    │  │
+                    │                   └───────────┘  │
+                    └──────────────────────────────────┘
+```
+
+**One USB-C in.** Nothing else leaves the box — no power brick, no second cable, no
+network cable, no screen.
+
+**Two things that will bite you**, both worth reading before you order parts:
+
+- **A slim drive wants ~30 W. A full-size 5.25" drive wants 12 V *and* 5 V** through SATA
+  power, so it needs a supply that can do both and a PD budget nearer 100 W.
+- **A drive tray that opens has proved its power rail and nothing about its data path.**
+  If the tray works but the box never sees a disc, suspect the USB bridge or the cable,
+  not the drive. [More on which bridge to buy](01-what-you-need.md#which-drive).
+
+---
+
+## Build it
+
+<!-- TODO(mike): the case isn't published yet. When the STLs exist, link them here and
+     add print settings (layer height, infill, supports, orientation, material). -->
+
+> **The case files aren't published yet.** Everything below the enclosure works today —
+> the software half is done and running. If you want to build one now, any box that fits
+> a drive and a board and gets power to both will do.
+
+1. **Print the case.** *(files to come)*
+2. **Wire it** as above. Power to both, drive data to the board's USB port.
+3. **[Write the SD card](02-prepare-sd-card.md)** — about three minutes with the Preparer.
+4. **Plug it in.** The Preparer waits until it sees the box on your network, then installs
+   everything over SSH. Ten minutes, hands off.
+5. **Open `riparr.local`**, point it at your share, put a disc in.
+
+That's the build. The rest of this guide is reference for when something surprises you.
+
+---
+---
+
+# The rest of it
+
+You shouldn't need these. They're here for when you do.
 
 | | |
 |---|---|
-| **6** | [Ripping discs](06-ripping-discs.md) — the daily loop, and what the box is doing |
-| **7** | [Settings reference](07-settings-reference.md) — every setting, and why you'd touch it |
-| **8** | [Troubleshooting](08-troubleshooting.md) — organized by what you actually observed |
+| [What you need](01-what-you-need.md) | Parts in detail, and **which drive to buy** — the part people get wrong |
+| [Prepare the SD card](02-prepare-sd-card.md) | The Preparer, step by step |
+| [First boot](03-first-boot.md) | Finding the box, setting your password |
+| [Connect your library](04-connect-your-library.md) | Shares, and the write test |
+| [Library layout](05-library-layout.md) | Naming that Plex and Jellyfin understand |
+| [Ripping discs](06-ripping-discs.md) | Auto Rip, queue, what each stage means |
+| [Settings reference](07-settings-reference.md) | Every setting, and why it's there |
+| [Troubleshooting](08-troubleshooting.md) | When it sulks |
 
-## Quick reference
-
-- 🔦 **[LED reference card](led-reference.md)** — what each color means. Print it, tape it
-  inside the lid.
-- 🔑 **[MakeMKV key](07-settings-reference.md#makemkv-key)** — the one thing that expires.
-  Riparr warns you before it bites.
-
----
-
-## Things worth knowing before you start
-
-**You do not need a big SD card.** A 32GB card handles everything, including 4K discs.
-Riparr streams the rip out to your library as it goes, so it can't fill up. A bigger card
-only makes the disc eject sooner, which matters if you like loading several discs in one
-sitting. See [what you need](01-what-you-need.md#which-card).
-
-**The disc ejecting means it's done.** On a 32GB-class card, the eject happens when the
-file has finished landing in your library. On a large card the box ejects early to let you
-load the next disc, and keeps uploading in the background — the LED tells you which is
-happening, and the web page always says.
-
-**There is no screen and no off switch.** That's deliberate. Riparr expects the cable to
-get yanked and is built to survive it. If something goes wrong, the LED tells you *that*
-it went wrong and `riparr.local` tells you *why*.
-
-**Ripping takes as long as it takes.** A DVD is roughly half an hour, a Blu-ray a few
-hours, a 4K disc most of a working day. Nothing you buy makes this faster — the limit is
-WiFi, not the drive.
+**Pre-1.0.** It rips discs end to end on real hardware and updates itself. It has also
+only run on one board, with one drive, against one NAS — so other hardware is where the
+surprises will be. [Issues](../../../issues) are genuinely useful.

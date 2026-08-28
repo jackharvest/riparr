@@ -144,10 +144,21 @@ PI_BANDS = {"2.4", "5"}
 MIN_DISK_BYTES = 4_000_000_000
 MAX_DISK_BYTES = 2_000_000_000_000
 
-# Fixed overhead written by the image before any staging exists: boot 0.5 GiB + rootfs
-# 8.0 GiB (D4). Everything in `card_advice` is derived from what is left after this.
+# What the system actually takes, measured on a running box rather than budgeted.
+#
+# This was 8.5 GiB, from D4's three-partition layout -- boot 0.5 + a fixed 8.0 rootfs.
+# That layout was never built: Armbian ships one partition and expands it to fill the
+# card, and `tools/install.sh` says so in passing when it creates /srv/staging as an
+# ordinary directory "on a stock image". So the Preparer was reserving six gigabytes
+# that nothing was using, calling 8 and 16 GB cards too small, and understating every
+# larger card by the same amount.
+#
+# Measured on the reference board (Armbian trixie, Orange Pi Zero 2W): one 28.8 GiB ext4
+# partition, 2.3 GB used -- /usr 1.7G, /var 346M, /opt 35M -- and 26 GB free on a 32 GB
+# card. 3.5 GiB reserved is that, plus room for logs, apt and a rebuilt virtualenv, and
+# it reproduces the measurement: 29.8 - 3.5 = 26.3 against 26 observed.
 GIB = 1024 ** 3
-OVERHEAD_GIB = 8.5
+OVERHEAD_GIB = 3.5
 
 # Commercial disc sizes, real GiB rather than marketed GB
 # (docs/design/storage-sizing.md -- "Marketing capacity is a lie").
@@ -408,11 +419,16 @@ def card_advice(size):
     never incapable. Nothing here should ever say a disc will not fit.
     """
     staging = size / GIB - OVERHEAD_GIB
-    if staging < 4:
+    # Refused only when the card cannot hold the system and a little working room. It is
+    # not this function's job to have opinions about small cards -- staging is a buffer,
+    # not a requirement, and "Straight to your library" removes it entirely. The old
+    # threshold refused anything under 12.5 GiB, which ruled out every cheap card for a
+    # reason that turned out not to exist.
+    if staging < 1:
         return {"ok": False, "staging_gib": round(max(staging, 0), 1),
                 "headline": "Too small",
-                "detail": "The system alone needs 8.5 GiB, so this card has no room "
-                          "left to stage a rip into."}
+                "detail": "Riparr itself needs about %.1f GiB. This card has no room "
+                          "left over to work in." % OVERHEAD_GIB}
     bd = int(staging // BD50_GIB)
     uhd = int(staging // UHD100_GIB)
     dvd = int(staging // DVD9_GIB)

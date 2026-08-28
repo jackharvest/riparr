@@ -10,14 +10,13 @@ Organized by **what you actually observed**, since there's no screen to read.
 
 **First, wait two full minutes after plugging in.** First boot is slower than later boots.
 
-**Check the LED:**
+**Then work out which of three things it is:**
 
-| LED | Meaning | Do this |
+| What you see | Meaning | Do this |
 |---|---|---|
-| Nothing at all | No power | Try another USB-C cable and supply. Cheap cables that are charge-only are a common culprit. |
-| Slow white pulse | Booting or awaiting setup | Keep waiting, then retry the address |
-| Blinking amber | **Couldn't join WiFi** | See below |
-| Solid green | It's up — this is a name resolution problem | See below |
+| Drive tray won't open, nothing at all | No power | Try another USB-C cable and supply. Charge-only cables are the usual culprit. |
+| Drive spins up, box never appears | Booting, or it couldn't join Wi-Fi | Wait two minutes, then see below |
+| Another device can reach it by IP but not by name | Name resolution, not the box | See below |
 
 ### Couldn't join WiFi (blinking amber)
 
@@ -70,13 +69,13 @@ Riparr *could* rip, not that you've asked it to. Then read the next section.
 
 ## Nothing happens when I insert a disc
 
-**LED stays solid green:** the disc wasn't detected.
+**Nothing happens at all:** the disc wasn't detected.
 
 - Wait 30 seconds — spin-up and reading the table of contents takes a moment
 - Try a different disc. A badly scratched or dirty one may not mount at all.
 - **Disc upside down.** It happens.
 
-**LED flickers, then goes back to green:** the drive saw it but couldn't read it. Clean the
+**The drive works at it and gives up:** it saw the disc but couldn't read it. Clean the
 disc.
 
 **Nothing on any disc:** the drive may not be enumerating. Check the web page — the
@@ -93,7 +92,7 @@ it's browning out the Pi.
 - If you built it yourself: the Pi and the drive need **separate buck outputs**, and the
   5V rail needs bulk capacitance.
 
-## Red LED — the rip failed
+## The rip failed
 
 The web page says how far it got and why.
 
@@ -112,9 +111,9 @@ half an hour.
 **With a browser open** you will already be looking at the answer: the page jumps to
 **Discs** and highlights the film, with the date it went into your library.
 
-**Without one**, that is what the signal was. Three short flashes of the drive's own
-light, three times — or two tray cycles, if you set it that way. Purple on the status
-LED means the same thing. Change it on **Settings → Ripping → Already-ripped discs**,
+**Without one**, that is what the signal was: three short flashes of the drive's own
+light, three times — or two tray cycles, if you set it that way. Change it on
+**Settings → Ripping → Already-ripped discs**,
 where **Try the light** and **Try the tray** let you see each one on demand.
 
 **To rip it anyway:** the **Re-rip** button on that film's tile in **Discs**. Leave the
@@ -213,7 +212,7 @@ card and import the file after setup. Takes about a minute.
 
 **Settings → System → Logs** downloads a bundle. Include:
 
-- What you saw the LED doing
+- What the box appeared to be doing
 - The disc (title, DVD/BD/UHD, studio)
 - Your drive model
 - Your card size

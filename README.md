@@ -21,9 +21,9 @@ it's set up you don't touch the software again:
 
 > **put a disc in → close the tray → walk away → it ejects when it's done**
 
-The MKV lands on your share, named the way Plex and Jellyfin want it. There's an LED on
-the box for when you're walking past, and `riparr.local` in a browser for when you
-actually want to look.
+The MKV lands on your share, named the way Plex and Jellyfin want it. The disc comes back
+out when it's done, which is all the status you need most days — `riparr.local` in a
+browser is there for when you want detail.
 
 ---
 
@@ -55,8 +55,13 @@ Download the Preparer for whatever you're sitting at. Everything else happens fr
 
 **[→ Latest release](../../releases/latest)**
 
-None of it is code-signed yet, so macOS and Windows will both grumble the first time.
-On macOS, right-click the app and choose Open. On Windows, More info → Run anyway.
+None of it is code-signed yet, so both will block it the first time.
+
+**macOS:** double-click it and let it get refused. Then go to **System Settings → Privacy
+& Security**, scroll to the bottom, and click **Open Anyway** next to the line about
+Riparr Preparer. One more dialog, click Open, and that's it — it won't ask again.
+
+**Windows:** More info → Run anyway.
 
 ---
 
@@ -82,7 +87,7 @@ Open `riparr.local`, point it at your share, put a disc in.
 |---|---|
 | **A board** | Orange Pi Zero 2W is what I built it on. Others are in there, some still marked beta |
 | **An optical drive** | USB, or internal plus a bridge that actually *says* it does optical/ATAPI. [This is the bit people get wrong](docs/guide/01-what-you-need.md#which-drive) |
-| **An SD card** | 32 GB is plenty for DVDs. Blu-ray wants more, or just write straight to your library instead |
+| **An SD card** | Cheapest one that holds the OS. Riparr uses about 2.3 GB, so **8 GB works** and 16 GB is comfortable. Rips go to your NAS, not the card — bigger cards just buy you a bigger buffer |
 | **A share** | SMB. Any NAS, or a folder on a computer that's usually on |
 | **Doing 4K UHD?** | That's a *drive* decision, not a setting. [Read this before you buy](docs/guide/01-what-you-need.md#which-drive) |
 
@@ -160,7 +165,7 @@ with them. Use it, change it, pass it on. If you pass it on, ship the source too
 | Icons | [Font Awesome Free](https://fontawesome.com/license/free) — CC BY 4.0 · brand marks from [Simple Icons](https://simpleicons.org/) — CC0 |
 | Wordmark | [Russo One](server/static/fonts/RussoOne-OFL.txt) — SIL OFL 1.1 |
 | Window shell | [pywebview](https://pywebview.flowrl.com/) — BSD-3-Clause |
-| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not shipped with Riparr.** Your box downloads it from makemkv.com during setup and you accept their terms yourself |
+| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not shipped with Riparr.** Your box downloads it during setup and you accept their terms yourself. makemkv.com goes down for weeks at a time, so Riparr keeps a list of mirrors and tries them in order — every one is checked against a hash pinned in this repo, so a mirror can't hand you the wrong thing |
 
 Riparr isn't affiliated with or endorsed by Sonarr, Radarr, GuinpinSoft or anyone else
 named here. Those names belong to them.

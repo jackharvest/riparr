@@ -10,7 +10,7 @@ Setup is done. You should not need to open the settings again.
 
 1. **Insert disc. Close tray.**
 2. **Walk away.**
-3. **Disc ejects.** Green LED means it worked.
+3. **Disc ejects** when it's finished.
 4. **Insert the next one.**
 
 That's it. No button, no clicking, no app.
@@ -71,7 +71,7 @@ That is the whole rule, and it is the same on every card size.
 > uploading as it rips and ejecting early on a large card, so you can load the next disc
 > while the last one is still travelling. That part is not built yet, so today the tray
 > stays shut until the job is completely finished. When it lands, this section grows a
-> second case and the amber LED starts meaning "out of the drive but still uploading".
+> second case: out of the drive, but still travelling.
 
 ## What it does when a disc won't fit
 
@@ -127,19 +127,22 @@ decide which you prefer.
 Load discs back to back — rip, eject, next — as long as there is room on the card for the
 one you're putting in. `riparr.local` shows how many more fit.
 
-## Reading the box at a glance
+## Reading the box without a browser
 
-| LED | What's happening | Can I unplug? |
+The disc itself is the signal. It stays in while there's work to do and comes back out
+when there isn't.
+
+| The box is | What that means | Can I unplug? |
 |---|---|---|
-| **Solid green** | Idle, ready for a disc | Yes |
-| **Breathing blue** | Ripping | No |
-| **Pulsing amber** | Uploading to your library | **No** |
-| **Green flash then idle** | Done and verified | Yes |
-| **Red** | Disc failed — see the web page | Yes |
-| **Purple** | Already ripped this one | Yes |
-| **Blinking amber** | Paused — can't reach your library | Yes |
+| Tray shut, drive quiet | Idle, ready for a disc | Yes |
+| Tray shut, drive working | Ripping | No |
+| Tray shut, drive quiet, still busy on the page | Uploading to your library | **No** |
+| Disc ejected | Done, or it gave up — the page says which | Yes |
+| Disc ejected almost immediately | You've ripped this one before | Yes |
 
-Print the [LED reference card](led-reference.md) and tape it inside the lid.
+If you want to know without walking over, set up **notifications** — Discord or a webhook,
+on **Settings → Notifications**. That's the honest answer for a box with no screen: it
+tells you where you actually are.
 
 ## The web page
 
@@ -150,12 +153,12 @@ The Queue page is the landing page and it is one screen: the **Auto Rip** switch
 either the queue or the tray. The tray is the disc currently loaded, the drive holding
 it, and — if there is no drive — why not. **Refresh** and **Eject** are top right.
 
-You don't need to watch it. It's there for when the LED says something went wrong and you
-want to know what.
+You don't need to watch it. It's there for when a disc comes back out sooner than you
+expected and you want to know why.
 
 ## When something fails
 
-**Red LED — bad disc.** Riparr retried and couldn't read it. Clean the disc, try again.
+**Bad disc.** Riparr retried and couldn't read it. Clean the disc, try again.
 The web page says how far it got and where it failed. Nothing partial is left in your
 library.
 
@@ -171,10 +174,10 @@ and each row offers only the retries that would actually help:
 If only *Retry rip* is offered, the staged copy has been cleaned up and the disc is the
 only remaining source.
 
-**Purple LED — duplicate.** You've ripped this disc before. Ejected immediately rather
+**Duplicate.** You've ripped this disc before. Ejected immediately rather
 than spending three hours doing it again. See below.
 
-**Blinking amber — library unreachable.** NAS asleep, network down, credentials changed.
+**Library unreachable.** NAS asleep, network down, credentials changed.
 The rip is safe and paused. Fix the share and it picks up where it stopped.
 
 **Nothing happened at all.** See [troubleshooting](08-troubleshooting.md).

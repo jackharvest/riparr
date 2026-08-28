@@ -577,8 +577,10 @@ jobs:
           | **Windows** | `riparr-preparer-windows-beta.exe` | Double-click it |
           | **Linux** | `riparr-preparer-linux-beta.tar.gz` | Unpack it, run `Riparr Preparer` |
 
-          Nothing is code-signed yet, so macOS and Windows will grumble the first time.
-          macOS: right-click the app and choose Open. Windows: More info → Run anyway.
+          Nothing is code-signed yet, so both will block it the first time. On **macOS**,
+          double-click it, let it get refused, then go to **System Settings → Privacy &
+          Security**, scroll to the bottom and click **Open Anyway**. On **Windows**,
+          More info → Run anyway.
 
           Already running Riparr? The box updates itself from **System → Updates**, and
           the Preparer updates itself from the sidebar. You do not need to download

@@ -8,6 +8,24 @@ bother updating.
 
 ---
 
+## 0.3.1
+
+**Small SD cards work now.** The Preparer was reserving 8.5 GB for the system and calling
+anything under about 12 GB "too small". The system actually uses 2.3 GB — measured on a
+running box, where a 32 GB card has 26 GB free. **An 8 GB card runs Riparr fine.** Card
+size only decides how much room there is to stage a rip, and if you set *Each rip goes →
+straight to your library* it stops mattering at all.
+
+**Guide rewritten** around building one: what it costs, what's inside, how it's wired,
+then the walkthrough. The reference pages are still there, further down, for when
+something surprises you.
+
+**The macOS install instructions were wrong.** Right-click → Open hasn't been enough for a
+while. You have to let it get refused, then approve it in System Settings → Privacy &
+Security.
+
+---
+
 ## 0.3.0
 
 **One version number.** The box and the Preparer used to have separate versions, which

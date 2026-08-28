@@ -28,21 +28,10 @@ If that doesn't resolve, see [name not found](08-troubleshooting.md#riparrlocal-
 **5. Set your Riparr password**
 
 The first page asks you to create a username and password for the web interface. This is
-**separate** from the system login you set in Imager.
+**separate** from the system login the Preparer set on the card.
 
 Nothing else is reachable until you do this — the box will not sit on your network
 unprotected.
-
-## What the LED is telling you
-
-| LED | Meaning |
-|---|---|
-| **Slow white pulse** | Booting, or waiting for you to finish setup |
-| **Blinking blue** | Joining WiFi |
-| **Solid green** | Ready. Feed it a disc. |
-| **Blinking amber** | Couldn't join WiFi — see below |
-
-Full list: [LED reference card](led-reference.md).
 
 ## If WiFi didn't work
 

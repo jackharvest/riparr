@@ -91,7 +91,7 @@ Nothing dramatic, by design.
 - **Mid-rip:** the rip keeps going, buffering onto the SD card. If the share comes back
   within the hour or so of buffer, you'll never know it happened.
 - **Buffer fills:** the rip **pauses** and holds the disc. It does not fail and does not
-  lose your work. The LED signals it and the web page explains.
+  lose your work. The web page explains what happened.
 - **Share returns:** everything resumes where it stopped.
 
 You will not come back to a bricked box or a half-written file in your library.

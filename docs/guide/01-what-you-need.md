@@ -10,10 +10,9 @@
 |---|---|
 | **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. Whichever you pick, the Preparer downloads the right OS for it. |
 | **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most. |
-| **microSD card** | 32GB for DVDs, 128GB for Blu-ray, 256GB for 4K. See [which card](#which-card). |
+| **microSD card** | 8GB runs it. Bigger only buys staging room — see [which card](#which-card). |
 | **USB-C power supply** | 30W for a Slim build, 100W PD for a Full build. |
 | **Enclosure** | 3D printed. **PETG or ASA — not PLA.** A drive plus a Pi in a sealed box gets hot enough to soften PLA. |
-| **WS2812 RGB LED** | ~$2. Not optional — it's the only way the box can tell you something failed. |
 
 **[unresolved]** The published parts list and printable enclosure files aren't finalized.
 Riparr Slim (5V only, smaller, simpler) and Riparr Full (5V + 12V, larger, cheaper drive)
@@ -87,42 +86,38 @@ A drive that is natively USB skips this problem entirely.
 
 ## Which card
 
-**Buy the card for the biggest disc you own.** Riparr rips a disc to the card first, then
-uploads it, so the card has to hold one whole title plus working room.
+**Two answers, and the cheap one is probably right.**
 
-| Card | Comfortably handles |
-|---|---|
-| **32 GB** | DVDs, one at a time. |
-| **128 GB** | Blu-rays, with room to load a second while the first uploads. |
-| **256 GB** | 4K UHD, and a stack of Blu-rays in an evening. |
+Riparr itself uses about 2.3 GB, so **an 8 GB card runs the box**. What card size actually
+buys you is *staging* — room to hold a rip on the box while it uploads.
 
-A 4K title runs to 66 GB, so **4K needs 128 GB at an absolute minimum and 256 GB to be
-comfortable.** If a disc will not fit, Riparr tells you before it starts rather than
-failing partway through.
+**If you turn on “straight to your library”** (Queue page → *Each rip goes*), nothing is
+staged at all. MakeMKV writes onto your share through the mount. On the reference board
+that's about 18 MB/s against the card's 9.4, so it's faster as well as cheaper, and card
+size stops mattering entirely. The trade is that the rip needs the network for its whole
+length instead of only at the end — a NAS that goes to sleep mid-disc costs you the rip.
 
-> **[unresolved] — the design intends better than this.** Adaptive streaming (D11) would
-> follow the file out to your library as MakeMKV writes it, which would make any card size
-> work for any disc. It is designed and not built: it depends on a question about MakeMKV's
-> output that needs a disc and a working drive to answer. Until then the numbers above are
-> what the box actually does.
+**If you leave it staging on the card** (the default), the card has to hold one whole
+title plus working room:
 
-Two card notes:
+| Card | Staging room | Comfortably handles |
+|---|---|---|
+| **8 GB** | ~4 GiB | Runs fine. DVD main titles. |
+| **16 GB** | ~11 GiB | DVDs easily, one Blu-ray main title. |
+| **32 GB** | ~26 GiB | Blu-rays one at a time. |
+| **128 GB** | ~116 GiB | Blu-rays back to back, 4K. |
 
-- **Get a high-endurance card** if you'll be doing Blu-rays regularly — SanDisk Max
-  Endurance or Samsung Pro Endurance. Every disc writes ~46GB through the card, and
-  ordinary cards aren't built for that much sustained writing. For DVDs only, any decent
-  card is fine.
-- **Do not buy an SD Express card.** They cost 3–4× more, these boards can't use the
-  fast interface at all, and they run hotter inside the box.
+The Preparer tells you what the card you've plugged in buys you, in discs, before it
+writes anything.
 
-Two card notes:
+Two notes if you're going to stage Blu-rays on the card:
 
-- **Get a high-endurance card** if you'll be doing Blu-rays regularly — SanDisk Max
-  Endurance or Samsung Pro Endurance. Every disc writes ~46GB through the card, and
-  ordinary cards aren't built for that much sustained writing. For DVDs only, any decent
-  card is fine.
-- **Do not buy an SD Express card.** They cost 3–4× more, these boards can't use the
-  fast interface at all, and they run hotter inside the box.
+- **Get a high-endurance card** — SanDisk Max Endurance or Samsung Pro Endurance. Every
+  disc pushes tens of gigabytes through it, and ordinary cards aren't built for that much
+  sustained writing. Going straight to your library avoids this entirely. For DVDs only,
+  any decent card is fine.
+- **Don't buy an SD Express card.** They cost 3–4× more, these boards can't use the fast
+  interface at all, and they run hotter inside the box.
 
 ---
 

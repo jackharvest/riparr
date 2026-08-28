@@ -145,7 +145,7 @@ Hand off to a real machine.
 ## Notifications
 
 On **Settings → Connect**. This is how the box reaches you once you have walked away
-from it — the LED only helps if you are in the room.
+from it — anything on the box itself only helps if you are in the room.
 
 **Tell me when** is the list of events, at the top of the page. Riparr sends every one
 you tick to every channel you set up. Four are on by default.
