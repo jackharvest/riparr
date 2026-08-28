@@ -85,7 +85,16 @@ jobs:
           mkdir -p tools/preparer/payload/tools
           cp -R server tools/preparer/payload/server
           cp -R packaging tools/preparer/payload/packaging
-          cp tools/install.sh tools/makemkv-install.sh tools/preparer/payload/tools/
+          # Disk-image background art for the Mac installer. It is packaging for the app,
+          # not for the appliance, and shipping it means carrying it inside the bundle and
+          # then unpacking it onto the board.
+          rm -rf tools/preparer/payload/packaging/dmg
+          # Every shell script in tools/, not a hand-kept list of two. The list was two,
+          # and `tools/bootstrap.sh` was not on it -- so the app copied a tree to the box
+          # and then ran a script that had never been packaged, failing setup at "Preparing
+          # the system" with "No such file or directory". A staging list maintained by hand
+          # drifts from the code that calls it, silently, and only on somebody else's box.
+          cp tools/*.sh tools/preparer/payload/tools/
           rm -rf tools/preparer/payload/server/.venv
           find tools/preparer/payload -name "__pycache__" -type d -prune -exec rm -rf {} + 2>/dev/null || true
           find tools/preparer/payload -name "*.pyc" -delete 2>/dev/null || true
@@ -166,8 +175,22 @@ jobs:
           python - <<'PY'
           import glob, os, sys
 
+          # Derived, not listed: every `tools/<name>.sh` that the setup driver or the
+          # install scripts actually invoke has to be in the payload. Hard-coding four
+          # paths here is what let bootstrap.sh go missing -- the gate agreed with the
+          # staging step because both were written from the same wrong memory.
+          import re
           NEED = ["server/riparr/main.py", "server/requirements.txt",
-                  "tools/install.sh", "packaging/riparr.service"]
+                  "packaging/riparr.service"]
+          for src in ("tools/preparer/finish.py", "tools/install.sh",
+                      "tools/makemkv-install.sh"):
+              with open(src, encoding="utf-8", errors="replace") as fh:
+                  for m in re.finditer(r"tools/[A-Za-z0-9_-]+\.sh", fh.read()):
+                      if m.group(0) not in NEED:
+                          NEED.append(m.group(0))
+          print("scripts the appliance is expected to run:")
+          for n in NEED:
+              print("   ", n)
 
           # One-directory build: the files are on disk, so look at them.
           dirs = [d for d in glob.glob("tools/preparer/dist/**/payload", recursive=True)

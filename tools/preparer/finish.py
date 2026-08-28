@@ -76,6 +76,26 @@ STEPS = [
 ]
 
 
+# Lines that are noise rather than news.
+#
+# The board has no real-time clock, so for the first minute after a cold boot -- which is
+# exactly when setup runs -- its clock is days behind and tar objects to every single file
+# it unpacks. That is a hundred lines of "time stamp is in the future", and the error box
+# shows the last 25 log lines, so the one line that actually mattered
+# ("tools/bootstrap.sh: No such file or directory") was pushed off the end of it. The
+# failure was legible in the log file and illegible on screen.
+NOISE = re.compile(
+    r"^tar: (Ignoring unknown extended header keyword"
+    r"|.*: time stamp .* in the future"
+    r"|.*: Cannot change ownership)")
+
+
+def useful(lines):
+    """The log with what nobody can act on removed. Never returns nothing."""
+    kept = [l for l in lines if not NOISE.match(l or "")]
+    return kept or list(lines)
+
+
 class Cancelled(Exception):
     pass
 
@@ -243,7 +263,7 @@ class Finisher:
         rc = p.wait()
         if rc != 0:
             raise StepFailed(step, "That step failed on the box.",
-                             "\n".join(list(self.log)[-25:]))
+                             "\n".join(useful(self.log)[-25:]))
         return rc
 
     # ── the steps ───────────────────────────────────────────────────────
@@ -374,12 +394,18 @@ class Finisher:
         self._begin("copy")
         dest = "/root/riparr"
         self._say("$ tar -cf - (working tree) | ssh … tar -xf - -C %s" % dest)
+        # COPYFILE_DISABLE stops macOS tar writing an AppleDouble "._name" beside every
+        # file to carry extended attributes the box has no use for -- they were being
+        # unpacked onto the appliance and are pure litter. packaging/dmg is the disk-image
+        # background art for the Mac installer; nothing on the board will ever read it.
         tar = subprocess.Popen(
             ["tar", "-cf", "-",
              "--exclude", "./.venv", "--exclude", "./.git",
              "--exclude", "__pycache__", "--exclude", "*.pyc",
+             "--exclude", "./packaging/dmg", "--exclude", "._*",
              "-C", self.repo, "."],
-            stdout=subprocess.PIPE)
+            stdout=subprocess.PIPE,
+            env=dict(os.environ, COPYFILE_DISABLE="1"))
         ssh = subprocess.Popen(
             self._ssh_base() + ["rm -rf %s && mkdir -p %s && tar -xf - -C %s"
                                 % (dest, dest, dest)],
@@ -392,7 +418,8 @@ class Finisher:
             self._say(line)
         if ssh.returncode != 0 or tar.returncode != 0:
             raise StepFailed("copy", "Couldn't copy Riparr onto the box.",
-                             out or "tar exited %d, ssh exited %d"
+                             "\n".join(useful((out or "").splitlines())[-25:])
+                             or "tar exited %d, ssh exited %d"
                              % (tar.returncode, ssh.returncode))
         self._run_remote("du -sh %s" % dest, "copy", 30)
         self._finish_step("copy")
