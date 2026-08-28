@@ -230,8 +230,16 @@ jobs:
             || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $V" "$PL"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $V" "$PL" \
             || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $V" "$PL"
+          # macOS will not even show the Location Services prompt without a usage
+          # description, and requestWhenInUseAuthorization() then does nothing at all --
+          # so the "Show bands and signal" button would be a button that never worked.
+          # This string is what the user reads in the prompt.
+          /usr/libexec/PlistBuddy -c "Set :NSLocationWhenInUseUsageDescription \
+            'Riparr uses your location only to let macOS reveal the names, bands and signal strength of nearby Wi-Fi networks, so it can tell you which ones the box can join. Nothing is stored or sent.'" "$PL" \
+            || /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string \
+            'Riparr uses your location only to let macOS reveal the names, bands and signal strength of nearby Wi-Fi networks, so it can tell you which ones the box can join. Nothing is stored or sent.'" "$PL"
           echo "stamped $V"
-          plutil -p "$PL" | grep -i CFBundle
+          plutil -p "$PL" | grep -iE "CFBundle|NSLocation"
 
       # Editing Info.plist breaks the seal PyInstaller's ad-hoc signature put on the
       # bundle, and on Apple silicon a broken signature is not "unidentified developer",
@@ -249,6 +257,17 @@ jobs:
       # An unsigned app is a dialog the user can click through. An invalidly signed one
       # is a dead end, so validity is a release gate now rather than a thing discovered
       # by the person who downloaded it.
+      # A permission the app cannot ask for is a feature that silently does nothing.
+      - name: The bundle can ask for Location Services (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          PL="tools/preparer/dist/Riparr Preparer.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :NSLocationWhenInUseUsageDescription" "$PL" >/dev/null \
+            || { echo "::error::no NSLocationWhenInUseUsageDescription; the Wi-Fi band prompt cannot appear"; exit 1; }
+          echo "ok  usage description present"
+
       - name: The signature is valid (macOS)
         if: runner.os == 'macOS'
         shell: bash
