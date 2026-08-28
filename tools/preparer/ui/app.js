@@ -479,9 +479,14 @@ async function buildReview() {
     ["Riparr port", `${c.port}`],
     ["System account", `${esc(c.user)} · password saved in user_password.txt`],
     ["SSH", state.boot.has_key ? "enabled · key + password" : "enabled · password"],
+    // Say where it came from. "Copied onto the card" on its own reads as though Riparr
+    // ships MakeMKV, and it does not: nothing is redistributed and no release asset
+    // contains it. The app downloads the official tarballs from makemkv.com into your
+    // build folder, checked against the pinned hashes in packaging/makemkv-manifest.json,
+    // and the write copies them across so the box does not have to fetch them itself.
     ["MakeMKV", state.boot.makemkv
-      ? 'copied onto the card <span class="tag">no scp needed</span>'
-      : '<span class="tag warn">not in the build folder</span>'],
+      ? 'copied from your build folder <span class="tag">your own download from makemkv.com</span>'
+      : '<span class="tag warn">not downloaded yet — nothing will be copied</span>'],
     ["Region", `${esc(c.country)} · ${esc(c.timezone)}`],
   ];
   $("#summary").innerHTML = rows

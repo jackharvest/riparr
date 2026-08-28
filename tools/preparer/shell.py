@@ -27,6 +27,23 @@ import os
 import sys
 import threading
 
+# ── the elevated card writer is this same binary, re-invoked ──
+#
+# A packaged app is not a Python interpreter. `sys.executable` is the application itself,
+# so `[sys.executable, "writer.py", ...]` handed the GUI its own argument parser and died
+# with "unrecognized arguments" -- which the interface reported, misleadingly, as "Could
+# not get permission to write the card". writer.py was not collected into the bundle to
+# be run either way. Card writing therefore never worked from the packaged app on any
+# platform, only from a checkout, where `sys.executable` really is python3.
+#
+# This is checked above `import webview` on purpose: the privileged child runs as root
+# and has no business loading a web view or reaching for the window server to write a
+# card.
+WRITE_FLAG = "--write-card"
+if len(sys.argv) > 1 and sys.argv[1] == WRITE_FLAG:
+    import writer
+    sys.exit(writer.main(sys.argv[2:]))
+
 import webview
 
 import bridge as _bridge

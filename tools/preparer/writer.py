@@ -434,8 +434,15 @@ def _provision_fat(args, dev, partno, st):
     return 0
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def main(argv=None):
+    """The privileged half. `argv` is None from a checkout and explicit when frozen.
+
+    A packaged app is not a Python interpreter: `sys.executable` is the application
+    binary, so there is no way to hand it a script. The frozen build therefore re-invokes
+    *itself* with `--write-card`, and `shell.py` routes that here before it imports
+    anything graphical. See `Bridge._run_privileged`.
+    """
+    ap = argparse.ArgumentParser(prog="riparr-writer")
     ap.add_argument("--image", required=True)
     ap.add_argument("--dev", required=True,
                     help=r"whole-disk identifier: disk4, sdb, \\.\PHYSICALDRIVE2")
@@ -448,7 +455,7 @@ def main():
                     help="directory of MakeMKV tarballs to copy onto the boot partition")
     ap.add_argument("--verify", action="store_true",
                     help="read the card back after writing and compare")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     # The device identifier arrives from a GUI that already validated it, and is about
     # to be handed to something that writes raw sectors. It is checked again here,

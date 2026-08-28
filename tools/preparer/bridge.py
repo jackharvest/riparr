@@ -32,7 +32,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.13"
+VERSION = "0.1.14"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -496,10 +496,17 @@ class Bridge:
         back: it publishes to the progress file and this side polls it. That was forced
         by macOS first and turns out to be the only shape UAC allows either.
         """
-        argv = [sys.executable, os.path.join(HERE, "writer.py"),
-                "--image", image, "--dev", dev, "--toml", toml_path,
-                "--progress", self.progress_path, "--total", str(total),
-                "--sha256", sha]
+        # A frozen build has no interpreter to hand a script to -- `sys.executable` is
+        # the application itself -- so it re-invokes itself and shell.py routes
+        # `--write-card` into writer.main() before importing anything graphical. From a
+        # checkout `sys.executable` really is python3 and the script is on disk.
+        if getattr(sys, "frozen", False):
+            argv = [sys.executable, "--write-card"]
+        else:
+            argv = [sys.executable, os.path.join(HERE, "writer.py")]
+        argv += ["--image", image, "--dev", dev, "--toml", toml_path,
+                 "--progress", self.progress_path, "--total", str(total),
+                 "--sha256", sha]
         if verify:
             argv.append("--verify")
         if mkv:

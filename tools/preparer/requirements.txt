@@ -15,6 +15,23 @@ passlib>=1.7
 # shell.py needs none of it; pywebview pulls what it needs on each platform.
 pyobjc-framework-WebKit>=10.0 ; sys_platform == "darwin"
 
+# The Wi-Fi screen, and the two frameworks it cannot work without.
+#
+# These were never listed, so they were never installed on the build runner and never
+# collected into the bundle -- and `import CoreLocation` inside a function fails quietly.
+# The effect was not an error: `location_status()` returned "unavailable", which
+# `wifi_detail_status()` reports as {available: False, granted: True}, and the interface
+# reads that as "this platform does not do bands" and hides both the offer *and* the
+# explanation. So the packaged app showed "band unknown" against every network with no
+# button to fix it and nothing on screen saying why, while a checkout with pyobjc
+# installed worked perfectly. Same shape as the missing CA bundle: the frozen build is
+# a different machine from the one it was built on.
+#
+# CoreWLAN is the scan itself -- the only source of unredacted SSIDs with bands and
+# signal. CoreLocation is the permission that scan needs, and the button that asks.
+pyobjc-framework-CoreWLAN>=10.0 ; sys_platform == "darwin"
+pyobjc-framework-CoreLocation>=10.0 ; sys_platform == "darwin"
+
 # CA certificates. PyInstaller bundles its own libssl and no trust store, so a frozen
 # build failed every HTTPS request with CERTIFICATE_VERIFY_FAILED while the same code
 # from a checkout worked -- the system Python has certificates and the bundle does not.

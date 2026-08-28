@@ -198,6 +198,57 @@ jobs:
           sys.exit(1 if missing else 0)
           PY
 
+      # Card writing from the packaged app is a different code path from card writing in
+      # a checkout, and the packaged one had never worked on any platform. A frozen build
+      # is not a Python interpreter -- `sys.executable` is the application -- so handing
+      # it `writer.py` re-entered the GUI's own argument parser and died with
+      # "unrecognized arguments", which the interface reported as "Could not get
+      # permission to write the card". writer.py was not collected into the bundle to be
+      # run either way.
+      #
+      # `--write-card --help` can only print the writer's usage if shell.py's dispatch
+      # reached writer.main(), so this proves the whole seam from the outside.
+      - name: The bundle can reach its card writer
+        shell: bash
+        run: |
+          set -e
+          case "$RUNNER_OS" in
+            macOS)   APP="tools/preparer/dist/Riparr Preparer.app/Contents/MacOS/Riparr Preparer" ;;
+            Windows) APP="tools/preparer/dist/Riparr Preparer.exe" ;;
+            *)       APP="tools/preparer/dist/Riparr Preparer/Riparr Preparer" ;;
+          esac
+          OUT=$("$APP" --write-card --help 2>&1) || true
+          echo "$OUT"
+          for f in --dev --progress --makemkv; do
+            echo "$OUT" | grep -q -- "$f" || {
+              echo "::error::--write-card never reached the writer (no $f in its usage)"
+              exit 1
+            }
+          done
+          echo "ok  --write-card reaches the writer"
+
+      # The Wi-Fi screen exists to tell 2.4 GHz from 5 GHz and cannot do it without these
+      # two. They were missing from requirements.txt, so they were never installed on the
+      # runner and never collected -- and the failure is silent in the worst way:
+      # `import CoreLocation` raises inside a function, the status comes back
+      # "unavailable", and the interface reads that as "this platform has no such thing"
+      # and hides the permission button *and* the note explaining its absence. Every
+      # network read "band unknown" with nothing on screen to do about it.
+      - name: The bundle carries CoreWLAN and CoreLocation (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          APP="tools/preparer/dist/Riparr Preparer.app"
+          for m in CoreWLAN CoreLocation; do
+            hit=$(find "$APP" \( -name "$m" -o -name "$m.so" \) -print -quit)
+            [ -n "$hit" ] || {
+              echo "::error::$m is not in the bundle; the Wi-Fi screen cannot show bands"
+              exit 1
+            }
+            echo "ok  $m at $hit"
+          done
+
       # A build with no CA certificates cannot download an operating system, check for
       # an update, or verify a checksum -- it fails every HTTPS call with
       # CERTIFICATE_VERIFY_FAILED. v0.1.4 shipped that way, and it is invisible from a
