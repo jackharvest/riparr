@@ -296,25 +296,65 @@
       <div class="track"><div class="fill" id="fill"></div></div>
       <div class="meta"><span id="write-pct">0%</span><span id="write-detail"></span></div>
       <p class="micro" id="write-warn">Leave the card in place until this finishes.</p>
+      <!-- Said before it happens, because it cannot be prevented. The moment the new
+           partition table lands, macOS probes the card, finds a Linux filesystem it has
+           no driver for, and offers to initialise it. Nothing in userspace can stop that
+           dialog without disabling Disk Arbitration for the whole machine, which is not
+           a trade worth making -- so the next best thing is that nobody meets it cold
+           and clicks the wrong button on a card that is mid-write. -->
+      <p class="micro warn" id="write-osnote">macOS will interrupt with
+        <b>“The disk you inserted was not readable”</b>. That means it is working — the
+        box runs Linux and macOS cannot read its filesystem. Click <b>Ignore</b>.
+        Never <b>Initialise</b>.</p>
     </div>
   </section>
 
-  <!-- ── Handoff: card written, now go put it in the box ───── -->
+  <!-- ── Handoff: card written, now go put it in the box ─────
+       Two columns, because this screen has two jobs and they are not the same job: the
+       left is a receipt for work that is finished, the right is work that is not.
+
+       As one centred column it read as a finish line. Writing a card *feels* like the
+       end, so the instinct is to close the window -- which strands the box half set up,
+       in an app whose whole point is that it does both halves. And the single button
+       sat there inviting a click before the card had moved, so "It's plugged in" was
+       routinely true only in the sense that the user intended to plug it in. -->
   <section class="screen" data-screen="handoff">
-    <div class="write-wrap">
-      <div class="tick">✓</div>
-      <h1>Your card is ready</h1>
-      <p class="lede">Two things to do, then Riparr sets itself up.</p>
-      <ol class="next big">
-        <li>Slide the card into the box</li>
-        <li>Plug in the single USB-C cable</li>
-      </ol>
-      <p class="micro" id="handoff-note">The first start takes a couple of minutes —
-        it resizes the card and joins your Wi-Fi. Nothing to watch.</p>
-      <div class="row-actions center">
-        <button class="primary" id="begin-setup">It's plugged in — continue</button>
+    <div class="handoff">
+
+      <div class="handoff-col done-col">
+        <div class="tick">✓</div>
+        <h2 class="handoff-h">Card written</h2>
+        <p class="lede">Checked, and safe to remove.</p>
+        <div class="summary compact" id="handoff-recap"></div>
+        <p class="micro" id="handoff-eject">macOS may say the card is unreadable and
+          offer to initialise it. That is expected — the box runs Linux, and macOS
+          cannot read its filesystem. Choose <b>Ignore</b>. Never <b>Initialise</b>:
+          that would erase the card you just made.</p>
       </div>
-      <p class="micro dim" id="handoff-skip"></p>
+
+      <div class="handoff-col next-col">
+        <div class="step-badge">Your turn</div>
+        <h2 class="handoff-h">Move it to the box</h2>
+        <ol class="next big" id="handoff-steps">
+          <li>Take the card out of this Mac</li>
+          <li>Slide it into the box</li>
+          <li>Plug in the single USB-C cable</li>
+        </ol>
+
+        <div class="waiting">
+          <div class="pulse" id="handoff-pulse"></div>
+          <div class="waiting-text">
+            <b id="handoff-status">Waiting for you to plug it in</b>
+            <span class="micro" id="handoff-sub">Nothing to click yet.</span>
+          </div>
+        </div>
+
+        <div class="row-actions">
+          <button class="primary" id="begin-setup" disabled>Waiting for the box…</button>
+        </div>
+        <p class="micro dim" id="handoff-skip"></p>
+      </div>
+
     </div>
   </section>
 

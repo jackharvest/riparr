@@ -560,15 +560,9 @@ function pollWrite() {
       clearInterval(state.poll);
       // The card is written. That used to be the finish line; now it is halfway.
       // Hand over to the person for the one part only they can do — moving the card
-      // into the box — and pick the work back up when they say it is plugged in.
-      $("#handoff-skip").innerHTML =
-        `<a href="#" id="skip-setup">Skip — I'll set it up myself</a>`;
-      $("#skip-setup").onclick = (e) => {
-        e.preventDefault();
-        show("done");
-        renderDone(false);
-      };
+      // into the box — and let the network, not a promise, say when it has happened.
       show("handoff");
+      enterHandoff();
       return;
     }
     if (phase === "error" || phase === "cancelled") {
@@ -601,6 +595,122 @@ function pollWrite() {
       $("#write-detail").textContent = "";
     }
   }, 350);
+}
+
+/* ── handoff: the half only a person can do ──────────────
+   Between writing the card and setting the box up sits a physical step no software can
+   perform: somebody has to carry a card across a room. The old screen handled that with
+   a button meaning "I promise I did it", which people pressed on the way to doing it —
+   and then setup ran against a box that was not there yet.
+
+   So the app asks the network instead. `name_taken` is the same mDNS question the naming
+   step asks; here the answer means the box has booted and joined the Wi-Fi, which is
+   exactly the condition setup needs. The button is not what decides the box is ready.
+
+   The escape hatch matters as much as the detection. Plenty of networks block mDNS
+   between clients, and on those a perfectly healthy box will never answer — so after a
+   grace period the button unlocks regardless. A gate that cannot be opened is worse than
+   no gate. */
+const HANDOFF_GRACE_MS = 40000;
+
+function stopHandoff() {
+  if (state.handoffPoll) { clearInterval(state.handoffPoll); state.handoffPoll = null; }
+}
+
+async function enterHandoff() {
+  const host = (state.hostname || "riparr").toLowerCase();
+
+  // The receipt. Naming what is on the card is what makes the left column read as
+  // finished work rather than as decoration around a button.
+  const rows = [
+    ["Card", state.disk ? esc(state.disk.name) : "written and checked"],
+    ["Reachable at", `${esc(host)}.local:${state.port}`],
+    ["Wi-Fi", state.net ? esc(state.net.ssid) : "—"],
+    ["MakeMKV", state.boot && state.boot.makemkv
+      ? "copied on" : `<span class="tag warn">not included</span>`],
+  ];
+  $("#handoff-recap").innerHTML = rows
+    .map(([k, v]) => `<div class="r"><div class="k">${k}</div><div class="v">${v}</div></div>`)
+    .join("");
+
+  $("#handoff-skip").innerHTML =
+    `<a href="#" id="skip-setup">Skip — I'll set it up myself</a>`;
+  $("#skip-setup").onclick = (e) => {
+    e.preventDefault();
+    stopHandoff();
+    show("done");
+    renderDone(false);
+  };
+
+  const btn    = $("#begin-setup");
+  const pulse  = $("#handoff-pulse");
+  const status = $("#handoff-status");
+  const sub    = $("#handoff-sub");
+
+  btn.disabled = true;
+  btn.textContent = "Waiting for the box…";
+  pulse.className = "pulse";
+  status.textContent = "Waiting for you to plug it in";
+  sub.textContent = "Nothing to click yet — the card has to move first.";
+
+  const unlock = (label, note) => {
+    btn.disabled = false;
+    btn.textContent = label;
+    if (note) sub.textContent = note;
+  };
+
+  // One probe before the card can possibly be in the box. If something already answers
+  // to this name — an older box still running, or a plain collision — then finding it
+  // later proves nothing, so say so and hand the decision back rather than unlocking on
+  // the strength of somebody else's mDNS record.
+  let preexisting = false;
+  try { const p = await riparr.name_taken(host); preexisting = !!(p && p.taken); }
+  catch (e) { preexisting = false; }
+
+  if (preexisting) {
+    status.textContent = `Something already answers to ${host}.local`;
+    sub.textContent = "So this app can't tell the new box apart from it. Plug yours in, " +
+                      "then continue.";
+    unlock("It's plugged in — continue");
+    return;
+  }
+
+  const began = Date.now();
+  let found = false, looking = false;
+
+  stopHandoff();
+  state.handoffPoll = setInterval(async () => {
+    if (found) return;
+    const waited = Date.now() - began;
+
+    // A beat before the app starts claiming to look for anything. Announcing a search
+    // for a box the user has not stood up yet is noise dressed as progress.
+    if (!looking && waited > 6000) {
+      looking = true;
+      pulse.className = "pulse looking";
+      status.textContent = `Listening for ${host}.local`;
+    }
+    if (!looking) return;
+
+    let r = null;
+    try { r = await riparr.name_taken(host); } catch (e) { r = null; }
+    if (r && r.taken) {
+      found = true;
+      stopHandoff();
+      pulse.className = "pulse found";
+      status.textContent = `${host}.local is answering`;
+      unlock("Set it up now", "The box is up. The rest is automatic.");
+      return;
+    }
+
+    sub.textContent = waited < 120000
+      ? "First start takes a couple of minutes — it resizes the card and joins your Wi-Fi."
+      : "Still nothing. Check the USB-C cable, and that the card is seated.";
+
+    if (btn.disabled && waited > HANDOFF_GRACE_MS) {
+      unlock("It's plugged in — continue");
+    }
+  }, 2000);
 }
 
 /* ── the second half: card written, box plugged in ──────── */
@@ -1062,6 +1172,7 @@ $("#do-write").onclick = async () => {
 };
 
 $("#begin-setup").onclick = async () => {
+  stopHandoff();
   state.logLen = -1;
   $("#setup-log").textContent = "";
   $("#setup-fill").style.width = "0%";

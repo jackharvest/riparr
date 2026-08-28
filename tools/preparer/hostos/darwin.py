@@ -66,6 +66,61 @@ def location_status():
         return None, "unavailable"
 
 
+# Held for the life of the process, deliberately.
+#
+# A CLLocationManager that goes out of scope is deallocated, and a deallocated manager
+# cancels the authorisation request it was in the middle of -- so the prompt never
+# appears, the status never moves off notDetermined, and the call returns False having
+# looked like it did something. It is the most common way this API silently does nothing.
+#
+# The delegate matters for the same reason: macOS delivers the authorisation answer to
+# one, and without a delegate the request has nowhere to land. Built lazily and once --
+# defining an Objective-C class at import time is how app.py used to collide with
+# pywebview's own AppDelegate and take the whole import down with it.
+_LOCATION_MANAGER = None
+_LOCATION_DELEGATE_CLASS = None
+
+
+def _location_delegate_class():
+    global _LOCATION_DELEGATE_CLASS
+    if _LOCATION_DELEGATE_CLASS is None:
+        from Foundation import NSObject
+
+        class RiparrLocationDelegate(NSObject):
+            # Every callback is a no-op. Nothing here wants a location; the only reason
+            # to ask is that macOS will not name a Wi-Fi network to an app that has not.
+            def locationManager_didChangeAuthorization_(self, manager, status):
+                pass
+
+            def locationManagerDidChangeAuthorization_(self, manager):
+                pass
+
+            def locationManager_didUpdateLocations_(self, manager, locations):
+                pass
+
+            def locationManager_didFailWithError_(self, manager, error):
+                pass
+
+        _LOCATION_DELEGATE_CLASS = RiparrLocationDelegate
+    return _LOCATION_DELEGATE_CLASS
+
+
+def _location_manager():
+    global _LOCATION_MANAGER
+    if _LOCATION_MANAGER is None:
+        try:
+            import CoreLocation
+            mgr = CoreLocation.CLLocationManager.alloc().init()
+            try:
+                mgr.setDelegate_(_location_delegate_class().alloc().init())
+            except Exception:
+                pass
+            _LOCATION_MANAGER = mgr
+        except Exception:
+            return None
+    return _LOCATION_MANAGER
+
+
 def request_location(timeout=12):
     """Ask for Location Services, because a Wi-Fi scan is useless without it.
 
@@ -88,17 +143,33 @@ def request_location(timeout=12):
             return True
         if st != 0:                       # denied or restricted: asking again does nothing
             return False
-        mgr = CoreLocation.CLLocationManager.alloc().init()
+
+        mgr = _location_manager()
+        if mgr is None:
+            return False
         mgr.requestWhenInUseAuthorization()
-        # The answer arrives on the run loop. Poll rather than block it.
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            st = CoreLocation.CLLocationManager.authorizationStatus()
-            if st in _LOC_OK:
-                return True
-            if st not in (0,):
-                return False
-            time.sleep(0.25)
+        # Asking for authorisation is not always enough on its own outside the sandbox.
+        # Actually requesting a fix is what makes locationd raise the prompt; it is
+        # stopped again below, and no location is ever read or kept.
+        try:
+            mgr.startUpdatingLocation()
+        except Exception:
+            pass
+        try:
+            # The answer arrives on the run loop. Poll rather than block it.
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                st = CoreLocation.CLLocationManager.authorizationStatus()
+                if st in _LOC_OK:
+                    return True
+                if st not in (0,):
+                    return False
+                time.sleep(0.25)
+        finally:
+            try:
+                mgr.stopUpdatingLocation()
+            except Exception:
+                pass
     except Exception:
         return False
     return False
