@@ -4,244 +4,175 @@
 
 # Riparr
 
-**An *arr-style appliance for ripping Blu-rays and DVDs.**
+**Rip your Blu-rays and DVDs straight onto your NAS. One box, one cable, no babysitting.**
 
-Insert a disc. Walk away. It ends up on your library share, correctly named.
-
-[Get started](#the-three-stages) · [User guide](docs/guide/README.md) · [Which drive to buy](docs/guide/01-what-you-need.md#which-drive) · [Troubleshooting](docs/guide/08-troubleshooting.md)
+[Get it](#get-it) · [User guide](docs/guide/README.md) · [Which drive to buy](docs/guide/01-what-you-need.md#which-drive) · [Troubleshooting](docs/guide/08-troubleshooting.md)
 
 </div>
 
 ---
 
-Sonarr manages TV. Radarr manages films. Lidarr manages music. **Riparr manages the
-physical-to-digital step nobody automated well: getting discs off the shelf and into the
-library.**
+Sonarr does your TV. Radarr does your films. Nobody bothered automating the boring part:
+getting the discs off your shelf and into your library. That's this.
 
-A small 3D-printed box houses an optical drive and a single-board computer. **One USB-C
-cable** powers and runs the whole thing. There is no screen, no keyboard and no off
-switch. Once it is set up, the entire interaction is:
+It's a 3D-printed box with an optical drive and a little single-board computer inside.
+**One USB-C cable** runs the whole thing. No screen, no keyboard, no power button. Once
+it's set up you don't touch the software again:
 
-> **insert disc → close tray → walk away → disc ejects when it is done**
+> **put a disc in → close the tray → walk away → it ejects when it's done**
 
-The finished MKV lands on your network share, named the way Plex and Jellyfin expect. A
-status LED on the box says what it is doing when you are not at a browser, and a web
-interface at `riparr.local` says it in words when you are.
-
----
-
-## The three stages
-
-Riparr is three separate things and it is worth knowing which one you are in. They happen
-in this order, once, and then you are done with all of them.
-
-### 1 · Preparation — on your own computer, about 5 minutes
-
-You run the **Preparer**, a small app you download from
-[Releases](../../releases). It writes Riparr's operating system onto an SD card and puts
-your Wi-Fi, your hostname and your account on it, so the box can join your network the
-first time it is powered on. Nothing is typed into a terminal.
-
-There is no screen on the box, so everything it needs to reach your network has to be on
-the card *before* it boots. That is the whole reason this stage exists.
-
-| Your computer | Write the card | Set the box up | Proven on real hardware |
-|---|---|---|---|
-| **macOS** | Yes — Apple Silicon download; Intel runs it from a checkout | Yes | Yes |
-| **Linux** | Yes | Yes | Not yet |
-| **Windows** | Yes, except for images that keep their settings in a Linux filesystem — the app says so before it touches the card | Yes | Not yet |
-
-Your computer asks for permission once — your password on macOS, polkit on Linux, UAC on
-Windows — and that covers writing, provisioning and ejecting. If the Preparer can't write
-a card from your system it says so on its first screen, before you choose anything — and
-that includes naming anything it needs installed, such as `brew install e2fsprogs` on a
-Mac, which is what lets it write settings into the card's Linux partition.
-
-You can also write the card with [Raspberry Pi
-Imager](https://www.raspberrypi.com/software/) or
-[balenaEtcher](https://etcher.balena.io/) and come back for setup — but the box has **no
-Ethernet socket**, so a card written that way needs its Wi-Fi added by hand or it will
-boot and never appear.
-→ [Preparing the card, in detail](docs/guide/02-prepare-sd-card.md)
-
-### 2 · Setup — the box installs itself, about 10 minutes unattended
-
-Put the card in, plug the cable in, and the box boots and joins your Wi-Fi. The Preparer
-finds it on the network and installs Riparr onto it over SSH — you watch a progress bar.
-Then it hands you a browser window at `http://riparr.local:9797`, where a short wizard
-asks for four things:
-
-1. **A password** for the web interface
-2. **MakeMKV** — accept its licence and press install. It is built on the device, which
-   takes about half an hour and needs no attention
-3. **Your library share** — Riparr finds the servers on your network, you pick a share,
-   and it writes a real test file and reads it back before saving. A share it cannot
-   write to fails *now*, in front of you, instead of at 3am on your first rip
-4. **Where things go** — a folder for films, a folder for television. They can be on the
-   same share or on two different machines
-
-→ [First boot](docs/guide/03-first-boot.md) · [Connecting your library](docs/guide/04-connect-your-library.md)
-
-### 3 · Using it — forever, from a browser or not at all
-
-The daily loop needs no browser at all: put a disc in, take it out when it comes back.
-
-The web interface is there for the times you want it. **Queue** shows what is happening
-now, stage by stage, with real times rather than a bar that does not move. **History**
-and **Discs** are the record of what has been ripped. **Settings** is five pages you will
-mostly read once.
-
-Riparr can also tell you when it is finished, or when it needs you, through **ntfy,
-Discord, email or a webhook** — because a box whose entire promise is "walk away" needs a
-way to reach somebody who did.
-
-→ [Ripping discs](docs/guide/06-ripping-discs.md) · [Settings reference](docs/guide/07-settings-reference.md) · [LED card](docs/guide/led-reference.md)
+The MKV lands on your share, named the way Plex and Jellyfin want it. There's an LED on
+the box for when you're walking past, and `riparr.local` in a browser for when you
+actually want to look.
 
 ---
 
-## What you need
+## What it looks like
+
+**Using it.** A disc going through, and the same disc afterwards.
+
+<img src="docs/img/web-queue.jpg" alt="The Riparr queue, ripping a Blu-ray with Auto Rip on">
+
+<img src="docs/img/web-history.jpg" alt="Riparr history, showing a finished rip on the library share">
+
+**Setting it up.** The Preparer runs on your computer and writes the SD card.
+
+<img src="docs/img/preparer-wifi.jpg" alt="The Preparer picking a Wi-Fi network">
+
+<img src="docs/img/preparer-handoff.jpg" alt="The Preparer waiting for the box to come online">
+
+---
+
+## Get it
+
+Download the Preparer for whatever you're sitting at. Everything else happens from there.
+
+| | | |
+|---|---|---|
+| **macOS** | `riparr-preparer-macos.dmg` | Open it, drag Riparr Preparer into Applications |
+| **Windows** | `riparr-preparer-windows-beta.exe` | Double-click it |
+| **Linux** | `riparr-preparer-linux-beta.tar.gz` | Unpack it, run `Riparr Preparer` |
+
+**[→ Latest release](../../releases/latest)**
+
+None of it is code-signed yet, so macOS and Windows will both grumble the first time.
+On macOS, right-click the app and choose Open. On Windows, More info → Run anyway.
+
+---
+
+## How it goes
+
+**1 · Write the card.** About five minutes, on your computer.
+Pick the SD card, pick your Wi-Fi, name the box. It downloads the OS, writes the card,
+then reads it back to check it kept what was written.
+
+**2 · Plug it in.** About ten minutes, hands off.
+Card into the box, cable into the wall. The Preparer watches the network and unlocks the
+next button the moment the box actually shows up, then installs everything over SSH. Go
+and do something else.
+
+**3 · Use it.** Forever.
+Open `riparr.local`, point it at your share, put a disc in.
+
+---
+
+## What you'll need
 
 | | |
 |---|---|
-| **A board** | Orange Pi Zero 2W is the reference. Others are supported, some still marked beta |
-| **An optical drive** | A USB one, or an internal one plus a bridge that **names** optical/ATAPI support. [This is the part people get wrong](docs/guide/01-what-you-need.md#which-drive) |
-| **An SD card** | 32 GB is enough for DVDs. Blu-ray wants more, or write straight to your library instead |
-| **A network share** | SMB. Any NAS, or a folder shared from a computer that is usually on |
-| **4K UHD?** | That is a *drive* decision, not a setting. [Read this first](docs/guide/01-what-you-need.md#which-drive) |
+| **A board** | Orange Pi Zero 2W is what I built it on. Others are in there, some still marked beta |
+| **An optical drive** | USB, or internal plus a bridge that actually *says* it does optical/ATAPI. [This is the bit people get wrong](docs/guide/01-what-you-need.md#which-drive) |
+| **An SD card** | 32 GB is plenty for DVDs. Blu-ray wants more, or just write straight to your library instead |
+| **A share** | SMB. Any NAS, or a folder on a computer that's usually on |
+| **Doing 4K UHD?** | That's a *drive* decision, not a setting. [Read this before you buy](docs/guide/01-what-you-need.md#which-drive) |
 
 ---
 
-## Status
+## Keeping it updated
 
-**Riparr rips discs, end to end, on real hardware.** On 2026-08-26 a Blu-ray went in and a
-verified MKV came out on the library share, unattended. Getting there took eleven
-interface bugs in one session, all of them now fixed.
+Both halves watch for new releases and say so. Nothing installs until you click.
 
-**Riparr updates itself, once you say so.** Both halves check for a new release, tell
-you when there is one, and — on a click — download it, verify it against the checksum
-published with the release, replace themselves and restart. Nothing installs on its own,
-and neither half will install anything it cannot verify. The checking is on by default
-and can be turned off in one place on each side.
-
-**This is still pre-1.0.** It has run on one board, with one drive, against one NAS. The
-parts most likely to surprise you are the ones that have met the fewest configurations:
-other boards, other drives, and **card writing from Windows or Linux** — which is written
-and checked but has not yet produced a card that booted a board. If you are the first to
-try one, an issue with your OS version and card reader is genuinely useful.
-
-**Known and deliberate:**
-
-- **The MakeMKV beta key expires monthly.** That is GuinpinSoft's decision, not ours.
-  Riparr fetches the current key, tells you when the one you have lapses, and makes
-  replacing it one click.
-- **No transcoding.** A board this size would take days and the result would be poor.
-  Riparr can write to a watch folder instead, for Tdarr or Unmanic to pick up.
-- **Adaptive streaming (D11) is designed, not built.** A rip is transferred once it is
-  complete rather than as it is written. Writing *straight* to your library — which is
-  faster than the card on the reference board, and removes the card as a size limit — is
-  built and is a setting.
+The web interface updates the box. The Preparer updates itself. And if the box's own
+updater ever can't manage it, run the Preparer's **Set up a box that's already running** —
+it updates in place over SSH and your login, settings, rip history and MakeMKV build all
+stay exactly where they are.
 
 ---
+---
 
-## Running it
+# Deeper details
+
+Everything below is stuff you probably don't need. It's here if you do.
+
+## Where it's at
+
+This is pre-1.0. It rips discs end to end on real hardware, and both halves update
+themselves. It has also run on one board, with one drive, against one NAS — so the parts
+most likely to bite you are the ones fewest people have tried: other boards, other
+drives, and **writing a card from Windows or Linux**, which is written and tested but
+hasn't yet produced a card that went on to boot a board. If you're first, [an issue](../../issues)
+with your OS version and card reader is genuinely useful.
+
+Deliberate limits, so they don't surprise you:
+
+- **The MakeMKV beta key expires monthly.** That's GuinpinSoft's call, not mine. Riparr
+  fetches the current one, tells you when yours lapses, and makes replacing it one click.
+- **No transcoding.** A board this size would take days and it'd look bad. Write to a
+  watch folder and let Tdarr or Unmanic do it properly.
+- **Rips transfer when they finish**, not while they're being written. Writing *straight*
+  to your library is built and is a setting — on the reference board it's faster than the
+  card, and it takes the card out of the size equation.
+
+## Run it from source
 
 ```sh
 # On the box, from a checkout
 sudo bash tools/install.sh          # → http://riparr.local:9797
 
-# On your own machine, to look at the interface
-server/run.sh                       # → http://localhost:8000, simulated hardware
+# On your own machine, just to poke at the interface
+cd server && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+RIPARR_MOCK=1 .venv/bin/python -m uvicorn riparr.main:app --port 9797
+
+# The Preparer, from a checkout
+pip install -r tools/preparer/requirements.txt
+python3 tools/preparer/shell.py
 ```
-
-`server/run.sh` builds its own virtualenv the first time it runs, so a fresh clone needs
-nothing prepared beforehand.
-
-Off the board, `riparr/platform.py` reports a simulated system, a simulated drive with a
-disc in it and discoverable shares, so the whole interface is exercisable on a laptop.
-
-| Tool | For |
-|---|---|
-| [`tools/preparer/`](tools/preparer/README.md) | The Preparer — the app in stage 1 |
-| `tools/find-riparr.sh` | Finding the box when `riparr.local` will not resolve |
-| `sudo bash tools/card-report.sh` | Diagnosing a card that will not boot |
-| [`tools/flasher/`](tools/flasher/README.md) | The Preparer's job from a terminal, for scripts and CI |
-
----
 
 ## Documents
 
-**For users** — [`docs/guide/`](docs/guide/README.md) is the whole path in order, and
-[troubleshooting](docs/guide/08-troubleshooting.md) is organised by what you actually
-observed rather than by subsystem.
-
-**For anyone working on it:**
-
-| Where | What's in it |
-|---|---|
-| [`server/`](server/) | The appliance service — FastAPI + SQLite, one process |
-| [`tools/preparer/`](tools/preparer/) | The desktop app that writes the card and sets the box up |
-| [`packaging/`](packaging/) | systemd units and the first-boot provisioner |
-
-The design notes, decision log and working journal are kept privately rather than
-published. If a choice here looks arbitrary and you want the reasoning behind it, ask in
-an issue — the answer exists, it just isn't a file in this repository.
-
----
+- **[User guide](docs/guide/README.md)** — what to buy, how to set it up, what to do when it sulks
+- **[Design notes](docs/design/)** — why things work the way they do
 
 ## Support
 
-Riparr is free and GPL-3.0. If it saved you a shelf of discs and you feel like it:
-[**buy me a coffee**](https://buymeacoffee.com/jackharvest). That link is also the mug
-icon in the top right of the web interface — the one and only ask anywhere in the product.
-
-Bugs and ideas: [Issues](../../issues).
-
----
+Bugs and ideas: **[Issues](../../issues)**.
 
 ## Licence
 
-**Riparr is [GPL-3.0](LICENSE)** — the same licence as Sonarr, Radarr, Lidarr, Prowlarr,
-Readarr and Bazarr, and for the same reason: the interface derives from Sonarr's design
-tokens, and copyleft propagates.
-
-You may use, modify and redistribute Riparr. If you redistribute it, modified or not, you
-must ship source under GPL-3.0 too.
-
-**Third-party components:**
+**[GPL-3.0](LICENSE)** — same as Sonarr, Radarr and the rest of the family, and for the
+same reason: the interface is built on Sonarr's design tokens, and copyleft comes along
+with them. Use it, change it, pass it on. If you pass it on, ship the source too.
 
 | | |
 |---|---|
 | Design tokens | [Sonarr](https://github.com/Sonarr/Sonarr) — GPL-3.0 |
 | Themes | [theme.park](https://github.com/themepark-dev/theme.park) — MIT |
 | Icons | [Font Awesome Free](https://fontawesome.com/license/free) — CC BY 4.0 · brand marks from [Simple Icons](https://simpleicons.org/) — CC0 |
-| Wordmark face | [Russo One](server/static/fonts/RussoOne-OFL.txt) — SIL OFL 1.1 |
+| Wordmark | [Russo One](server/static/fonts/RussoOne-OFL.txt) — SIL OFL 1.1 |
 | Window shell | [pywebview](https://pywebview.flowrl.com/) — BSD-3-Clause |
-| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not distributed with Riparr**; fetched and accepted during setup |
+| Disc reading | [MakeMKV](https://www.makemkv.com/) — proprietary, by GuinpinSoft. **Not shipped with Riparr.** Your box downloads it from makemkv.com during setup and you accept their terms yourself |
 
-Riparr is not affiliated with, endorsed by, or connected to Sonarr, Radarr, GuinpinSoft
-or any other project named here. Those names and logos belong to their respective owners.
+Riparr isn't affiliated with or endorsed by Sonarr, Radarr, GuinpinSoft or anyone else
+named here. Those names belong to them.
 
----
+## On AI
 
-## AI usage
+I built this with a lot of help from an AI coding assistant, working against real
+hardware and my own design decisions. Saying so plainly because I'd want to know, and
+"did a machine write this" is a fair question about anything you're going to run on your
+own network.
 
-Riparr was written with substantial help from an AI coding assistant, working from my
-design decisions and against real hardware. I am saying so plainly because I would want
-to know, and because "was any of this written by a machine" is a fair question to ask of
-any project you are about to run on your own network.
-
-What that does and does not mean here:
-
-- **Every decision is a human one.** I keep a decision log and a working journal, and
-  each entry in them was settled by me, not generated. Where the reasoning was mine and
-  the prose was not, the reasoning is still mine.
-- **Nothing ships on the strength of looking correct.** The claims in this repository are
-  the ones that were run: checksums verified against two independent sources, PSK
-  derivation checked against the IEEE 802.11i reference vectors, the write test that
-  reads a file back before a share is trusted — and the wrong turns are on the record
-  too, alongside the right ones.
-- **The bugs are mine.** If something here breaks your setup, that is on the person who
-  shipped it. [Open an issue](../../issues).
-
-If you would rather not run software written this way, that is entirely reasonable, and
-this section is here so you can make that call before you install anything.
+The decisions are mine, the bugs are mine, and nothing shipped because it looked right —
+the claims in here are the ones that were actually run. If you'd rather not run software
+built this way, that's completely fair, and this paragraph is here so you can decide
+before you install anything.

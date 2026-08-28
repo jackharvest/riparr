@@ -540,37 +540,63 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      # Every release used to carry the same paragraphs, so nothing on the page said
+      # what had actually changed. The short bit stays the same on purpose -- somebody
+      # arriving cold needs to know what this is and which file to click -- and the part
+      # that matters is lifted straight out of CHANGELOG.md, written for a person
+      # deciding whether to bother updating.
+      - name: Release notes
+        run: |
+          set -e
+          V="${GITHUB_REF_NAME#v}"
+          # The section for this version, with the blank lines and the horizontal rule
+          # that separate it from the next one trimmed off each end.
+          SECTION=$(awk -v v="## $V" '
+            $0 == v { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md | awk '
+            { a[NR] = $0 }
+            END {
+              s = 1; while (s <= NR && a[s] == "") s++
+              e = NR; while (e >= s && (a[e] == "" || a[e] == "---")) e--
+              for (i = s; i <= e; i++) print a[i]
+            }
+          ')
+          if [ -z "$(printf %s "$SECTION" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG.md has no '## $V' section. Add one -- it is the release notes."
+            exit 1
+          fi
+          cat > notes.md <<'HEAD'
+          **Rip your Blu-rays and DVDs straight onto your NAS.** One box, one cable, no
+          babysitting. Download the Preparer, let it write an SD card, plug the box in.
+
+          | | | |
+          |---|---|---|
+          | **macOS** | `riparr-preparer-macos.dmg` | Open it, drag Riparr Preparer into Applications |
+          | **Windows** | `riparr-preparer-windows-beta.exe` | Double-click it |
+          | **Linux** | `riparr-preparer-linux-beta.tar.gz` | Unpack it, run `Riparr Preparer` |
+
+          Nothing is code-signed yet, so macOS and Windows will grumble the first time.
+          macOS: right-click the app and choose Open. Windows: More info → Run anyway.
+
+          Already running Riparr? The box updates itself from **System → Updates**, and
+          the Preparer updates itself from the sidebar. You do not need to download
+          `riparr-server.tar.gz` or `versions.json` by hand.
+
+          [User guide](../../blob/main/docs/guide/README.md) · [Which drive to buy](../../blob/main/docs/guide/01-what-you-need.md#which-drive)
+
+          HEAD
+          printf '## What changed in %s\n\n%s\n' "$V" "$SECTION" >> notes.md
+          echo "----- notes.md -----"
+          cat notes.md
+
       - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           draft: false
           prerelease: false
-          generate_release_notes: true
-          body: |
-            ## Riparr ${{ github.ref_name }}
-
-            **Download the Preparer for your computer**, then follow
-            [the guide](docs/guide/README.md).
-
-            | | | |
-            |---|---|---|
-            | macOS | `riparr-preparer-macos.dmg` | Open it, drag Riparr Preparer to Applications |
-            | Windows | `riparr-preparer-windows-beta.exe` | Double-click it |
-            | Linux | `riparr-preparer-linux-beta.tar.gz` | Unpack and run `Riparr Preparer` |
-
-            Writing an SD card works on all three. The Windows and Linux downloads say
-            **beta** in the name: same code, and the card is verified as it is written
-            and read back and compared before it is called done — but nobody has yet
-            confirmed a card written on those two that went on to boot a board. If you
-            do, [say so](../../issues); that is what takes them off beta.
-
-            None of these are code-signed, so both macOS and Windows will warn you the
-            first time. On macOS, right-click the app and choose Open. On Windows,
-            More info → Run anyway.
-
-            `riparr-server.tar.gz` is the appliance itself. You do not need to
-            download it — a running Riparr fetches it, checks it against the
-            checksums below, installs it and restarts itself from **System →
-            Updates**.
-
-            Checksums are in `SHA256SUMS.txt`.
+          # Off: it appends a list of commit subjects, which are written for whoever
+          # maintains this and read as noise to everybody else.
+          generate_release_notes: false
+          body_path: notes.md
