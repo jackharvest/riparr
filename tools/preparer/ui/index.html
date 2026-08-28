@@ -31,6 +31,11 @@
          and nothing is replaced until the notice above is clicked. -->
     <label class="ver auto-check">
       <input type="checkbox" id="auto-check"> Check for updates
+      <!-- Automatic checking is a nudge and stays silent when there is nothing to say.
+           Pressing a button is a question and deserves an answer, including "you are
+           up to date" — without which the only way to check on demand was to quit the
+           app and open it again. -->
+      <button class="checknow" id="check-now" type="button">now</button>
     </label>
     <div class="ver">Version <span id="ver">—</span></div>
   </div>

@@ -995,13 +995,37 @@ async function startConnect() {
    update. It is homework. The link survives only for the case where this copy genuinely
    cannot replace itself: a source checkout, or a release with no build for this
    platform. */
-async function checkUpdate() {
-  if (!(state.boot.prefs || {}).auto_check_updates) return;
-  let u;
-  try { u = await riparr.check_update(); } catch (e) { return; }
-  if (u.status !== "update") return;
+async function checkUpdate(manual) {
+  // Automatic and on-demand are the same check with opposite manners. The automatic one
+  // is a nudge: it says nothing unless there is something to install, because a box that
+  // announces "up to date" every launch is noise. The button is a question somebody
+  // asked, so it always answers -- including "up to date" and "couldn't check". Without
+  // it the only way to check on demand was to quit the app and open it again.
+  if (!manual && !(state.boot.prefs || {}).auto_check_updates) return;
 
   const slot = $("#update-slot");
+  const btn = $("#check-now");
+  if (manual) {
+    slot.innerHTML = "";
+    if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  }
+
+  let u = null;
+  try { u = await riparr.check_update(); } catch (e) { u = null; }
+  if (manual && btn) { btn.disabled = false; btn.textContent = "now"; }
+
+  if (!u || u.status === "offline" || u.status === "error" || u.status === "no-releases") {
+    if (manual) slot.innerHTML =
+      `<div class="update-pill flat"><b>Couldn't check</b>${
+        esc((u && (u.detail || u.status)) || "no answer from GitHub")}</div>`;
+    return;
+  }
+  if (u.status !== "update") {
+    if (manual) slot.innerHTML =
+      `<div class="update-pill flat"><b>Up to date</b>Version ${esc(u.current)}</div>`;
+    return;
+  }
+
   slot.innerHTML =
     `<button class="update-pill"><b>Version ${esc(u.version)} available</b>
      ${u.can_install ? "Click to update" : "You have " + esc(u.current)}</button>`;
@@ -1105,6 +1129,13 @@ async function init() {
     state.boot.prefs.auto_check_updates = auto.checked;
     await riparr.set_pref("auto_check_updates", auto.checked);
     if (auto.checked) checkUpdate(); else $("#update-slot").innerHTML = "";
+  }
+  const now = $("#check-now");
+  if (now) now.onclick = (e) => {
+    // Inside the checkbox's <label>, so the click would otherwise toggle the preference.
+    e.preventDefault();
+    e.stopPropagation();
+    checkUpdate(true);
   };
   checkUpdate();
 }

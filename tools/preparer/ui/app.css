@@ -156,6 +156,22 @@ body { display: grid; grid-template-columns: 208px 1fr; }
 /* Mid-update: not a button any more, because there is nothing to click. */
 .auto-check { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .auto-check input { accent-color: var(--accent); margin: 0; }
+/* Inside the label, after the words, so it reads as "check for updates — now". */
+.checknow {
+  margin-left: 4px; padding: 1px 7px; font: inherit; font-size: 10px;
+  background: transparent; color: var(--accent); cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+}
+.checknow:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.checknow:disabled { opacity: .55; cursor: default; }
+
+/* An answer, not an offer: nothing to click, so it must not look clickable. */
+.update-pill.flat {
+  cursor: default; color: var(--text-2);
+  background: transparent; border-color: var(--line);
+}
+.update-pill.flat:hover { background: transparent; }
 
 .update-pill.busy { cursor: default; }
 .update-pill.busy:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
