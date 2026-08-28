@@ -14,6 +14,8 @@ import os
 import plistlib
 import re
 import shlex
+import shutil
+import tempfile
 import subprocess
 import time
 
@@ -664,12 +666,29 @@ def swap_and_relaunch(archive, target, pid, rundir):
                        "download the new version yourself."
                        % (os.path.dirname(target) or "/"))
 
-    script = os.path.join(rundir, "update.sh")
+    # Not in rundir: that directory belongs to the process being replaced. A swapper
+    # whose own script and payload can be cleaned up underneath it fails in ways nobody
+    # can reproduce afterwards.
+    work = tempfile.mkdtemp(prefix="riparr-update-")
+    dmg = os.path.join(work, os.path.basename(archive))
+    shutil.copy2(archive, dmg)
+    script = os.path.join(work, "update.sh")
+    log = os.path.join(work, "update.log")
     with open(script, "w") as f:
         f.write("""#!/bin/sh
+# Logged, because this runs after the app it is replacing has gone and has nowhere else
+# to report a failure. The path is handed back to the caller and shown on screen.
+exec >>%(log)s 2>&1
+set -x
+echo "swap started $(date)"
+
 # Wait for the app to actually exit. Copying over a running bundle corrupts it.
 n=0
 while kill -0 %(pid)d 2>/dev/null && [ $n -lt 200 ]; do sleep 0.3; n=$((n+1)); done
+if kill -0 %(pid)d 2>/dev/null; then
+  echo "the old process never exited; leaving the installed app alone"
+  exit 1
+fi
 
 mnt=$(mktemp -d /tmp/riparr-update.XXXXXX) || exit 1
 hdiutil attach %(dmg)s -nobrowse -quiet -mountpoint "$mnt" || exit 1
@@ -681,20 +700,34 @@ rm -rf %(target)s.new
 ditto "$app" %(target)s.new || { hdiutil detach "$mnt" -quiet; exit 1; }
 hdiutil detach "$mnt" -quiet
 
+# Fetched over HTTPS and checked against the release checksum before it got here, but it
+# is still a bundle that came from the internet. Strip the quarantine flag so nobody is
+# sent back to Security settings to re-approve an app they already approved.
+xattr -dr com.apple.quarantine %(target)s.new 2>/dev/null
+
+# Refuse to install something macOS would refuse to open. Keeping the working old app
+# beats leaving a broken one where it used to be.
+codesign --verify --deep --strict %(target)s.new || {
+  echo "the downloaded app does not verify; keeping the installed one"
+  rm -rf %(target)s.new
+  exit 1
+}
+
 rm -rf %(target)s.old
 mv %(target)s %(target)s.old 2>/dev/null
 mv %(target)s.new %(target)s || { mv %(target)s.old %(target)s; exit 1; }
 rm -rf %(target)s.old
 
-# The download came from the internet, so it carries a quarantine flag that would make
-# macOS refuse to open it without the user right-clicking. It was checked against the
-# release checksum before it got here.
-xattr -dr com.apple.quarantine %(target)s 2>/dev/null
+# Tell Launch Services the bundle changed, so `open` starts the new one rather than a
+# cached record of the old.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f %(target)s 2>/dev/null
 
-open %(target)s
+open %(target)s || echo "open failed"
+echo "swap finished $(date)"
 rm -f %(dmg)s
-""" % {"pid": pid, "dmg": shlex.quote(archive), "target": shlex.quote(target)})
+""" % {"pid": pid, "dmg": shlex.quote(dmg), "target": shlex.quote(target),
+       "log": shlex.quote(log)})
     os.chmod(script, 0o700)
     subprocess.Popen(["/bin/sh", script], start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True, ""
+    return True, log

@@ -31,7 +31,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -328,8 +328,10 @@ class Bridge:
             return {"ok": False, "message": "The update could not be installed.",
                     "detail": detail}
 
+        # `detail` is the swapper's log on success. It is the only record of what
+        # happened after this process exits, so name it rather than discard it.
         core_publish(self.update_path, phase="restarting",
-                     message="Riparr Preparer is restarting")
+                     message="Riparr Preparer is restarting", log=detail)
         # The swapper is waiting on this process to exit, so quitting is the last step
         # of the update rather than a separate thing the user has to do.
         self._quit_soon()
@@ -357,9 +359,16 @@ class Bridge:
             try:
                 if self.on_quit:
                     self.on_quit()
-                    return
             except Exception:
                 pass
+            # And then leave, whatever that did. The graceful path only *asks* the
+            # window to close, from a background thread, and if it returns without the
+            # process actually ending -- which is what a self-update looked like: stuck
+            # on "restarting", for ever -- then the swapper outside is waiting on a pid
+            # that never exits, gives up, and reopens an app that never went away.
+            # Nothing after this point needs us alive; we are being replaced.
+            for _ in range(30):
+                time.sleep(0.1)
             os._exit(0)
         threading.Thread(target=go, daemon=True).start()
 
