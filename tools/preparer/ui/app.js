@@ -140,7 +140,7 @@ function renderDisks(disks) {
     $$("#disk-list .item, #other-list .item").forEach(n => n.classList.remove("sel"));
     state.disk = d;
     state.allowOther = isOther;
-    $("#card-next").disabled = false;
+    updateCardNext();
     const adv = d.advice || {};
     $("#card-hint").innerHTML = isOther
       ? `<b class="warn">/dev/${esc(d.id)} is not a card.</b> Everything on it will be
@@ -160,7 +160,7 @@ function renderDisks(disks) {
 
   if (!cards.length) {
     state.disk = null;
-    $("#card-next").disabled = true;
+    updateCardNext();
     $("#card-hint").textContent = "";
   } else if (cards.length === 1) {
     // Auto-select a single *card*. Never auto-select out of the other list: picking
@@ -225,17 +225,33 @@ function selectBoard(id) {
   refreshBoardImage();
 }
 
+/* Continue used to be enabled by picking a disk alone, so a failed OS download left the
+   user free to walk through Wi-Fi and hostname and only discover at the end that there
+   was nothing to write. Both facts are required, and the one that is missing is named. */
+function updateCardNext() {
+  const btn = $("#card-next");
+  if (!btn) return;
+  const why = !state.disk ? "Choose the card to write to."
+            : !state.boardImage ? "Download the operating system for this board first."
+            : "";
+  btn.disabled = !!why;
+  const note = $("#card-blocked");
+  if (note) { note.textContent = why; note.hidden = !why; }
+}
+
 async function refreshBoardImage() {
   const box = $("#board-image");
   box.innerHTML = `<div class="micro">Checking for the OS image…</div>`;
   let img = null;
   try { img = (await riparr.board_image(state.board)).image; } catch (e) { /* offline */ }
   state.boardImage = img;
+  updateCardNext();
   const b = boardById(state.board);
   if (img) {
     box.innerHTML =
       `<div class="hw-ready"><b>OS image ready</b>
         <span class="micro">${esc(img.name)}</span></div>`;
+    updateCardNext();
     return;
   }
   box.innerHTML =
@@ -1017,4 +1033,21 @@ $$("[data-back]").forEach(b => b.onclick = () => {
   show(b.dataset.back);
 });
 
-init();
+/* A window that fails to start must say so. When init() threw -- most often because the
+   bridge never arrived -- the promise rejected into nothing and the app sat there as an
+   empty coloured rectangle, which reads as "hung" and taught people to quit and reopen
+   until it caught. */
+init().catch((e) => {
+  const box = document.createElement("div");
+  box.style.cssText =
+    "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;" +
+    "padding:40px;font:14px/1.6 -apple-system,Segoe UI,system-ui,sans-serif;" +
+    "color:#cfcbd8;background:#1c1b22;text-align:center;z-index:9999";
+  box.innerHTML =
+    '<div style="max-width:420px">' +
+    '<div style="font-size:17px;color:#fff;margin-bottom:10px">Riparr Preparer could not start</div>' +
+    '<div style="color:#8b8598">' + String((e && e.message) || e) + "</div>" +
+    '<div style="color:#6d6880;margin-top:16px">Quit and open it again. If it keeps ' +
+    "happening, that is a bug worth reporting.</div></div>";
+  document.body.appendChild(box);
+});

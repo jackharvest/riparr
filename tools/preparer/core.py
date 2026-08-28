@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import shutil
+import ssl
 import string
 import subprocess
 import sys
@@ -696,6 +697,26 @@ def image_for_board(assets, board_id):
     return None
 
 
+def explain_network_error(e):
+    """Turn a network exception into something a person can act on.
+
+    A certificate failure surfaced as "[SSL: CERTIFICATE_VERIFY_FAILED] ... (_ssl.c:1010)",
+    which names a line in OpenSSL and no cause the reader can do anything about. It meant
+    the build had no trust store at all -- see ssl_context().
+    """
+    t = str(e)
+    if "CERTIFICATE_VERIFY_FAILED" in t or "SSLCertVerificationError" in t:
+        return ("This build cannot verify HTTPS certificates, so it cannot download "
+                "anything. That is a fault in the Preparer, not in your network or your "
+                "board -- please report it. Downloading the image with a browser and "
+                "putting it in your build folder works in the meantime.")
+    if "Name or service not known" in t or "nodename nor servname" in t:
+        return "No DNS. Check the network connection and try again."
+    if "timed out" in t.lower():
+        return "The download timed out. The server may be busy; try again."
+    return t
+
+
 def download_image(board_id, assets, progress=None, timeout=60):
     """Fetch a board's OS image into the assets dir and verify it against its checksum.
 
@@ -721,11 +742,12 @@ def download_image(board_id, assets, progress=None, timeout=60):
     #    image becomes a card that fails later, mysteriously, on the board.
     try:
         req = urllib.request.Request(src["sha_url"], headers={"User-Agent": "riparr-preparer"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urlopen(req, timeout=timeout) as r:
             expected = _parse_sha_file(r.read().decode("utf-8", "ignore"))
     except Exception as e:
         return {"ok": False,
-                "error": "Couldn't fetch the image checksum for this board: %s" % e}
+                "error": "Couldn't fetch the image checksum for this board. %s"
+                         % explain_network_error(e)}
     if not expected:
         return {"ok": False,
                 "error": "The image checksum for this board could not be read."}
@@ -737,7 +759,7 @@ def download_image(board_id, assets, progress=None, timeout=60):
     h = hashlib.sha256()
     try:
         req = urllib.request.Request(src["url"], headers={"User-Agent": "riparr-preparer"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urlopen(req, timeout=timeout) as r:
             name = _filename_from_headers(r, "%s.img.xz" % board_id)
             total = int(r.headers.get("Content-Length") or 0)
             done = 0
@@ -753,7 +775,8 @@ def download_image(board_id, assets, progress=None, timeout=60):
                         progress(done, total)
     except Exception as e:
         _rm(tmp)
-        return {"ok": False, "error": "The image download failed: %s" % e}
+        return {"ok": False,
+                "error": "The image download failed. %s" % explain_network_error(e)}
 
     got = h.hexdigest()
     if got != expected:
@@ -831,6 +854,53 @@ def image_layout(path):
     if first == 0x83:
         return "ext4-root"           # Armbian style: provisioned through debugfs
     return "unknown"
+
+
+# ───────────────────────── HTTPS, from inside a bundle ─────────────────────────
+#
+# PyInstaller ships its own libssl and no CA certificates. A frozen build therefore
+# failed *every* HTTPS request with CERTIFICATE_VERIFY_FAILED -- the OS image download,
+# its checksum, and the update check -- while the same code run from a checkout worked
+# perfectly, because the system Python has a certificate store and the bundle does not.
+# That is why this went out: it cannot be reproduced without building the app.
+#
+# certifi is bundled and named explicitly rather than trusting whatever the process
+# happens to inherit, so verification is on and the trust store is one we shipped.
+_SSL_CTX = None
+
+
+def ssl_context():
+    """A verified TLS context that works frozen and from a checkout."""
+    global _SSL_CTX
+    if _SSL_CTX is None:
+        cafile = None
+        try:
+            import certifi
+            cafile = certifi.where()
+        except Exception:
+            cafile = os.environ.get("SSL_CERT_FILE") or None
+        _SSL_CTX = ssl.create_default_context(cafile=cafile)
+    return _SSL_CTX
+
+
+def urlopen(req, timeout=30):
+    """urllib.request.urlopen with a trust store that exists. Use this, never urlopen."""
+    return urllib.request.urlopen(req, timeout=timeout, context=ssl_context())
+
+
+def tls_ok():
+    """Can this build reach an HTTPS host at all? (ok, detail).
+
+    Checked on the first screen, because a build with no trust store can do nothing
+    useful and should say so once rather than failing differently on every button.
+    """
+    try:
+        req = urllib.request.Request("https://api.github.com/",
+                                     headers={"User-Agent": "riparr-preparer"})
+        with urlopen(req, timeout=8):
+            return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 def payload_root():
@@ -1069,7 +1139,7 @@ def check_for_update(current_version, repo=RIPARR_REPO, timeout=6):
         "User-Agent": "riparr-preparer/%s" % current_version,
     })
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urlopen(req, timeout=timeout) as r:
             data = json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 404:
@@ -1142,7 +1212,7 @@ def published_sha256(repo, tag, name, timeout=30):
         url = "https://github.com/%s/releases/download/v%s/%s" % (repo, tag, sums)
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "riparr-preparer"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urlopen(req, timeout=timeout) as r:
                 body = r.read().decode()
         except Exception:
             continue
@@ -1172,7 +1242,7 @@ def download_update(asset, dest_dir, expected=None, progress=None):
     try:
         req = urllib.request.Request(asset["url"],
                                      headers={"User-Agent": "riparr-preparer"})
-        with urllib.request.urlopen(req, timeout=120) as r, open(path, "wb") as f:
+        with urlopen(req, timeout=120) as r, open(path, "wb") as f:
             done = 0
             while True:
                 chunk = r.read(1 << 20)

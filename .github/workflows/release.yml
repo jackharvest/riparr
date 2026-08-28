@@ -142,6 +142,7 @@ jobs:
             ${ICON_ARG} \
             --osx-bundle-identifier com.jackharvest.riparr-preparer \
             --collect-all webview \
+            --collect-data certifi \
             --add-data "ui${PATHSEP:-:}ui" \
             --add-data "hostos${PATHSEP:-:}hostos" \
             --add-data "payload${PATHSEP:-:}payload" \
@@ -196,6 +197,23 @@ jobs:
               print(("::error::payload is missing " if f in missing else "ok  ") + f)
           sys.exit(1 if missing else 0)
           PY
+
+      # A build with no CA certificates cannot download an operating system, check for
+      # an update, or verify a checksum -- it fails every HTTPS call with
+      # CERTIFICATE_VERIFY_FAILED. v0.1.4 shipped that way, and it is invisible from a
+      # checkout because the system Python has a trust store the bundle does not.
+      - name: The bundle carries CA certificates
+        shell: bash
+        run: |
+          set -e
+          hit=$(find tools/preparer/dist tools/preparer/build -name "cacert.pem" -print -quit || true)
+          if [ -z "$hit" ]; then
+            hit=$(find tools/preparer/build -name "*.toc" -exec grep -l "certifi" {} + 2>/dev/null | head -1 || true)
+            [ -n "$hit" ] || { echo "::error::no certifi CA bundle in the build"; exit 1; }
+            echo "ok  certifi collected (in TOC: $hit)"
+          else
+            echo "ok  cacert.pem at $hit"
+          fi
 
       # PyInstaller's command line cannot set CFBundleShortVersionString, so the bundle
       # reported 0.0.0 in Get Info and in the version picker of anything that reads it.

@@ -23,9 +23,26 @@
      decide. */
   document.documentElement.classList.add('native-titlebar');
 
-  const ready = new Promise((resolve) => {
-    if (window.pywebview && window.pywebview.api) return resolve();
+  /* Listening for `pywebviewready` alone is a race this lost roughly one launch in two:
+     if the event fires before this script runs, the listener is attached to something
+     that already happened, the promise never settles, every bridge call queues for ever
+     and init() waits at its first await. What the user sees is the window's background
+     colour and a titlebar -- no error, because nothing threw -- and quitting and
+     reopening "fixes" it by changing the timing.
+
+     So poll as well as listen, and let whichever notices first win. */
+  const ready = new Promise((resolve, reject) => {
+    const have = () => !!(window.pywebview && window.pywebview.api);
+    if (have()) return resolve();
     window.addEventListener('pywebviewready', () => resolve(), { once: true });
+    const started = Date.now();
+    const tick = setInterval(() => {
+      if (have()) { clearInterval(tick); resolve(); }
+      else if (Date.now() - started > 15000) {
+        clearInterval(tick);
+        reject(new Error('the window never connected to the application'));
+      }
+    }, 50);
   });
 
   window.riparr = new Proxy({}, {

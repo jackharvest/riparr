@@ -14,3 +14,9 @@ passlib>=1.7
 # macOS only, and only for app.py, the hand-built NSWindow that predates shell.py.
 # shell.py needs none of it; pywebview pulls what it needs on each platform.
 pyobjc-framework-WebKit>=10.0 ; sys_platform == "darwin"
+
+# CA certificates. PyInstaller bundles its own libssl and no trust store, so a frozen
+# build failed every HTTPS request with CERTIFICATE_VERIFY_FAILED while the same code
+# from a checkout worked -- the system Python has certificates and the bundle does not.
+# core.ssl_context() names this explicitly rather than trusting what it inherits.
+certifi>=2024.2.2
