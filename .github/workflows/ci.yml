@@ -37,6 +37,13 @@ jobs:
             node --check "$f" && echo "ok  $f"
           done
 
+      # The bridge shim has shipped broken twice, in opposite directions, and neither
+      # failure is visible by reading it -- both depend on when pywebview attaches its
+      # api relative to when the script runs. This asserts both timings.
+      - name: The bridge shim survives every bridge timing
+        run: |
+          node tools/preparer/ui/bridge-shim.test.js
+
       - name: Shell parses
         run: |
           for f in $(git ls-files '*.sh'); do

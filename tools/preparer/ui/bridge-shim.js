@@ -31,26 +31,50 @@
      reopening "fixes" it by changing the timing.
 
      So poll as well as listen, and let whichever notices first win. */
+  /* Readiness is "the methods are attached", not "the api object exists". pywebview
+     creates `window.pywebview.api` first and populates it afterwards, so polling for the
+     object alone resolves too early and the first call fails with "no such bridge
+     method: boot" -- every launch, not just some. That was the fix for the opposite bug
+     (listening only for `pywebviewready` missed the event when it fired before this
+     script ran, and every call queued for ever) overshooting in the other direction.
+
+     So: listen for the event, and poll for a *populated* surface, and take whichever
+     arrives first. */
+  const populated = () => {
+    const api = window.pywebview && window.pywebview.api;
+    if (!api) return false;
+    for (const _ in api) return true;      // any own or inherited method will do
+    return Object.getOwnPropertyNames(api).length > 0;
+  };
+
   const ready = new Promise((resolve, reject) => {
-    const have = () => !!(window.pywebview && window.pywebview.api);
-    if (have()) return resolve();
+    if (populated()) return resolve();
     window.addEventListener('pywebviewready', () => resolve(), { once: true });
     const started = Date.now();
     const tick = setInterval(() => {
-      if (have()) { clearInterval(tick); resolve(); }
-      else if (Date.now() - started > 15000) {
+      if (populated()) { clearInterval(tick); resolve(); }
+      else if (Date.now() - started > 20000) {
         clearInterval(tick);
         reject(new Error('the window never connected to the application'));
       }
     }, 50);
   });
 
+  /* Even once the surface is up, an individual method can land a moment later. Waiting
+     briefly for the named one is cheaper than failing the whole app on a few
+     milliseconds -- which is precisely what "no such bridge method: boot" was. */
+  function method(name, tries) {
+    const api = window.pywebview && window.pywebview.api;
+    const fn = api && api[name];
+    if (typeof fn === 'function') return Promise.resolve(fn);
+    if (tries <= 0) {
+      return Promise.reject(new Error('no such bridge method: ' + String(name)));
+    }
+    return new Promise((r) => setTimeout(r, 50)).then(() => method(name, tries - 1));
+  }
+
   window.riparr = new Proxy({}, {
-    get: (_, method) => (...args) =>
-      ready.then(() => {
-        const fn = window.pywebview.api[method];
-        if (!fn) throw new Error('no such bridge method: ' + String(method));
-        return fn(...args);
-      }),
+    get: (_, name) => (...args) =>
+      ready.then(() => method(name, 40)).then((fn) => fn(...args)),
   });
 })();
