@@ -193,6 +193,31 @@ def scan_networks():
     return nets, (method or "none")
 
 
+def wifi_detail_status():
+    """Whether a scan can name networks *and* their bands on this machine.
+
+    Returns {"available", "granted", "why"}. `available` is false where the question does
+    not arise -- Linux and Windows scans are not gated on a location permission.
+    """
+    fn = getattr(hostos, "location_status", None)
+    if not fn:
+        return {"available": False, "granted": True, "why": ""}
+    st, name = fn()
+    if st is None:
+        return {"available": False, "granted": True, "why": ""}
+    if st in (3, 4):
+        return {"available": True, "granted": True, "why": ""}
+    if name == "notDetermined":
+        return {"available": True, "granted": False, "why": "notDetermined"}
+    return {"available": True, "granted": False, "why": name}
+
+
+def request_wifi_detail():
+    """User-initiated only. See bridge.enable_wifi_detail."""
+    fn = getattr(hostos, "request_location", None)
+    return bool(fn and fn())
+
+
 def keychain_wifi_password(ssid):
     """The passphrase this machine already knows for a network it has joined.
 

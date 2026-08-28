@@ -387,15 +387,45 @@ function updateWifiNext() {
   $("#wifi-next").disabled = n.secure !== false && pw.length < 8;
 }
 
-async function loadWifi() {
-  $("#wifi-list").innerHTML = `<div class="empty">Scanning…</div>`;
-  const r = await riparr.scan_wifi();
+function paintWifi(r) {
   renderNets(r.networks, r.method);
   const usable = r.networks.filter(n => n.pi_ok).length;
   $("#wifi-hint").textContent = r.method === "live"
     ? `${r.networks.length} networks · ${usable} usable`
     : r.method === "none" ? "Couldn't scan — enter the name manually."
-    : `Limited scan (${r.method}) — band information may be missing.`;
+    : `${r.networks.length} saved networks · band unknown`;
+
+  // Only ask when asking would change anything. Granted, or a platform where the
+  // question does not arise, and the offer never appears.
+  const d = r.detail || {};
+  const offer = $("#wifi-detail-offer");
+  const note = $("#wifi-detail-note");
+  const askable = d.available && !d.granted && d.why === "notDetermined";
+  const refused = d.available && !d.granted && d.why !== "notDetermined";
+  if (offer) offer.hidden = !askable;
+  if (note) {
+    note.hidden = !refused;
+    if (refused) note.innerHTML =
+      `Location Services is off for this app, so band and signal cannot be shown. ` +
+      `You can still pick or type your network. To turn it on: <b>System Settings → ` +
+      `Privacy &amp; Security → Location Services → Riparr Preparer</b>.`;
+  }
+}
+
+async function loadWifi() {
+  $("#wifi-list").innerHTML = `<div class="empty">Scanning…</div>`;
+  paintWifi(await riparr.scan_wifi());
+}
+
+async function enableWifiDetail() {
+  const btn = $("#wifi-detail-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Waiting for permission…"; }
+  $("#wifi-list").innerHTML = `<div class="empty">Scanning…</div>`;
+  let r;
+  try { r = await riparr.enable_wifi_detail(); }
+  catch (e) { r = null; }
+  if (btn) { btn.disabled = false; btn.textContent = "Show bands and signal"; }
+  if (r) paintWifi(r); else loadWifi();
 }
 
 /* ── step 3: name ───────────────────────────────────────── */
@@ -821,8 +851,10 @@ async function init() {
   $("#ver").textContent = state.boot.version;
   $("#acct-pw").textContent = state.boot.password;
   $("#acct-note").textContent = state.boot.password_generated
-    ? "Generated just now and saved to user_password.txt in your build folder."
-    : "Read from user_password.txt in your build folder.";
+    ? "Generated just now — 20 random characters — and saved to your build folder."
+    : "Read back from your build folder, so it is the same one this box already has.";
+  const file = $("#acct-file");
+  if (file && state.boot.assets) file.textContent = state.boot.assets + "/user_password.txt";
 
   state.port = state.boot.default_port || 9797;
   $("#port").value = state.port;
@@ -877,6 +909,28 @@ $("#connect-next").onclick = startConnect;
 
 $("#rescan-disks").onclick = loadDisks;
 $("#card-next").onclick = () => { show("wifi"); loadWifi(); };
+$("#wifi-detail-btn").onclick = enableWifiDetail;
+
+/* A value you might need and cannot select is a value you have to retype by eye. The
+   window disables text selection globally (it is an app, not a page); these few fields
+   opt back in, and the button works regardless of that. */
+$("#acct-copy").onclick = async () => {
+  const btn = $("#acct-copy");
+  const pw = ($("#acct-pw").textContent || "").trim();
+  if (!pw || pw === "\u2014") return;
+  let ok = false;
+  try { await navigator.clipboard.writeText(pw); ok = true; }
+  catch (e) {
+    try {                                    // clipboard API needs a secure context
+      const t = document.createElement("textarea");
+      t.value = pw; document.body.appendChild(t); t.select();
+      ok = document.execCommand("copy");
+      t.remove();
+    } catch (e2) { ok = false; }
+  }
+  btn.textContent = ok ? "Copied" : "Press \u2318C";
+  setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+};
 
 $("#rescan-wifi").onclick = loadWifi;
 /* Manual entry is an inline field, not `prompt()`. A WKWebView without a UI delegate

@@ -36,8 +36,10 @@ import hostos
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
 
-WIDTH, HEIGHT = 940, 680
-MIN_SIZE = (860, 600)
+# Tall enough for the longest screen (Review) at its default size, so nobody has to
+# resize the window to reach the buttons.
+WIDTH, HEIGHT = 940, 740
+MIN_SIZE = (860, 660)
 
 
 class Shell:

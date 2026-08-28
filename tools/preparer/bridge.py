@@ -31,7 +31,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -230,7 +230,20 @@ class Bridge:
 
     def scan_wifi(self):
         nets, method = core.scan_networks()
-        return {"networks": nets, "method": method}
+        return {"networks": nets, "method": method,
+                "detail": core.wifi_detail_status()}
+
+    def enable_wifi_detail(self):
+        """Ask macOS for Location Services, then rescan. Only ever user-initiated.
+
+        A live scan needs this permission or every SSID comes back nil, but plenty of
+        people know which network they want and do not care which band it is on -- so
+        this is a button on the Wi-Fi screen rather than a prompt on the way in.
+        """
+        ok = core.request_wifi_detail()
+        nets, method = core.scan_networks()
+        return {"ok": ok, "networks": nets, "method": method,
+                "detail": core.wifi_detail_status()}
 
     def keychain_password(self, ssid):
         """Fetch a Wi-Fi passphrase this Mac already knows.

@@ -33,6 +33,75 @@ def _band_for_channel(ch_band):
     return {1: "2.4", 2: "5", 3: "6"}.get(ch_band)
 
 
+def _band_from_number(ch):
+    """Band from the channel number, when the band enum comes back unknown.
+
+    Belt and braces for the same answer from a second direction: the enum has been seen
+    to be 0 on scan results that still carry a usable channel number.
+    """
+    if not ch:
+        return None
+    if 1 <= ch <= 14:
+        return "2.4"
+    if 32 <= ch <= 177:
+        return "5"
+    return None
+
+
+# CLAuthorizationStatus
+_LOC_OK = (3, 4)          # authorizedAlways, authorizedWhenInUse
+
+
+def location_status():
+    """(status_int, name). macOS gates scan SSIDs behind Location Services."""
+    names = {0: "notDetermined", 1: "restricted", 2: "denied",
+             3: "authorizedAlways", 4: "authorizedWhenInUse"}
+    try:
+        import CoreLocation
+        st = CoreLocation.CLLocationManager.authorizationStatus()
+        return st, names.get(st, "unknown")
+    except Exception:
+        return None, "unavailable"
+
+
+def request_location(timeout=12):
+    """Ask for Location Services, because a Wi-Fi scan is useless without it.
+
+    macOS returns every SSID as nil from `scanForNetworksWithSSID:` unless the calling
+    application is authorised for location. The scan still reports channels, bands and
+    signal -- just not *which network* any of it belongs to -- so the Preparer fell back
+    to the list of saved networks, which has names and nothing else. The visible symptom
+    was every network saying "band unknown", on a screen whose whole purpose is telling
+    2.4 GHz from 5 GHz.
+
+    Returns True if authorised. Never raises: an unauthorised scan is degraded, not fatal.
+    """
+    try:
+        import CoreLocation
+    except Exception:
+        return False
+    try:
+        st = CoreLocation.CLLocationManager.authorizationStatus()
+        if st in _LOC_OK:
+            return True
+        if st != 0:                       # denied or restricted: asking again does nothing
+            return False
+        mgr = CoreLocation.CLLocationManager.alloc().init()
+        mgr.requestWhenInUseAuthorization()
+        # The answer arrives on the run loop. Poll rather than block it.
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            st = CoreLocation.CLLocationManager.authorizationStatus()
+            if st in _LOC_OK:
+                return True
+            if st not in (0,):
+                return False
+            time.sleep(0.25)
+    except Exception:
+        return False
+    return False
+
+
 def scan_corewlan():
     """Live scan via CoreWLAN: SSID, band, RSSI, security.
 
@@ -50,7 +119,8 @@ def scan_corewlan():
         if not ssid:
             continue
         ch = n.wlanChannel()
-        band = _band_for_channel(ch.channelBand() if ch else 0)
+        band = (_band_for_channel(ch.channelBand() if ch else 0)
+                or _band_from_number(ch.channelNumber() if ch else 0))
         try:
             secure = not n.supportsSecurity_(0)  # kCWSecurityNone
         except Exception:

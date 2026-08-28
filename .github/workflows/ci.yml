@@ -44,6 +44,35 @@ jobs:
         run: |
           node tools/preparer/ui/bridge-shim.test.js
 
+      # The interface is one HTML file edited by hand and by script. A stray unbalanced
+      # div silently swallows a screen's footer, which is how the Review buttons ended
+      # up off the bottom of the window.
+      - name: The interface markup is balanced
+        run: |
+          python - <<'PY'
+          from html.parser import HTMLParser
+          import sys
+          VOID = {"area","base","br","col","embed","hr","img","input","link","meta",
+                  "source","track","wbr"}
+          class P(HTMLParser):
+              def __init__(self):
+                  super().__init__(); self.stack=[]; self.err=[]
+              def handle_starttag(self, t, a):
+                  if t not in VOID: self.stack.append((t, self.getpos()[0]))
+              def handle_endtag(self, t):
+                  if t in VOID: return
+                  if self.stack and self.stack[-1][0] == t: self.stack.pop()
+                  else: self.err.append("line %d: stray </%s>" % (self.getpos()[0], t))
+          for f in ("tools/preparer/ui/index.html", "server/static/index.html"):
+              p = P(); p.feed(open(f).read())
+              bad = p.err + ["line %d: <%s> never closed" % (l, t) for t, l in p.stack]
+              for b in bad:
+                  print("::error::%s: %s" % (f, b))
+              if bad:
+                  sys.exit(1)
+              print("ok  %s" % f)
+          PY
+
       - name: Shell parses
         run: |
           for f in $(git ls-files '*.sh'); do

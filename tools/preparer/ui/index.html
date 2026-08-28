@@ -159,6 +159,22 @@
     <p class="lede dim">Get the password right here. Nothing downstream can check it:
       the card writes, the box boots, and it simply never appears on your network.
       If this Mac already knows the network, take the password from it.</p>
+    <div class="screen-body">
+    <!-- Offered, not forced. A live scan needs Location Services or macOS returns every
+         network name as nil; plenty of people know which network they want and do not
+         care which band it is on, so this is a button rather than a prompt on the way in.
+         app.js shows it only when the permission is actually missing. -->
+    <div class="notice" id="wifi-detail-offer" hidden>
+      <div class="grow">
+        <b>Band and signal are hidden</b>
+        <span class="micro">macOS only reveals nearby network names, bands and signal
+          strength to apps allowed to use Location Services. Without it these are the
+          networks this Mac already knows, and the band is unknown.</span>
+      </div>
+      <button class="ghost" id="wifi-detail-btn">Show bands and signal</button>
+    </div>
+    <p class="micro" id="wifi-detail-note" hidden></p>
+
     <div id="wifi-list" class="list scroll"></div>
     <div class="row-actions">
       <button class="ghost" id="rescan-wifi">Rescan</button>
@@ -192,7 +208,7 @@
       <p class="micro">Converted to a PBKDF2 key before it is written. The passphrase
         itself never touches the card.</p>
     </div>
-    <div class="spacer"></div>
+    </div>
     <footer class="bar">
       <button class="ghost" data-back="card">Back</button>
       <div class="hint" id="wifi-hint"></div>
@@ -204,6 +220,7 @@
   <section class="screen" data-screen="name">
     <h1>Name your Riparr</h1>
     <p class="lede">This is the name you'll type into a browser to reach it.</p>
+    <div class="screen-body">
     <label class="field">
       <span>Name</span>
       <input id="hostname" value="riparr" spellcheck="false" autocapitalize="off">
@@ -221,11 +238,23 @@
     <p class="lede">Used only for SSH and the console. This is not the web login — you'll
       create that on first run.</p>
     <div class="cred">
-      <div><span class="k">User</span><span class="v" id="acct-user">riparr</span></div>
-      <div><span class="k">Password</span><span class="v mono" id="acct-pw">—</span></div>
+      <div><span class="k">User</span><span class="v selectable" id="acct-user">riparr</span></div>
+      <div><span class="k">Password</span>
+        <span class="v mono selectable" id="acct-pw">—</span>
+        <button class="ghost tiny" id="acct-copy" type="button">Copy</button>
+      </div>
     </div>
+    <!-- "Do I need to write this down?" was a fair question with no answer on screen.
+         It is kept in the build folder, so the honest answer is no -- and where it is
+         kept matters more than the value itself. -->
     <p class="micro" id="acct-note"></p>
-    <div class="spacer"></div>
+    <p class="micro dim">You don't need to write this down. It is saved in
+      <span class="mono selectable" id="acct-file">user_password.txt</span> in your build
+      folder, and this app reads it back every time — so re-writing a card keeps the same
+      login rather than locking you out of a box you already set up. You will only ever
+      need it if you connect a keyboard and screen to the board, or SSH in by password
+      instead of by key.</p>
+    </div>
     <footer class="bar">
       <button class="ghost" data-back="wifi">Back</button>
       <div class="hint" id="name-hint"></div>
@@ -237,6 +266,7 @@
   <section class="screen" data-screen="review">
     <h1>Check before writing</h1>
     <p class="lede">Everything currently on the card will be erased.</p>
+    <div class="screen-body">
     <div class="summary" id="summary"></div>
     <details class="reveal">
       <summary>Show the exact settings file</summary>
@@ -249,7 +279,7 @@
         <small>Reads it back and compares. Adds a few minutes, and catches a failing or
         counterfeit card now rather than as strange behaviour later.</small></span>
     </label>
-    <div class="spacer"></div>
+    </div>
     <footer class="bar">
       <button class="ghost" data-back="name">Back</button>
       <div class="hint"></div>
@@ -299,6 +329,7 @@
       or when setup stopped partway and you want to pick it back up. The box needs to be
       powered on and on your Wi-Fi — everything from there is automatic.</p>
 
+    <div class="screen-body">
     <label class="field">
       <span>What did you name it?</span>
       <input id="connect-host" value="riparr" spellcheck="false" autocapitalize="off">
@@ -326,7 +357,7 @@
     </details>
 
     <p class="micro warn" id="connect-warn"></p>
-    <div class="spacer"></div>
+    </div>
     <footer class="bar">
       <button class="ghost" data-back="welcome">Back</button>
       <div class="hint" id="connect-hint"></div>

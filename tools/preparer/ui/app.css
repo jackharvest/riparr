@@ -331,6 +331,11 @@ h2 { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
 .bar {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 0 18px; border-top: 1px solid var(--line-soft);
+  /* Never shrink and never be pushed off. A flex item defaults to shrinkable, so a tall
+     screen could squash the footer or shove it past the bottom of the window -- which is
+     what happened on Review: the buttons were cut in half and the only way to reach them
+     was to resize the window. The body above scrolls; this stays put. */
+  flex: 0 0 auto;
 }
 .bar .hint { flex: 1; font-size: 11.5px; color: var(--text-3); }
 .row-actions { display: flex; gap: 8px; margin-top: 12px; }
@@ -687,3 +692,27 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 @keyframes tick-in { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 .hw-ready.ok .grow { display: flex; flex-direction: column; gap: 2px; }
+
+/* An offer, not a warning: this is a thing the user may want, not a thing they did
+   wrong. Sits above the network list because it explains what the list is missing. */
+.notice {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 14px; margin: 0 0 12px;
+  border: 1px solid var(--border, #33313d);
+  border-radius: 8px;
+  background: var(--modal-bg-color, rgba(255,255,255,.03));
+}
+.notice .grow { display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; }
+.notice .grow b { font-size: 13px; }
+.notice button { flex: 0 0 auto; }
+
+/* The window turns text selection off, because an app that lets you drag-select its
+   own chrome feels like a web page. A few values are exceptions: things the reader may
+   legitimately need to copy out. */
+.selectable {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  cursor: text;
+}
+button.tiny { padding: 2px 9px; font-size: 11px; margin-left: 8px; }
+.cred > div { display: flex; align-items: center; }
