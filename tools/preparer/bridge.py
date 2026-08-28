@@ -32,7 +32,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.22"
+VERSION = "0.3.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -587,8 +587,15 @@ class Bridge:
         return st
 
     def probe_box(self, hostname, port=None):
-        """Whether a Riparr is already running at this name. See core.probe_appliance."""
-        return core.probe_appliance(hostname, port or core.DEFAULT_PORT)
+        """What is running there, and what this app would put there instead.
+
+        Both halves of the comparison in one answer, because the screen's whole job is
+        to say what will change: "running 0.2.3, this installs 0.3.0". See
+        core.probe_appliance.
+        """
+        r = core.probe_appliance(hostname, port or core.DEFAULT_PORT)
+        r["installs"] = core.payload_version()
+        return r
 
     def name_taken(self, hostname):
         """Is something already answering to this name on the network?

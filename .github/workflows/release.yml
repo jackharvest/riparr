@@ -465,30 +465,37 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The two halves version independently now.
+      # One version, for both halves and the tag.
       #
-      # They used to be forced equal to each other and to the tag, so a change to the web
-      # interface alone still bumped the Preparer -- and every installed Preparer was then
-      # told to update itself for a release containing nothing it runs. Asking somebody to
-      # reinstall an SD-card writer because a web page changed is not a courtesy.
+      # They were split apart so a web-only change would not force everyone to reinstall
+      # an SD-card writer. That worked, and the cost was worse than the problem: three
+      # consecutive self-update failures came out of places that had quietly assumed
+      # tag == version, and "which 0.1.x goes with which 0.2.x" is a question nobody
+      # should have to hold in their head. Being told to update something that did not
+      # change is a smaller tax than not knowing what you are running.
       #
-      # `versions.json` ships as a release asset and is what both updaters read: the box
-      # compares `appliance`, the Preparer compares `preparer`, and each ignores the other.
-      # The tag is only the release's name. Clients older than this file fall back to the
-      # tag, which is why it still has to parse as a version.
-      - name: Component versions
+      # `versions.json` still ships, and both updaters still read it in preference to the
+      # tag. With the three held equal it gives the same answer -- and it is the thing
+      # that makes a future split a data change rather than a code change.
+      - name: One version, everywhere
         run: |
           set -e
           SRV=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' server/riparr/__init__.py)
           PRE=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' tools/preparer/bridge.py)
           TAG="${GITHUB_REF_NAME#v}"
+          echo "tag=$TAG appliance=$SRV preparer=$PRE"
           for v in "$SRV" "$PRE"; do
             echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*$' \
               || { echo "::error::not a version: '$v'"; exit 1; }
           done
+          [ "$SRV" = "$PRE" ] \
+            || { echo "::error::appliance $SRV != preparer $PRE"; exit 1; }
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            [ "$TAG" = "$SRV" ] \
+              || { echo "::error::tag $TAG != version $SRV"; exit 1; }
+          fi
           printf '{"appliance": "%s", "preparer": "%s", "tag": "%s"}\n' \
             "$SRV" "$PRE" "$TAG" > versions.json
-          echo "tag=$TAG appliance=$SRV preparer=$PRE"
           cat versions.json
 
       - name: Build riparr-server.tar.gz

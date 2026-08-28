@@ -968,6 +968,23 @@ def payload_root():
                                         "..", ".."))
 
 
+def payload_version(root=None):
+    """The appliance version this Preparer would install, read from the tree it sends.
+
+    Not the Preparer's own VERSION. A release gate keeps the two equal, but the honest
+    source for "what will this put on the box" is the thing that will be put on the box,
+    and a bundle whose payload disagreed with its own version number is exactly the sort
+    of drift worth being able to see.
+    """
+    path = os.path.join(root or payload_root(), "server", "riparr", "__init__.py")
+    try:
+        with open(path) as f:
+            m = re.search(r'^__version__ = "([^"]+)"', f.read(), re.M)
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
 def payload_ok(root=None):
     """Whether the tree that would be sent can actually install. (ok, what is missing).
 

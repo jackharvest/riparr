@@ -956,17 +956,55 @@ async function connectProbe() {
     if (btn) btn.textContent = "Find it and set it up";
     return;
   }
+  // Name both versions and what happens between them. "Already running Riparr 0.2.3" is
+  // a fact; "this will update it to 0.3.0, and here is everything that survives" is an
+  // answer to the question the person actually has, which is whether it is safe to press.
+  const here = p.version || "";
+  const to = p.installs || "";
+  const cmp = to ? verCmp(to, here) : 0;
+
   if (box) {
     box.hidden = false;
-    $("#connect-existing-h").textContent =
-      `${host}.local is already running Riparr ${p.version}`;
-    $("#connect-existing-b").innerHTML =
-      `Continuing <b>updates it in place</b>. Your login, settings, rip history and the `
-      + `MakeMKV build are all kept — nothing on the box is erased, and the card is not `
-      + `touched. This is also the way to update if the web interface's own updater `
-      + `cannot.`;
+    const h = $("#connect-existing-h");
+    const b = $("#connect-existing-b");
+    if (cmp > 0) {
+      h.textContent = `${host}.local is running Riparr ${here}`;
+      b.innerHTML =
+        `This updates it to <b>${esc(to)}</b>, in place and over the network. Your login, `
+        + `settings, rip history and the MakeMKV build are all kept — nothing on the box `
+        + `is erased and the card is never touched. It takes a few minutes, and Riparr `
+        + `comes back on the same address.`;
+    } else if (cmp === 0) {
+      h.textContent = `${host}.local is already running Riparr ${esc(here)}`;
+      b.innerHTML =
+        `That is the same version this app installs, so there is nothing to update. `
+        + `Running it anyway is harmless: it reinstalls the same files and keeps your `
+        + `login, settings and history exactly as they are.`;
+    } else {
+      h.textContent = `${host}.local is running Riparr ${esc(here)} — newer than this app`;
+      b.innerHTML =
+        `This app installs <b>${esc(to)}</b>, so continuing would put an older version `
+        + `back. Update this app first — <b>Check for updates → now</b>, at the bottom of `
+        + `this window — unless going back is what you meant.`;
+    }
   }
-  if (btn) btn.textContent = "Update it in place";
+  if (btn) {
+    btn.textContent = cmp > 0 ? `Update to ${to}`
+                    : cmp === 0 ? `Reinstall ${to}`
+                    : `Install ${to} anyway`;
+  }
+}
+
+/* Numeric, not lexical: "0.3.0" against "0.2.10" is not a string comparison, and this
+   project has already shipped one release where 0.1.9 sorted above 0.1.11. */
+function verCmp(a, b) {
+  const pa = String(a || "").split(/[.\-+]/).map(n => parseInt(n, 10) || 0);
+  const pb = String(b || "").split(/[.\-+]/).map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
 }
 
 async function startConnect() {
