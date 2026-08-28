@@ -110,3 +110,21 @@ def update_target(executable):
 
 def swap_and_relaunch(archive, target, pid, rundir):
     return False, "Riparr cannot update itself on %s." % sys.platform
+
+
+# ─────────────────────── Location, and why there is none ───────────────────────
+#
+# Part of the hostos contract because macOS needs it, not because this platform does.
+# A scan here names networks and reports bands without asking anyone's permission, so
+# the honest answer is "the question does not arise" -- which is a different answer from
+# "we tried and could not find out", and the Wi-Fi screen shows a different thing for
+# each. Returning the same shape from every backend is what stops core.py guessing.
+
+def location_status():
+    """(None, "not-required"). Scans here are not gated on a location permission."""
+    return None, "not-required"
+
+
+def request_location(timeout=12):
+    """Nothing to ask for. See location_status."""
+    return False

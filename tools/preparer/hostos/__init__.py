@@ -9,6 +9,13 @@ Each backend answers the same three questions and returns the same shapes:
     list_block_devices()        -> [dict, ...]   normalised, unclassified
     scan_wifi()                 -> ([dict, ...], method)
     saved_network_password(ssid)-> (password_or_None, error_or_None)
+    location_status()           -> (status_or_None, name)
+    request_location()          -> bool
+
+`location_status()` exists for macOS, which will not name a Wi-Fi network to an app that
+has no Location Services grant. Everywhere else it answers `(None, "not-required")` --
+which is deliberately distinguishable from "we asked and could not find out", because the
+Wi-Fi screen offers a button for one and nothing for the other.
 
 `list_block_devices()` returns raw facts only. It must never decide whether something is
 a card -- that is `core.classify_disk`, and keeping it in one place is what stops the
@@ -77,6 +84,18 @@ NAME = _impl.NAME
 list_block_devices = _impl.list_block_devices
 scan_wifi = _impl.scan_wifi
 saved_network_password = _impl.saved_network_password
+
+# Wi-Fi band detection was dead in every release from the moment it was written, and this
+# is where: both functions existed in darwin.py and neither was listed here. core.py
+# reached for them with `getattr(hostos, ..., None)` and fell back politely, so the app
+# concluded macOS does not gate scans on a location permission, hid the button that asks
+# for it, and showed "band unknown" against every network with nothing to click.
+#
+# A backend function that is not re-exported here does not exist as far as any caller is
+# concerned -- and because the facade is the only thing callers see, the omission is
+# invisible from both sides. There is a CI gate on this list now.
+location_status = _impl.location_status
+request_location = _impl.request_location
 
 open_url = _impl.open_url
 reveal = _impl.reveal

@@ -55,6 +55,61 @@ jobs:
           echo "--- pyflakes also noticed (not fatal) ---"
           cat flakes.txt
 
+      # `hostos` is a facade over four backends, and a function implemented in one of them
+      # but not re-exported here does not exist as far as any caller is concerned. That is
+      # not a hypothetical: `location_status` and `request_location` lived in darwin.py
+      # from the day they were written and were never listed in __init__.py, so core.py's
+      # `getattr(hostos, ..., None)` found nothing, concluded macOS does not gate Wi-Fi
+      # scans on a location permission, and hid the button that asks for one. Wi-Fi band
+      # detection was dead in every release, and the omission is invisible from both sides
+      # -- the backend has the function, the caller has a fallback.
+      #
+      # Parsed rather than imported: windows.py cannot be imported on this runner, and the
+      # question is about what each file defines, not about what runs.
+      - name: hostos exports its whole contract
+        run: |
+          python - <<'PY'
+          import ast, sys
+
+          REQUIRED = [
+              "NAME", "CAN_WRITE", "UPDATE_SUFFIX",
+              "list_block_devices", "scan_wifi", "saved_network_password",
+              "location_status", "request_location",
+              "open_url", "reveal", "keep_awake_command",
+              "valid_device_id", "block_device", "raw_device", "partition_devices",
+              "unmount_disk", "probe_writable", "open_sink", "open_reader", "flush",
+              "rescan_partitions", "mount_boot", "eject", "explain_write_error",
+              "elevate", "update_target", "swap_and_relaunch",
+          ]
+
+          def defined(path):
+              names = set()
+              for node in ast.parse(open(path).read()).body:
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                      names.add(node.name)
+                  elif isinstance(node, ast.Assign):
+                      names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+              return names
+
+          bad = False
+          facade = defined("tools/preparer/hostos/__init__.py")
+          for n in REQUIRED:
+              if n not in facade:
+                  print("::error::hostos/__init__.py does not re-export %s" % n)
+                  bad = True
+          print("ok  facade re-exports %d names" % len(REQUIRED) if not bad else "facade INCOMPLETE")
+
+          for mod in ("darwin", "linux", "windows", "unsupported"):
+              have = defined("tools/preparer/hostos/%s.py" % mod)
+              gaps = [n for n in REQUIRED if n not in have]
+              for n in gaps:
+                  print("::error::hostos/%s.py does not implement %s" % (mod, n))
+              print(("ok  " if not gaps else "BAD ") + mod)
+              bad = bad or bool(gaps)
+
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: JavaScript parses
         run: |
           for f in server/static/app.js server/static/icons.js \

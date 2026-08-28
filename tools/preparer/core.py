@@ -199,12 +199,16 @@ def wifi_detail_status():
     Returns {"available", "granted", "why"}. `available` is false where the question does
     not arise -- Linux and Windows scans are not gated on a location permission.
     """
-    fn = getattr(hostos, "location_status", None)
-    if not fn:
-        # Linux and Windows scans are not gated on a location permission, so there is
-        # nothing here to offer anybody.
-        return {"available": False, "granted": True, "why": "", "status": ""}
-    st, name = fn()
+    # Called directly, not through getattr(..., None). The polite fallback that used to
+    # be here is what hid this feature completely: `location_status` was implemented in
+    # hostos/darwin.py and never re-exported by hostos/__init__.py, so the lookup returned
+    # None, this function reported "not applicable on this platform", and the Wi-Fi screen
+    # hid the permission button on a Mac that needed it. A missing backend function should
+    # now raise here and be a bug, not degrade into a quietly wrong answer.
+    st, name = hostos.location_status()
+    if name == "not-required":
+        # Linux and Windows name networks and report bands without asking permission.
+        return {"available": False, "granted": True, "why": "", "status": name}
     if st is None:
         # macOS, and CoreLocation did not answer. The permission is still the only thing
         # that would fix the scan, so keep offering it. Reporting this as "not available"
@@ -223,8 +227,7 @@ def wifi_detail_status():
 
 def request_wifi_detail():
     """User-initiated only. See bridge.enable_wifi_detail."""
-    fn = getattr(hostos, "request_location", None)
-    return bool(fn and fn())
+    return bool(hostos.request_location())
 
 
 def keychain_wifi_password(ssid):
