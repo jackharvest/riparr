@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
 
 import boards
@@ -31,7 +32,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.11"
+VERSION = "0.1.12"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -348,28 +349,33 @@ class Bridge:
             return {"phase": "idle"}
 
     def _quit_soon(self):
-        """Give the reply time to reach the page, then go.
+        """Give the reply time to reach the page, then go, whatever happens.
 
         Quitting inside the call means the JavaScript that asked for the update never
         hears back, and the window vanishes with no explanation of why.
+
+        Every statement before the exit is best-effort, and the exit is in a `finally`
+        because this thread ending early is indistinguishable, from outside, from an
+        app that refuses to be replaced. It ended early in every release from v0.1.5 to
+        v0.1.11: `time` was not imported in this module, so the first line raised
+        NameError, and nothing downstream of it -- the quit, the exit -- ever ran. A
+        windowed build has no stderr, so the traceback went nowhere; what the user saw
+        was "Restarting" for ever, and the swapper outside waited on a pid that was
+        never going to die. Two fixes were written for that stall, both editing lines
+        below the one that always raised.
         """
         def go():
-            time.sleep(1.2)
-            self.nosleep.release()
             try:
+                time.sleep(1.2)
+                self.nosleep.release()
                 if self.on_quit:
                     self.on_quit()
-            except Exception:
-                pass
-            # And then leave, whatever that did. The graceful path only *asks* the
-            # window to close, from a background thread, and if it returns without the
-            # process actually ending -- which is what a self-update looked like: stuck
-            # on "restarting", for ever -- then the swapper outside is waiting on a pid
-            # that never exits, gives up, and reopens an app that never went away.
-            # Nothing after this point needs us alive; we are being replaced.
-            for _ in range(30):
-                time.sleep(0.1)
-            os._exit(0)
+                # Long enough for a graceful teardown to get there first, short enough
+                # that the swapper is still waiting when it does not.
+                time.sleep(3.0)
+            finally:
+                # Nothing after this point needs us alive; we are being replaced.
+                os._exit(0)
         threading.Thread(target=go, daemon=True).start()
 
     def preview_toml(self, cfg):

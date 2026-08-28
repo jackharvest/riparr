@@ -683,12 +683,35 @@ set -x
 echo "swap started $(date)"
 
 # Wait for the app to actually exit. Copying over a running bundle corrupts it.
-n=0
-while kill -0 %(pid)d 2>/dev/null && [ $n -lt 200 ]; do sleep 0.3; n=$((n+1)); done
-if kill -0 %(pid)d 2>/dev/null; then
-  echo "the old process never exited; leaving the installed app alone"
-  exit 1
+#
+# And then stop asking. The process being replaced is the least reliable participant in
+# its own replacement -- for six releases its quit thread died on its first line -- and
+# a swapper that only ever waits turns that into an app frozen on "Restarting" with no
+# way forward and no way back. Escalating is safe here: install_update refuses to start
+# while a card is being written or a box set up, so this process holds nothing by now
+# that is worth saving.
+gone() { ! kill -0 %(pid)d 2>/dev/null; }
+waitgone() {  # $1 ticks of 0.2s, quiet -- traced, the poll buries the log in its own spam
+  set +x
+  n=0
+  while [ $n -lt $1 ] && ! gone; do sleep 0.2; n=$((n+1)); done
+  set -x
+  gone
+}
+
+if ! waitgone 50; then
+  echo "it did not quit when asked; sending TERM"
+  kill -TERM %(pid)d 2>/dev/null
+  if ! waitgone 25; then
+    echo "still up after TERM; sending KILL"
+    kill -KILL %(pid)d 2>/dev/null
+    if ! waitgone 25; then
+      echo "the old process survived SIGKILL; leaving the installed app alone"
+      exit 1
+    fi
+  fi
 fi
+echo "the old process is gone; installing"
 
 mnt=$(mktemp -d /tmp/riparr-update.XXXXXX) || exit 1
 hdiutil attach %(dmg)s -nobrowse -quiet -mountpoint "$mnt" || exit 1

@@ -30,6 +30,31 @@ jobs:
         run: |
           python -m compileall -q server/riparr tools/preparer tools/flasher
 
+      # Parsing proves a file is syntactically Python. It does not prove the names in it
+      # exist, and the gap between those two swallowed the entire self-update feature:
+      # `_quit_soon` called `time.sleep` in a module that never imported `time`, so its
+      # thread raised NameError on the first line and neither the quit nor the exit that
+      # followed it ever ran. Every release from v0.1.5 to v0.1.11 shipped that way. A
+      # windowed build has no stderr for a traceback to land in, so what it looked like
+      # from outside was an app frozen on "Restarting" -- and two fixes were written for
+      # that stall, both editing lines below the one that always raised.
+      #
+      # pyflakes finds it in milliseconds. Only undefined names fail the build; the rest
+      # of what it reports is worth reading and is not worth failing a release over.
+      - name: Python names exist
+        run: |
+          pip install -q pyflakes
+          pyflakes server/riparr tools/preparer tools/flasher > flakes.txt || true
+          grep "undefined name" flakes.txt \
+            | grep -v "unable to detect undefined names" > undefined.txt || true
+          if [ -s undefined.txt ]; then
+            sed 's/^/::error::/' undefined.txt
+            exit 1
+          fi
+          echo "ok  every name resolves"
+          echo "--- pyflakes also noticed (not fatal) ---"
+          cat flakes.txt
+
       - name: JavaScript parses
         run: |
           for f in server/static/app.js server/static/icons.js \
