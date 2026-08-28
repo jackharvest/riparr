@@ -1188,9 +1188,14 @@ def check_for_update(current_version, repo=RIPARR_REPO, timeout=6):
     tag = (data.get("tag_name") or "").lstrip("v")
     assets = [{"name": a.get("name"), "url": a.get("browser_download_url"),
                "size": a.get("size")} for a in data.get("assets", [])]
+    # The tag names the release; it is not this program's version. The Preparer and the
+    # appliance ship together and version apart, so a release that only changes the web
+    # interface must not ask everyone to reinstall an SD-card writer.
+    latest = _component_version(assets, "preparer", tag)
     return {
-        "status": "update" if _newer(tag, current_version) else "current",
-        "version": tag,
+        "status": "update" if _newer(latest, current_version) else "current",
+        "version": latest,
+        "tag": tag,
         "current": current_version,
         "url": data.get("html_url"),
         "notes": data.get("body") or "",
@@ -1198,6 +1203,29 @@ def check_for_update(current_version, repo=RIPARR_REPO, timeout=6):
         "assets": assets,
         "repo": repo,
     }
+
+
+def _component_version(assets, key, fallback):
+    """This program's version in a release, from the `versions.json` asset.
+
+    One tag, two version numbers, each updater reading only its own. Releases published
+    before versions.json existed do not carry it and keep comparing against the tag, so
+    nothing that already worked changes behaviour.
+
+    Never raises: a release whose manifest cannot be read is treated as one without it.
+    """
+    for a in assets or []:
+        if a.get("name") != "versions.json" or not a.get("url"):
+            continue
+        try:
+            with urlopen(a["url"], timeout=10) as r:
+                v = json.load(r).get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        except Exception:
+            pass
+        break
+    return fallback
 
 
 def _newer(a, b):

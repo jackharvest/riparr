@@ -230,6 +230,43 @@ h3 { font-size: 13px; font-weight: 500; color: var(--fg-strong);
 .cap { font-size: 11.5px; color: var(--fg-muted); line-height: 1.7; }
 .cap b { color: var(--fg-strong); font-weight: 500; }
 
+/* Inline with a sentence, not a row of its own: this one sits inside an explanation and
+   would read as a section action anywhere else. */
+.btn.tiny {
+  padding: 2px 9px; font-size: 11px; border-radius: 6px;
+  margin-left: 6px; vertical-align: baseline;
+}
+
+/* The version, where a version belongs: quiet, always there, and the first thing anybody
+   is asked for when they report something. */
+.side-ver {
+  margin-top: 10px; font-size: 10.5px; color: var(--fg-muted); opacity: .7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* MakeMKV builds for several minutes and the user is told to walk away from it, so its
+   progress cannot live on one page. This is the only thing in the sidebar that appears
+   and disappears on its own. */
+.mk-strip {
+  display: block; text-decoration: none; margin-bottom: 12px;
+  padding: 8px 10px; border-radius: 7px; font-size: 11px;
+  border: 1px solid var(--line); background: var(--bg-raise, transparent);
+  color: var(--fg-muted);
+}
+.mk-strip.busy { color: var(--fg-strong); }
+.mk-strip.ok   { color: var(--ok, #3fb950); border-color: color-mix(in srgb, var(--ok, #3fb950) 40%, transparent); }
+.mk-strip.bad  { color: var(--bad, #f85149); border-color: color-mix(in srgb, var(--bad, #f85149) 45%, transparent); }
+.mk-line { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.mk-line b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.mk-bar {
+  display: block; height: 3px; margin-top: 6px; border-radius: 2px;
+  background: var(--line); overflow: hidden;
+}
+.mk-bar i {
+  display: block; height: 100%; border-radius: 2px;
+  background: var(--accent, #5a8dee); transition: width .4s ease;
+}
+
 .content {
   margin: var(--topbar-h) 0 0 var(--side-w);
   padding: 22px 26px 60px; min-height: calc(100vh - var(--topbar-h));

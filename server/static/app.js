@@ -389,6 +389,7 @@ const wizard = {
           return;
         }
         pollMakeMKV();
+        watchMakeMKV();
       };
     }
 
@@ -611,15 +612,24 @@ const wizard = {
     };
   },
 
-  done() {
-    $("#wz-body").innerHTML = `
+  /* Says what will actually happen next, rather than what the product does in general.
+     The old copy promised "insert a disc, close the tray, walk away" and the very next
+     screen showed Auto Rip switched off and greyed out — because MakeMKV was still
+     compiling and Auto Rip is gated on it being installed. Being sold a feature by the
+     page immediately before the page that says you cannot have it yet reads as a broken
+     box, not as a build in progress. */
+  async done() {
+    // Painted twice on purpose: once immediately so the panel is never blank, then again
+    // when the box has said what state it is actually in. render() does not await the
+    // step, so anything that needs a fetch has to draw something first.
+    const paint = (lede, first) => {
+      $("#wz-body").innerHTML = `
       <div class="wz-step">All set</div>
       <h1>Riparr is ready</h1>
-      <p class="muted">From here the loop is: insert a disc, close the tray, walk away.
-        The disc ejects when it's done.</p>
+      <p class="muted">${lede}</p>
       <div class="section"><div>
         <div class="kv">
-          <div class="k">Insert a disc</div><div class="v">Riparr identifies it and starts on its own</div>
+          <div class="k">${first[0]}</div><div class="v">${first[1]}</div>
           <div class="k">Watch the LED</div><div class="v">Green when it worked, orange when it didn't</div>
           <div class="k">Everything else</div><div class="v">Lives in Settings, and most people never open it</div>
         </div>
@@ -628,11 +638,38 @@ const wizard = {
         <div class="grow"></div>
         <button class="btn primary" id="w-go">Open Riparr</button>
       </div>`;
-    $("#w-go").onclick = async () => {
-      await api.post("/api/setup/complete");
-      location.hash = "#/queue";
-      await boot();
+      $("#w-go").onclick = async () => {
+        await api.post("/api/setup/complete");
+        location.hash = "#/queue";
+        await boot();
+      };
     };
+
+    paint(`Everything is configured. One moment — checking what the box can already do.`,
+          ["Watch the LED", "Green when it worked, orange when it didn't"]);
+
+    let st = null;
+    try { st = await api.get("/api/status"); } catch (e) { /* offline: keep the neutral copy */ }
+    if (!st) return;
+    const ar = st.autorip || {};
+    const building = !!(st.makemkv && !st.makemkv.installed);
+
+    const lede =
+      ar.enabled ? `From here the loop is: insert a disc, close the tray, walk away.
+                    The disc ejects when it's done.`
+    : ar.ready   ? `Turn on <b>Auto Rip</b> on the next screen and the loop becomes:
+                    insert a disc, close the tray, walk away.`
+    : building   ? `MakeMKV is still compiling in the background — several minutes, and you
+                    can leave this page. <b>Auto Rip</b> becomes available the moment it
+                    finishes, and the sidebar tracks it until then.`
+    :              `<b>Auto Rip</b> needs one or two more things first. The queue page lists
+                    exactly what, and each one links to where to fix it.`;
+
+    paint(lede, ar.enabled
+      ? ["Insert a disc", "Riparr identifies it and starts on its own"]
+      : building
+      ? ["While it builds", "Nothing to watch — carry on, or leave the page entirely"]
+      : ["Insert a disc", "Then press Rip. Auto Rip can start it for you once it is on"]);
   },
 };
 
@@ -1593,8 +1630,11 @@ settingsPages.library = async (s) => {
           : lib.mounted
             ? `${icon("circle-check", "ok")} Mounted at <code>${esc(lib.mount)}</code>,
                so <b>Straight to your library</b> works for this one.`
-            : `${icon("circle-info")} Not mounted, so these rips stage on the card
-               first. A share added since the last restart is mounted on the next one.`}
+            : `${icon("circle-info")} <b>Not mounted yet.</b> Rips will finish on the
+               SD card and be copied across afterwards — nothing is lost, it is just
+               slower and uses card space. Riparr mounts shares when it starts, so this
+               one needs a restart to be picked up.
+               <button class="btn tiny" data-mount-restart>Restart now</button>`}
         </div>
       </div>`;
   };
@@ -2146,11 +2186,36 @@ settingsPages.network = async () => {
 /* The saved list. Reordering is arrows rather than drag: this page is read on a phone
    as often as a laptop, the list is three or four entries, and a drag target that
    small is a coin toss. */
+/* The network the card was written with is *live* but not *listed*.
+   First boot writes it straight into wpa_supplicant's config, and the database only
+   learns about a network when the root-side apply script merges the two and hands the
+   result back — which happens the first time somebody saves a network from here. So on
+   a box that has never been edited, the list is empty while the box is plainly connected,
+   and the page said "No networks saved" to somebody looking at a working Wi-Fi link.
+
+   The connection is shown for what it is, with the one action that fixes it. Importing
+   runs the ordinary apply, which merges the live config in and preserves the key — the
+   list cannot be edited or reordered until it does, because Riparr would otherwise be
+   reordering a list with the box's only network missing from it. */
 function wifiListHTML(saved, here) {
   if (!saved || !saved.length)
-    return `<div class="empty-state"><div class="big">${icon("wifi")}</div>
-      <h2>No networks saved</h2>
-      <p>Riparr is reading the one the card was written with.</p></div>`;
+    return `<div class="wifi-saved">
+      ${here ? `<div class="wifi-row on">
+        <span class="wifi-rank">1</span>
+        <span class="wifi-lock">${icon("wifi")}</span>
+        <div class="grow">
+          <div class="t">${esc(here)}</div>
+          <div class="s">Connected now — from the card, not yet in Riparr's list</div>
+        </div>
+        <button class="btn" id="wifi-import">Add it to the list</button>
+      </div>` : ""}
+      <p class="muted" style="margin-top:12px">${here
+        ? `Riparr can see this connection but does not manage it yet. Adding it takes a
+           few seconds and briefly reconnects the Wi-Fi — after that it can be reordered,
+           and other networks can be added around it.`
+        : `Nothing saved, and the box is not on Wi-Fi. Add a network above, or connect it
+           by Ethernet.`}</p>
+    </div>`;
   return `<div class="wifi-saved">
     ${saved.map((n, i) => `
       <div class="wifi-row${n.ssid === here ? " on" : ""}" data-ssid="${esc(n.ssid)}">
@@ -2181,6 +2246,27 @@ function wireWifiRows(repaint) {
   $$("[data-wifi-up]").forEach(b => b.onclick = () => window.__wifiMove(b.dataset.wifiUp, -1));
   $$("[data-wifi-down]").forEach(b => b.onclick = () => window.__wifiMove(b.dataset.wifiDown, 1));
   $$("[data-wifi-del]").forEach(b => b.onclick = () => window.__wifiDrop(b.dataset.wifiDel));
+
+  // Importing the card's network. The apply reconnects the Wi-Fi, which on a box being
+  // administered over that same Wi-Fi means this page goes quiet for a few seconds — so
+  // say that before it happens rather than looking broken while it does.
+  const imp = $("#wifi-import");
+  if (imp) imp.onclick = async () => {
+    imp.disabled = true;
+    imp.textContent = "Adding…";
+    try {
+      await api.post("/api/wifi/import");
+    } catch (e) {
+      imp.disabled = false;
+      imp.textContent = "Add it to the list";
+      toast(e.message || "Could not add it", "bad");
+      return;
+    }
+    toast("Adding the network — the Wi-Fi reconnects, this takes a few seconds", "ok");
+    // The root side merges, publishes, and the next read adopts it. Give it time to
+    // finish associating before asking, or the page repaints on the old empty list.
+    setTimeout(() => { if (typeof repaint === "function") repaint(); }, 9000);
+  };
 }
 
 /* Adding a network. The name is typed, not only picked from a scan, because the whole
@@ -2798,9 +2884,72 @@ function renderSidebar(section, sub) {
         `<a class="nav-sub ${c.key === sub ? "on" : ""}" href="${c.href}">${c.label}</a>`).join("");
     }
     return html;
-  }).join("") + `<div class="side-foot"><div class="cap">${
-    st ? `${capacityPhrase(st.storage)}<br><span class="muted">${esc(st.hostname)}.local</span>` : ""
-  }</div></div>`;
+  }).join("") + `<div class="side-foot">
+    <div id="side-makemkv"></div>
+    <div class="cap">${
+      st ? `${capacityPhrase(st.storage)}<br><span class="muted">${esc(st.hostname)}.local</span>` : ""
+    }</div>
+    <div class="side-ver">${st && st.version ? `Riparr ${esc(st.version)}` : ""}</div>
+  </div>`;
+  paintMakeMKVStrip();
+}
+
+/* ── a build that follows you between pages ──
+   Compiling MakeMKV takes several minutes on this hardware, and setup deliberately lets
+   you carry on while it runs — the next step is naming shares and needs nothing from it.
+   But the progress lived only on the page that started it, so leaving that page made the
+   build vanish: no way to tell "still building" from "finished" from "failed", while Auto
+   Rip stays unavailable until it is done. That is the one long-running job on the box
+   that the user is expected to walk away from, so it reports from the sidebar instead,
+   on every page.
+
+   Painted from a variable rather than owned by the poller, because the sidebar is rebuilt
+   on every route change and the strip has to survive that. */
+const mkState = { phase: null, message: "", progress: 0 };
+
+function paintMakeMKVStrip() {
+  const box = $("#side-makemkv");
+  if (!box) return;
+  const s = mkState;
+  if (!s.phase || s.phase === "idle") { box.innerHTML = ""; return; }
+  if (s.phase === "done") {
+    box.innerHTML = `<div class="mk-strip ok">MakeMKV ready</div>`;
+    return;
+  }
+  if (s.phase === "error") {
+    box.innerHTML = `<a class="mk-strip bad" href="#/settings/makemkv">MakeMKV build failed</a>`;
+    return;
+  }
+  const pct = Math.max(0, Math.min(100, Math.round((s.progress || 0) * 100)));
+  box.innerHTML = `<a class="mk-strip busy" href="#/settings/makemkv" title="${esc(s.message || "")}">
+    <div class="mk-line"><span>Building MakeMKV</span><b>${pct}%</b></div>
+    <span class="mk-bar"><i style="width:${pct}%"></i></span></a>`;
+}
+
+let mkTimer = null;
+function watchMakeMKV() {
+  if (mkTimer) return;
+  const tick = async () => {
+    let st;
+    try { st = await api.get("/api/makemkv/install"); } catch (e) { return; }
+    const phase = st.phase || "idle";
+    // Nothing has ever been started: stop asking rather than polling for ever.
+    if (phase === "idle" && !mkState.phase) { clearInterval(mkTimer); mkTimer = null; return; }
+    mkState.phase = phase;
+    mkState.message = st.message || "";
+    mkState.progress = st.progress || 0;
+    paintMakeMKVStrip();
+    if (phase === "done" || phase === "error") {
+      clearInterval(mkTimer); mkTimer = null;
+      // A finished build is worth seeing once and is then just clutter beside the
+      // hostname. A failed one stays, because it needs somebody to do something.
+      if (phase === "done") {
+        setTimeout(() => { mkState.phase = null; paintMakeMKVStrip(); }, 25000);
+      }
+    }
+  };
+  tick();
+  mkTimer = setInterval(tick, 3000);
 }
 
 /* ════════════════════ router ════════════════════ */
@@ -3374,6 +3523,7 @@ function wireContent(section, sub) {
         return;
       }
       pollMakeMKV();
+      watchMakeMKV();
     };
   }
 
@@ -3676,6 +3826,21 @@ $("#logout").onclick = async (e) => {
    things you do to the appliance, not to the queue. Progress goes on the same
    full-screen overlay that covers a cold start, because the service is about to stop
    answering and any in-page element saying so is about to be unreachable anyway. */
+/* A share added after the box booted is not mounted, and the only lever the web service
+   has is a restart: mounting happens in riparr-library.service, which runs as root and
+   before riparr.service, and there is no request-file bridge for it the way there is for
+   Wi-Fi. So the honest button is the one that actually works, with the cost stated.
+   Delegated from the document because the destinations block is repainted on every
+   settings change. */
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mount-restart]");
+  if (!b) return;
+  e.preventDefault();
+  powerAction("reboot", "Restarting to mount the share",
+              "Riparr is restarting. The share is mounted as it comes back — about a "
+              + "minute. This page reconnects on its own.");
+});
+
 async function powerAction(action, label, after) {
   showWaiting(`${label}\u2026`);
   try {
@@ -3773,6 +3938,9 @@ async function boot() {
   $("#wizard").classList.add("hidden");
   $("#shell").classList.remove("hidden");
   renderChrome();
+  // A build started during setup outlives the wizard, and the queue page is where people
+  // land afterwards wondering why Auto Rip is still greyed out.
+  if (state.status.makemkv && !state.status.makemkv.installed) watchMakeMKV();
   if (!location.hash) location.hash = "#/queue";
   route();
 }

@@ -465,20 +465,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Three places have to agree or self-update silently stops working: the tag, the
-      # appliance version and the Preparer version. A mismatch is a release that tells
-      # every installed copy it is already current.
-      - name: Versions agree with the tag
+      # The two halves version independently now.
+      #
+      # They used to be forced equal to each other and to the tag, so a change to the web
+      # interface alone still bumped the Preparer -- and every installed Preparer was then
+      # told to update itself for a release containing nothing it runs. Asking somebody to
+      # reinstall an SD-card writer because a web page changed is not a courtesy.
+      #
+      # `versions.json` ships as a release asset and is what both updaters read: the box
+      # compares `appliance`, the Preparer compares `preparer`, and each ignores the other.
+      # The tag is only the release's name. Clients older than this file fall back to the
+      # tag, which is why it still has to parse as a version.
+      - name: Component versions
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          set -e
           SRV=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' server/riparr/__init__.py)
           PRE=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' tools/preparer/bridge.py)
+          TAG="${GITHUB_REF_NAME#v}"
+          for v in "$SRV" "$PRE"; do
+            echo "$v" | grep -Eq '^[0-9]+(\.[0-9]+)*$' \
+              || { echo "::error::not a version: '$v'"; exit 1; }
+          done
+          printf '{"appliance": "%s", "preparer": "%s", "tag": "%s"}\n' \
+            "$SRV" "$PRE" "$TAG" > versions.json
           echo "tag=$TAG appliance=$SRV preparer=$PRE"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            [ "$TAG" = "$SRV" ] || { echo "::error::appliance version $SRV != tag $TAG"; exit 1; }
-            [ "$TAG" = "$PRE" ] || { echo "::error::preparer version $PRE != tag $TAG"; exit 1; }
-          fi
-          [ "$SRV" = "$PRE" ] || { echo "::error::appliance $SRV != preparer $PRE"; exit 1; }
+          cat versions.json
 
       - name: Build riparr-server.tar.gz
         run: |
@@ -499,7 +510,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: riparr-server
-          path: riparr-server.tar.gz
+          path: |
+            riparr-server.tar.gz
+            versions.json
           if-no-files-found: error
 
   release:

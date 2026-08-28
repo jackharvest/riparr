@@ -53,17 +53,22 @@ def check(repo=REPO, timeout=8):
     tag = (data.get("tag_name") or "").lstrip("v")
     assets = data.get("assets") or []
     payload = _pick_asset(assets)
+    # The tag is the release's name, not this half's version. The web interface and the
+    # Preparer move independently, so a release that only changes the Preparer must not
+    # tell every box it is out of date -- and the other way round.
+    latest = _component_version(assets, "appliance", tag)
     return {
-        "status": "update" if _newer(tag, __version__) else "current",
+        "status": "update" if _newer(latest, __version__) else "current",
         "current": __version__,
-        "latest": tag,
+        "latest": latest,
+        "tag": tag,
         "repo": repo,
         "notes": data.get("body") or "",
         "published": data.get("published_at"),
         "url": data.get("html_url"),
         "asset": payload,
         "can_install": bool(payload) and P.IS_APPLIANCE,
-        "message": ("Version %s is available." % tag) if _newer(tag, __version__)
+        "message": ("Version %s is available." % latest) if _newer(latest, __version__)
                    else "Riparr is up to date.",
     }
 
@@ -274,6 +279,34 @@ def _safe_extract(tar, dest):
         if not target.startswith(base + os.sep) and target != base:
             raise ValueError("archive contains an unsafe path: %s" % m.name)
     tar.extractall(dest)
+
+
+def _component_version(assets, key, fallback):
+    """This half's version in a release, from the `versions.json` asset.
+
+    The appliance and the Preparer are released together and versioned apart: one tag,
+    two version numbers, and each updater reads only its own. Releases published before
+    versions.json existed do not carry it, so the tag remains the fallback and those keep
+    behaving exactly as they did.
+
+    Never raises. A release we cannot read the manifest of is treated as one that does
+    not have it, which is the conservative answer: compare against the tag.
+    """
+    for a in assets or []:
+        if a.get("name") != "versions.json":
+            continue
+        url = a.get("browser_download_url")
+        if not url:
+            break
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                v = json.load(r).get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        except Exception:
+            pass
+        break
+    return fallback
 
 
 def _newer(a, b):
