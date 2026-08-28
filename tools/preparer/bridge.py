@@ -32,7 +32,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.21"
+VERSION = "0.1.22"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -315,7 +315,11 @@ class Bridge:
             core_publish(self.update_path, phase="downloading", done=done, total=total,
                          message="Downloading version %s" % info["version"])
 
-        expected = core.published_sha256(info["repo"], info["version"], asset["name"])
+        # By asset URL, not by version: the tag and this program's version are no
+        # longer the same string, and a path built from the wrong one 404s.
+        expected = core.published_sha256(info.get("assets"), asset["name"],
+                                         info.get("tag") or info.get("version"),
+                                         info["repo"])
         path, err = core.download_update(asset, RUNDIR, expected, progress)
         if not path:
             core_publish(self.update_path, phase="error", message=err)

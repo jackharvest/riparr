@@ -84,7 +84,9 @@ def run_install(inst, archive):
             "asset": {"name": "riparr-server.tar.gz", "url": "stub", "size": 1},
         }
         U._download = lambda url, dest: shutil.copy2(archive, dest)
-        U._expected_hash = lambda repo, tag, name: U._sha256(archive)
+        # *args: this stub should not have to be edited every time the real
+        # signature moves — it exists to say "the checksum matches", nothing more.
+        U._expected_hash = lambda *a, **k: U._sha256(archive)
         U._restart_detached = lambda: None
         return U.install()
     finally:
@@ -132,6 +134,75 @@ with tempfile.TemporaryDirectory() as d:
               os.path.isfile(os.path.join(inst, ".venv", "bin", "python")))
     finally:
         os.chmod(inst, 0o755)
+
+# ── the checksum must come from *this* release ──
+#
+# The tag and a component version stopped being the same string when the two halves began
+# versioning apart. Both updaters built the checksums URL out of a version, so on a
+# release tagged v0.2.3 the Preparer asked for v0.1.21's checksums (404 -> "publishes no
+# checksum") and the appliance asked for v0.2.2's (a real file, the wrong numbers ->
+# "the download did not match its published checksum"). The second is worse: a false
+# corruption report against a perfectly good download.
+print("the checksums come from the release being installed")
+
+SUMS = "deadbeef" * 8 + "  riparr-server.tar.gz\n" + ("cafe" * 16) + "  x.dmg\n"
+RIGHT = "https://example.invalid/v0.2.3/SHA256SUMS.txt"
+
+
+class _Resp:
+    def __init__(self, body): self.body = body.encode()
+    def read(self): return self.body
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def _only(expected_url):
+    """A urlopen that serves the sums file at one URL and 404s everywhere else."""
+    def fake(req, timeout=None, **kw):
+        url = getattr(req, "full_url", req)
+        if url != expected_url:
+            raise OSError("404 at %s" % url)
+        return _Resp(SUMS)
+    return fake
+
+
+assets_json = [{"name": "riparr-server.tar.gz", "browser_download_url": "u"},
+               {"name": "SHA256SUMS.txt", "browser_download_url": RIGHT}]
+check("the appliance finds the sums asset by name", U._sums_url(assets_json) == RIGHT,
+      str(U._sums_url(assets_json)))
+
+import urllib.request as _ur
+_saved = _ur.urlopen
+try:
+    _ur.urlopen = _only(RIGHT)
+    got = U._expected_hash("riparr-server.tar.gz", U._sums_url(assets_json), "r/r", "0.2.3")
+    check("the appliance reads it from that URL", got == "deadbeef" * 8, str(got))
+    # A version that is not the tag must never be turned into a download path.
+    stray = U._expected_hash("riparr-server.tar.gz", None, "r/r", "0.2.2")
+    check("no component version is used as a release path", stray is None, str(stray))
+finally:
+    _ur.urlopen = _saved
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "tools", "preparer"))
+try:
+    import core as PC
+except Exception as e:                                   # pragma: no cover
+    PC = None
+    print("  (skipped preparer half: %s)" % e)
+
+if PC is not None:
+    pa = [{"name": "riparr-preparer-macos.dmg", "url": "u"},
+          {"name": "SHA256SUMS.txt", "url": RIGHT}]
+    saved = PC.urlopen
+    try:
+        PC.urlopen = _only(RIGHT)
+        got = PC.published_sha256(pa, "riparr-server.tar.gz", "0.2.3", "r/r")
+        check("the preparer reads it from the asset URL", got == "deadbeef" * 8, str(got))
+        stray = PC.published_sha256([], "riparr-server.tar.gz", "0.1.21", "r/r")
+        check("and never from its own version", stray is None, str(stray))
+    finally:
+        PC.urlopen = saved
 
 print()
 if FAILURES:

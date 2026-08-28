@@ -67,6 +67,11 @@ def check(repo=REPO, timeout=8):
         "published": data.get("published_at"),
         "url": data.get("html_url"),
         "asset": payload,
+        # The checksums file, located by asset URL rather than by building a path out of
+        # a version. `latest` is this half's version and stopped being the tag when the
+        # two halves began versioning apart, so a constructed path now points at the
+        # wrong release -- or at no release at all.
+        "sums_url": _sums_url(assets),
         "can_install": bool(payload) and P.IS_APPLIANCE,
         "message": ("Version %s is available." % latest) if _newer(latest, __version__)
                    else "Riparr is up to date.",
@@ -145,7 +150,8 @@ def install(repo=REPO):
         # Fail closed. If the published checksums cannot be read, that is a reason to
         # stop, not a reason to proceed without checking -- this archive is about to
         # become the code the box runs.
-        expected = _expected_hash(repo, info["latest"], asset["name"])
+        expected = _expected_hash(asset["name"], info.get("sums_url"),
+                                  repo, info.get("tag"))
         if not expected:
             return {"ok": False,
                     "message": "That release publishes no checksum for the appliance "
@@ -289,10 +295,31 @@ def _download(url, dest):
 _SUMS_NAMES = ("SHA256SUMS.txt", "sha256sums.txt")
 
 
-def _expected_hash(repo, tag, name):
-    """The published SHA-256 for `name`, or None if it cannot be established."""
-    for sums in _SUMS_NAMES:
-        url = "https://github.com/%s/releases/download/v%s/%s" % (repo, tag, sums)
+def _sums_url(assets):
+    """The release's own URL for its checksums file, if it publishes one."""
+    for a in assets or []:
+        if (a.get("name") or "") in _SUMS_NAMES and a.get("browser_download_url"):
+            return a["browser_download_url"]
+    return None
+
+
+def _expected_hash(name, sums_url=None, repo=REPO, tag=""):
+    """The published SHA-256 for `name`, or None if it cannot be established.
+
+    Prefers the URL the release itself gives for its checksums file. The constructed
+    path is kept only for releases whose asset list could not be read, and is built from
+    the *tag* -- never from a component version, which is what broke this: on a release
+    tagged v0.2.3 carrying appliance 0.2.2, asking for v0.2.2's checksums fetches a
+    different release's numbers and compares them against this one's download.
+    """
+    if sums_url:
+        urls = [sums_url]
+    elif tag:
+        urls = ["https://github.com/%s/releases/download/v%s/%s" % (repo, tag, s)
+                for s in _SUMS_NAMES]
+    else:
+        urls = []
+    for url in urls:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "riparr"})
             with urllib.request.urlopen(req, timeout=30) as r:

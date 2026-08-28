@@ -1304,10 +1304,27 @@ def update_asset_for_host(assets, suffix=None):
     return None
 
 
-def published_sha256(repo, tag, name, timeout=30):
-    """The release's published checksum for one asset, or None if it cannot be read."""
-    for sums in SUMS_NAMES:
-        url = "https://github.com/%s/releases/download/v%s/%s" % (repo, tag, sums)
+def published_sha256(assets, name, tag="", repo=RIPARR_REPO, timeout=30):
+    """The release's published checksum for one asset, or None if it cannot be read.
+
+    The checksums file is found by *asset URL*, not by building a path out of a version
+    number. It used to be built from `info["version"]` -- which stopped being the tag the
+    moment the two halves began versioning apart. On a release tagged v0.2.3 carrying
+    Preparer 0.1.21, this asked GitHub for `/releases/download/v0.1.21/SHA256SUMS.txt`,
+    got a 404, and refused the update for want of a checksum that had been published all
+    along.
+
+    Constructing a URL from a version is guessing where a file is. The release lists
+    exactly where it is, so ask it -- and keep the constructed URL only as a fallback for
+    releases whose asset list could not be read, built from the *tag*, which is the only
+    thing a download path has ever been named after.
+    """
+    urls = [a["url"] for a in (assets or [])
+            if (a.get("name") or "") in SUMS_NAMES and a.get("url")]
+    if not urls and tag:
+        urls = ["https://github.com/%s/releases/download/v%s/%s" % (repo, tag, s)
+                for s in SUMS_NAMES]
+    for url in urls:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "riparr-preparer"})
             with urlopen(req, timeout=timeout) as r:
