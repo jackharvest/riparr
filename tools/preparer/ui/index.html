@@ -36,6 +36,17 @@
   </div>
 </aside>
 
+<!-- Shown from the moment the page parses and removed when init() finishes. The bridge
+     can take several seconds to arrive on a cold first launch, and until it does there
+     is nothing to render -- which looked like an empty window rather than like work in
+     progress. -->
+<div id="booting">
+  <div class="boot-inner">
+    <div class="boot-spinner"></div>
+    <div class="boot-text">Starting…</div>
+  </div>
+</div>
+
 <main class="pane">
 
   <!-- ── Welcome ───────────────────────────────────────────── -->

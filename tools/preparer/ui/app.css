@@ -644,3 +644,46 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 :root.native-titlebar .rail { padding-top: 20px; }
 :root.native-titlebar .screen { padding-top: 26px; }
 :root.native-titlebar .center-screen { padding-top: 26px; }
+
+/* ── the first few seconds ──────────────────────────────────
+   pywebview's bridge can take several seconds to arrive on a cold launch, and app.js
+   cannot render a thing until it does. Showing the shell with an empty panel read as a
+   broken window; this says the app is working and gets out of the way by itself. */
+#booting {
+  position: fixed;
+  inset: 0 0 0 var(--rail-w, 216px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pane-bg, #1c1b22);
+  z-index: 40;
+  transition: opacity .18s ease;
+}
+#booting.gone { opacity: 0; pointer-events: none; }
+.boot-inner { text-align: center; }
+.boot-spinner {
+  width: 26px; height: 26px; margin: 0 auto 12px;
+  border: 2px solid rgba(255,255,255,.16);
+  border-top-color: rgba(255,255,255,.62);
+  border-radius: 50%;
+  animation: boot-spin .8s linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-text { font-size: 13px; color: var(--muted, #8b8598); }
+
+/* A finished download reads as finished. The progress bar used to simply stop moving at
+   100% while the last step (checksum comparison) ran, which is indistinguishable from a
+   stall -- and it was, once, for a different reason. */
+.hw-ready.ok { display: flex; align-items: flex-start; gap: 10px; }
+.hw-ready.ok .tick {
+  flex: 0 0 auto;
+  width: 20px; height: 20px; line-height: 20px;
+  border-radius: 50%;
+  text-align: center;
+  font-size: 12px;
+  color: #0e1a10;
+  background: #6fcf8d;
+  animation: tick-in .28s cubic-bezier(.2,.9,.3,1.4);
+}
+@keyframes tick-in { from { transform: scale(.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.hw-ready.ok .grow { display: flex; flex-direction: column; gap: 2px; }

@@ -31,7 +31,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -81,11 +81,20 @@ class NoSleep:
         self.proc = None
 
 
-def core_publish(path, **kw):
-    tmp = path + ".tmp"
+def core_publish(status_file, **kw):
+    """Write one status snapshot atomically.
+
+    The first parameter is *not* called `path`. It used to be, and the download's "done"
+    publish passes the image's own `path=` as data -- so the two collided, every
+    successful download raised TypeError inside its worker thread, and the status file
+    stayed on "downloading" for ever. What the user saw was a progress bar sitting at
+    100% and a Continue button insisting the image had not been downloaded, while the
+    image sat correctly on disk. Only the failure path worked, because it passes no path.
+    """
+    tmp = status_file + ".tmp"
     with open(tmp, "w") as f:
         json.dump(kw, f)
-    os.replace(tmp, path)
+    os.replace(tmp, status_file)
 
 
 # ─────────────────────────── the bridge plumbing ───────────────────────────
@@ -181,19 +190,32 @@ class Bridge:
             def progress(done, total):
                 core_publish(self.image_path, phase="downloading", board=board_id,
                              name=b["name"], done=done, total=total)
+            # The whole body, not just the download. "Never let the thread die silently"
+            # was the intent before and it only covered the call: the *publish* below
+            # raised, the thread died anyway, and the interface waited for a phase that
+            # was never going to arrive. A poller with no terminal state is a hang.
             try:
-                r = core.download_image(board_id, self.assets, progress=progress)
-            except Exception as e:                     # never let the thread die silently
-                r = {"ok": False, "error": str(e)}
-            if r.get("ok"):
-                core_publish(self.image_path, phase="done", board=board_id,
-                             name=r.get("name"), path=r.get("path"),
-                             cached=bool(r.get("cached")))
-            else:
-                core_publish(self.image_path, phase="error", board=board_id,
-                             message=r.get("error", "The download failed."),
-                             detail=r.get("detail", ""))
-            self._release_if_idle()
+                try:
+                    r = core.download_image(board_id, self.assets, progress=progress)
+                except Exception as e:
+                    r = {"ok": False, "error": str(e)}
+                if r.get("ok"):
+                    core_publish(self.image_path, phase="done", board=board_id,
+                                 name=r.get("name"), image_path=r.get("path"),
+                                 cached=bool(r.get("cached")))
+                else:
+                    core_publish(self.image_path, phase="error", board=board_id,
+                                 message=r.get("error", "The download failed."),
+                                 detail=r.get("detail", ""))
+            except Exception as e:
+                try:
+                    core_publish(self.image_path, phase="error", board=board_id,
+                                 message="The download failed unexpectedly.",
+                                 detail=str(e))
+                except Exception:
+                    pass
+            finally:
+                self._release_if_idle()
 
         self.image_thread = threading.Thread(target=run, daemon=True)
         self.image_thread.start()

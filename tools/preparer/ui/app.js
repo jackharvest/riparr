@@ -248,9 +248,17 @@ async function refreshBoardImage() {
   updateCardNext();
   const b = boardById(state.board);
   if (img) {
+    // "just stopped at 100%" is not a completion. Say it finished, say it was checked
+    // against the vendor's checksum -- which is the part that took the last few seconds
+    // -- and make it look different from a bar that has stalled.
     box.innerHTML =
-      `<div class="hw-ready"><b>OS image ready</b>
-        <span class="micro">${esc(img.name)}</span></div>`;
+      `<div class="hw-ready ok">
+         <span class="tick" aria-hidden="true">\u2713</span>
+         <span class="grow"><b>Operating system ready</b>
+           <span class="micro">${esc(img.name)}</span>
+           <span class="micro dim">Downloaded and checked against the vendor's
+             published checksum.</span></span>
+       </div>`;
     updateCardNext();
     return;
   }
@@ -303,8 +311,12 @@ async function downloadOS() {
       const pct = Math.min(100, (st.done / st.total) * 100);
       fill.classList.remove("indet");
       fill.style.width = pct.toFixed(1) + "%";
-      if (detail) detail.textContent =
-        `${fmtBytes(st.done)} of ${fmtBytes(st.total)} · ${pct.toFixed(0)}%`;
+      // The last bytes are not the last work: the checksum comparison and the move into
+      // place happen after the stream ends. Without this the bar reaches 100% and sits
+      // there with no explanation, which reads as a hang.
+      if (detail) detail.textContent = pct >= 99.95
+        ? "Checking the download against the vendor's checksum…"
+        : `${fmtBytes(st.done)} of ${fmtBytes(st.total)} · ${pct.toFixed(0)}%`;
     } else if (detail) {
       detail.textContent = `${fmtBytes(st.done || 0)} downloaded…`;
     }
@@ -1037,7 +1049,15 @@ $$("[data-back]").forEach(b => b.onclick = () => {
    bridge never arrived -- the promise rejected into nothing and the app sat there as an
    empty coloured rectangle, which reads as "hung" and taught people to quit and reopen
    until it caught. */
-init().catch((e) => {
+function bootDone() {
+  const b = document.getElementById("booting");
+  if (!b) return;
+  b.classList.add("gone");
+  setTimeout(() => b.remove(), 220);
+}
+
+init().then(bootDone).catch((e) => {
+  bootDone();
   const box = document.createElement("div");
   box.style.cssText =
     "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;" +
