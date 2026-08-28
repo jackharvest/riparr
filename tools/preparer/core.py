@@ -1164,6 +1164,39 @@ def ensure_key(assets):
 
 # ────────────────────────────── Updates ──────────────────────────────
 
+def probe_appliance(host, port=DEFAULT_PORT, timeout=4):
+    """Is a Riparr already answering at this name, and which version?
+
+    Asked before the setup route commits to anything. Running setup against a box that
+    is already working is a *different act* from setting one up: it is an upgrade, and
+    `tools/install.sh` is built for exactly that -- it parks the virtualenv, replaces
+    /opt/riparr, and leaves /var/lib/riparr alone, so the database, the login, the
+    history and the MakeMKV build all survive. Verified on a live box: the database was
+    byte-identical afterwards.
+
+    But nothing on screen said so, and a person who opens this weeks later and picks
+    "set it up" has no way to know whether they are about to reinstall over their own
+    box. Knowing the answer is what lets the screen say it.
+
+    Plain HTTP on purpose: this is a local appliance on the user's own network with no
+    certificate, and the endpoint is the unauthenticated one the setup flow already
+    polls to decide whether the box came up.
+    """
+    for name in ("%s.local" % host, host):
+        url = "http://%s:%d/api/setup/state" % (name, int(port))
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                d = json.load(r)
+        except Exception:
+            continue
+        if isinstance(d, dict) and d.get("version"):
+            return {"running": True, "version": d.get("version") or "",
+                    "complete": bool(d.get("complete")),
+                    "has_users": bool(d.get("has_users")),
+                    "address": name}
+    return {"running": False}
+
+
 def check_for_update(current_version, repo=RIPARR_REPO, timeout=6):
     """Ask GitHub for the newest release.
 

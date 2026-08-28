@@ -3689,7 +3689,11 @@ function wireContent(section, sub) {
       out.hidden = false;
       out.className = `alert ${r.ok ? "ok" : "warn"}`;
       out.innerHTML = `<b>${esc(r.message || "")}</b>${
-        r.detail ? `<div class="why" style="margin-top:6px;user-select:text">${esc(r.detail)}</div>` : ""}`;
+        r.detail ? `<div class="why" style="margin-top:6px;user-select:text">${esc(r.detail)}</div>` : ""}${
+        r.ok ? "" : `<div class="why" style="margin-top:8px">There is a second way in, and
+          it does not depend on anything here working: open <b>Riparr Preparer</b> on your
+          computer and choose <b>Set up a box that's already running</b>. It installs over
+          SSH and keeps your login, settings, rip history and the MakeMKV build.</div>`}`;
     }
     inst.disabled = false;
   };

@@ -397,6 +397,20 @@
     <div class="callout" id="connect-preview">Looking for <b>riparr.local</b></div>
     <p class="micro" id="connect-found"></p>
 
+    <!-- Shown only when a Riparr is already answering there.
+         Re-running this against a working box is an *upgrade*, not a reinstall:
+         tools/install.sh parks the virtualenv, replaces /opt/riparr and never touches
+         /var/lib/riparr, so the login, the settings, the history and the MakeMKV build
+         all survive. Verified on a live box -- the database was byte-identical after a
+         full run. None of which was said anywhere, so somebody opening this weeks later
+         had no way to tell whether they were about to flatten their own box. -->
+    <div class="notice" id="connect-existing" hidden>
+      <div class="grow">
+        <b id="connect-existing-h">A Riparr is already running here</b>
+        <span class="micro" id="connect-existing-b"></span>
+      </div>
+    </div>
+
     <p class="micro">If the name doesn't answer, this sweeps your network and offers the
       SSH key to every machine listening on port&nbsp;22. Only your box accepts it, so
       nothing else on the network is touched.</p>

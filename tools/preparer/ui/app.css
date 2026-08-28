@@ -515,6 +515,10 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   display: grid; place-items: center;
 }
 
+/* The connect screen's fields are a narrow column; a full-bleed notice beside them reads
+   as belonging to a different page. */
+#connect-existing { max-width: 560px; }
+
 /* ── handoff: what is finished, beside what is not ───────
    Two columns because the screen carries two different messages and merging them made
    the wrong one louder. The left is a receipt and reads as closure; the right is an

@@ -925,7 +925,7 @@ function connectPreview() {
 /* Cheap and worth doing: mDNS either answers or it does not, and knowing which before
    committing to a ten-minute setup turns "it failed" into "it is not there yet". */
 async function connectProbe() {
-  const { host } = connectPreview();
+  const { host, port } = connectPreview();
   $("#connect-found").textContent = "";
   let r;
   try { r = await riparr.name_taken(host); } catch (e) { return; }
@@ -934,6 +934,39 @@ async function connectProbe() {
     ? `${host}.local is answering at ${r.address}.`
     : `Nothing is answering to ${host}.local yet — that is normal if you have just `
       + `plugged it in, and the sweep below will find it anyway.`;
+
+  // Answering to the name is not the same as already being a Riparr. Ask.
+  //
+  // Running this against a box that already works is an upgrade, not a reinstall --
+  // install.sh parks the virtualenv, replaces /opt/riparr, and never touches
+  // /var/lib/riparr, so the login, settings, history and MakeMKV build all survive.
+  // That was true before this change and said nowhere, which made the button a coin
+  // toss for anybody who came back to it weeks later.
+  const box = $("#connect-existing");
+  const btn = $("#connect-next");
+  if (!r.taken) {
+    if (box) box.hidden = true;
+    if (btn) btn.textContent = "Find it and set it up";
+    return;
+  }
+  let p = null;
+  try { p = await riparr.probe_box(host, port); } catch (e) { p = null; }
+  if (!p || !p.running) {
+    if (box) box.hidden = true;
+    if (btn) btn.textContent = "Find it and set it up";
+    return;
+  }
+  if (box) {
+    box.hidden = false;
+    $("#connect-existing-h").textContent =
+      `${host}.local is already running Riparr ${p.version}`;
+    $("#connect-existing-b").innerHTML =
+      `Continuing <b>updates it in place</b>. Your login, settings, rip history and the `
+      + `MakeMKV build are all kept — nothing on the box is erased, and the card is not `
+      + `touched. This is also the way to update if the web interface's own updater `
+      + `cannot.`;
+  }
+  if (btn) btn.textContent = "Update it in place";
 }
 
 async function startConnect() {
