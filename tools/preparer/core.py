@@ -201,15 +201,24 @@ def wifi_detail_status():
     """
     fn = getattr(hostos, "location_status", None)
     if not fn:
-        return {"available": False, "granted": True, "why": ""}
+        # Linux and Windows scans are not gated on a location permission, so there is
+        # nothing here to offer anybody.
+        return {"available": False, "granted": True, "why": "", "status": ""}
     st, name = fn()
     if st is None:
-        return {"available": False, "granted": True, "why": ""}
+        # macOS, and CoreLocation did not answer. The permission is still the only thing
+        # that would fix the scan, so keep offering it. Reporting this as "not available"
+        # used to hide the offer *and* the explanation, which turned a packaging fault
+        # into a screen that silently did nothing.
+        return {"available": True, "granted": False,
+                "why": "unavailable", "status": name or "unavailable"}
     if st in (3, 4):
-        return {"available": True, "granted": True, "why": ""}
-    if name == "notDetermined":
-        return {"available": True, "granted": False, "why": "notDetermined"}
-    return {"available": True, "granted": False, "why": name}
+        return {"available": True, "granted": True, "why": "", "status": name}
+    # Every remaining status -- notDetermined, denied, restricted -- means the same thing
+    # to this screen: the permission is missing and the button is worth offering. Asking
+    # and being refused is a better outcome than a control that was never shown.
+    return {"available": True, "granted": False,
+            "why": name or "notDetermined", "status": name}
 
 
 def request_wifi_detail():

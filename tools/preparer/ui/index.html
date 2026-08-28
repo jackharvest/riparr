@@ -163,19 +163,35 @@
     <!-- Offered, not forced. A live scan needs Location Services or macOS returns every
          network name as nil; plenty of people know which network they want and do not
          care which band it is on, so this is a button rather than a prompt on the way in.
-         app.js shows it only when the permission is actually missing. -->
+         It is shown whenever the permission is missing, whatever the reason. It used to
+         appear only for the exact status "notDetermined" and hide itself for every other
+         answer -- including the one returned when CoreLocation had not loaded at all --
+         so the single control that could change anything vanished precisely when it was
+         needed, leaving "band unknown" against every network and nothing to click. -->
     <div class="notice" id="wifi-detail-offer" hidden>
       <div class="grow">
         <b>Band and signal are hidden</b>
         <span class="micro">macOS only reveals nearby network names, bands and signal
-          strength to apps allowed to use Location Services. Without it these are the
-          networks this Mac already knows, and the band is unknown.</span>
+          strength to apps allowed to use Location Services. Without it this list is the
+          networks this Mac remembers, and the band is unknown.</span>
       </div>
-      <button class="ghost" id="wifi-detail-btn">Show bands and signal</button>
+      <button class="ghost" id="wifi-detail-btn">Enable band detection</button>
     </div>
     <p class="micro" id="wifi-detail-note" hidden></p>
 
     <div id="wifi-list" class="list scroll"></div>
+
+    <!-- A Mac that has been to an office, an airport and three hotels remembers all of
+         them, and they were listed here alongside the networks actually in range as
+         though the two claims were the same. They are not: one is "this is here", the
+         other is "you joined this once". Folded away unless asked for -- except when the
+         scan named nothing at all, in which case remembered networks are the only list
+         there is and hiding them would leave an empty screen. -->
+    <details class="reveal" id="wifi-remembered" hidden>
+      <summary>Networks this Mac remembers (<span id="wifi-remembered-count">0</span>)
+        — not necessarily in range</summary>
+      <div id="wifi-remembered-list" class="list"></div>
+    </details>
     <div class="row-actions">
       <button class="ghost" id="rescan-wifi">Rescan</button>
       <button class="ghost" id="manual-wifi">Enter a name manually…</button>

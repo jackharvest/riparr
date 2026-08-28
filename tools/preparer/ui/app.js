@@ -324,38 +324,70 @@ async function downloadOS() {
 }
 
 /* ── step 2: wi-fi ──────────────────────────────────────── */
+function netItem(n, i) {
+  const tags = [];
+  if (n.pi_ok) {
+    if (n.bands.includes("2.4") && n.bands.includes("5")) tags.push(`<span class="tag good">2.4 + 5 GHz</span>`);
+    else if (n.bands.includes("5")) tags.push(`<span class="tag good">5 GHz — faster</span>`);
+    else if (n.bands.includes("2.4")) tags.push(`<span class="tag good">2.4 GHz</span>`);
+    else tags.push(`<span class="tag warn">band unknown</span>`);
+    // "out of range" was a claim we could not support. Without Location Services macOS
+    // names nothing at all, so a network being absent from the scan says only that we
+    // could not see it — not that it is not there.
+    if (n.saved && !n.seen) tags.push(`<span class="tag">remembered</span>`);
+    else if (n.saved) tags.push(`<span class="tag">saved</span>`);
+    if (!n.secure) tags.push(`<span class="tag warn">open</span>`);
+  }
+  const sub = n.pi_ok ? tags.join("")
+    : `<span class="sub">the box has no radio for this band</span>`;
+  return `<div class="item ${n.pi_ok ? "" : "off"}" data-i="${i}">
+    ${n.pi_ok ? bars(n.rssi) : `<span class="bars"></span>`}
+    <div class="grow">
+      <div class="title">${esc(n.ssid)}</div>
+      <div class="sub">${sub}</div>
+    </div>
+  </div>`;
+}
+
+/* Two different claims, told apart.
+   "In range now" and "this Mac joined it once" were rendered as one list, so a laptop
+   that has been to an office, an airport and three hotels offered all of them as though
+   they were here. They are folded away behind a disclosure instead.
+
+   Except when the scan named nothing at all — which is the normal case on macOS without
+   Location Services — because then the remembered list is the only list there is, and
+   hiding it by default would leave an empty screen and no way forward. */
 function renderNets(nets, method) {
-  const el = $("#wifi-list");
+  const el   = $("#wifi-list");
+  const wrap = $("#wifi-remembered");
   if (!nets.length) {
     el.innerHTML = `<div class="empty">No networks found.<br>
       Use <b>Enter a name manually</b>.</div>`;
+    if (wrap) wrap.hidden = true;
     return;
   }
-  el.innerHTML = nets.map((n, i) => {
-    const tags = [];
-    if (n.pi_ok) {
-      if (n.bands.includes("2.4") && n.bands.includes("5")) tags.push(`<span class="tag good">2.4 + 5 GHz</span>`);
-      else if (n.bands.includes("5")) tags.push(`<span class="tag good">5 GHz — faster</span>`);
-      else if (n.bands.includes("2.4")) tags.push(`<span class="tag good">2.4 GHz</span>`);
-      else tags.push(`<span class="tag warn">band unknown</span>`);
-      if (n.saved && !n.seen) tags.push(`<span class="tag">saved, out of range</span>`);
-      else if (n.saved) tags.push(`<span class="tag">saved</span>`);
-      if (!n.secure) tags.push(`<span class="tag warn">open</span>`);
-    }
-    const sub = n.pi_ok ? tags.join("")
-      : `<span class="sub">the box has no radio for this band</span>`;
-    return `<div class="item ${n.pi_ok ? "" : "off"}" data-i="${i}">
-      ${n.pi_ok ? bars(n.rssi) : `<span class="bars"></span>`}
-      <div class="grow">
-        <div class="title">${esc(n.ssid)}</div>
-        <div class="sub">${sub}</div>
-      </div>
-    </div>`;
-  }).join("");
 
-  el.querySelectorAll(".item:not(.off)").forEach(node => {
+  const all        = nets.map((n, i) => i);
+  const live       = all.filter(i => nets[i].seen);
+  const remembered = all.filter(i => !nets[i].seen);
+  const noLive     = live.length === 0;
+
+  el.innerHTML = (noLive ? remembered : live).map(i => netItem(nets[i], i)).join("");
+
+  const hide = noLive || !remembered.length;
+  if (wrap) {
+    wrap.hidden = hide;
+    if (!hide) {
+      $("#wifi-remembered-count").textContent = remembered.length;
+      $("#wifi-remembered-list").innerHTML =
+        remembered.map(i => netItem(nets[i], i)).join("");
+    }
+  }
+
+  const items = () => $$("#wifi-list .item, #wifi-remembered-list .item");
+  items().filter(node => !node.classList.contains("off")).forEach(node => {
     node.onclick = () => {
-      el.querySelectorAll(".item").forEach(n => n.classList.remove("sel"));
+      items().forEach(n => n.classList.remove("sel"));
       node.classList.add("sel");
       pickNet(nets[+node.dataset.i]);
     };
@@ -389,21 +421,36 @@ function updateWifiNext() {
 
 function paintWifi(r) {
   renderNets(r.networks, r.method);
-  const usable = r.networks.filter(n => n.pi_ok).length;
-  $("#wifi-hint").textContent = r.method === "live"
-    ? `${r.networks.length} networks · ${usable} usable`
-    : r.method === "none" ? "Couldn't scan — enter the name manually."
-    : `${r.networks.length} saved networks · band unknown`;
+  // Count what is on screen, not what came back. The old line summed both lists, so a
+  // scan that found three networks beside thirty remembered ones announced "33 networks"
+  // over a list of three.
+  const inRange    = r.networks.filter(n => n.seen);
+  const remembered = r.networks.length - inRange.length;
+  const usable     = (inRange.length ? inRange : r.networks).filter(n => n.pi_ok).length;
+  $("#wifi-hint").textContent =
+    r.method === "none" ? "Couldn't scan — enter the name manually."
+    : inRange.length
+      ? `${inRange.length} in range · ${usable} the box can join` +
+        (remembered ? ` · ${remembered} remembered` : "")
+      : `${remembered} remembered · nothing could be scanned`;
 
-  // Only ask when asking would change anything. Granted, or a platform where the
-  // question does not arise, and the offer never appears.
+  // Offer the permission whenever it is missing, whatever the reason.
+  //
+  // This used to offer it only for the exact status "notDetermined" and replace it with
+  // an instruction for anything else — including "unavailable", which is what comes back
+  // when CoreLocation did not load. So the one control that could change the situation
+  // was hidden in precisely the cases where it was needed, and the screen showed "band
+  // unknown" against every network with nothing to click. Asking and being told no is a
+  // better outcome than never being able to ask.
   const d = r.detail || {};
   const offer = $("#wifi-detail-offer");
   const note = $("#wifi-detail-note");
-  const askable = d.available && !d.granted && d.why === "notDetermined";
-  const refused = d.available && !d.granted && d.why !== "notDetermined";
-  if (offer) offer.hidden = !askable;
+  if (offer) offer.hidden = !(d.available && !d.granted);
   if (note) {
+    // Only speak up once the permission has actually been refused; the first-time state
+    // needs no footnote, it needs a button.
+    const refused = d.available && !d.granted &&
+                    d.why !== "notDetermined" && d.why !== "unavailable";
     note.hidden = !refused;
     if (refused) note.innerHTML =
       `Location Services is off for this app, so band and signal cannot be shown. ` +
@@ -424,8 +471,23 @@ async function enableWifiDetail() {
   let r;
   try { r = await riparr.enable_wifi_detail(); }
   catch (e) { r = null; }
-  if (btn) { btn.disabled = false; btn.textContent = "Show bands and signal"; }
-  if (r) paintWifi(r); else loadWifi();
+  if (btn) { btn.disabled = false; btn.textContent = "Enable band detection"; }
+  if (r) paintWifi(r); else { loadWifi(); return; }
+
+  // Say what happened. A button that can be pressed repeatedly with no visible result
+  // and no explanation is worse than one that admits it failed — and the status name is
+  // the one piece of evidence that makes the failure diagnosable at all.
+  const d = r.detail || {};
+  const note = $("#wifi-detail-note");
+  if (!note || d.granted) return;
+  note.hidden = false;
+  note.innerHTML = d.status === "unavailable"
+    ? `This build could not load CoreLocation, so it cannot ask. Bands are unavailable; ` +
+      `pick or type your network as normal.`
+    : `macOS did not grant it (<b>${esc(d.status || d.why || "no answer")}</b>). ` +
+      `Try <b>System Settings → Privacy &amp; Security → Location Services</b> and turn ` +
+      `on <b>Riparr Preparer</b>, then press Rescan. If it is not listed there, macOS ` +
+      `is refusing the request rather than asking you.`;
 }
 
 /* ── step 3: name ───────────────────────────────────────── */
