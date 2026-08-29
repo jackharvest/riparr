@@ -870,6 +870,58 @@ def shares_list(user=Depends(require_user)):
             "library": {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}}
 
 
+@app.get("/api/system/components")
+def system_components(user=Depends(require_user)):
+    """Which parts of Riparr that live outside /opt/riparr are installed, and current.
+
+    Exists because the two halves can drift silently and nothing noticed for months.
+    riparr-library.service was never installed by any installer, so no box mounted its
+    share at boot -- and the only symptom was a good share reported as lost, which
+    looks like a network problem and sends people to re-enter credentials.
+    """
+    return P.system_components()
+
+
+@app.post("/api/system/components/repair")
+def system_components_repair(user=Depends(require_user)):
+    """Install or refresh the missing parts, without a terminal.
+
+    Only possible when the provisioning door is already present -- the service is
+    unprivileged with NoNewPrivileges=yes and cannot write a unit file. On a box that
+    predates the door there is genuinely no route from here, and saying so honestly is
+    better than a button that fails in a way the user has to interpret.
+    """
+    before = P.system_components()
+    if before.get("ok"):
+        return {"ok": True, "message": "Everything is already installed.",
+                "components": before}
+    if not before.get("repairable"):
+        raise HTTPException(
+            status_code=503,
+            detail="This box is missing the part that installs the other parts, and "
+                   "that one cannot install itself — Riparr runs unprivileged and "
+                   "cannot write a system file. Re-run setup from the Riparr Preparer "
+                   "on your computer: it finds the box, offers 'Update it in place', "
+                   "and keeps your settings, shares and history.")
+    P.request_provision()
+
+    # Poll rather than return "asked": the whole point is to answer "is it fixed now".
+    deadline = time.time() + 45
+    after = before
+    while time.time() < deadline:
+        time.sleep(1)
+        after = P.system_components()
+        if after.get("ok"):
+            return {"ok": True,
+                    "message": "Installed. Everything on this box is up to date.",
+                    "components": after}
+    return {"ok": False,
+            "message": "Riparr asked, but %d part(s) are still missing. The system log "
+                       "on the Events page will say why."
+                       % (after.get("missing", 0) + after.get("stale", 0)),
+            "components": after}
+
+
 @app.post("/api/shares/remount")
 def shares_remount(user=Depends(require_user)):
     """Mount the configured shares again, without touching what is configured.

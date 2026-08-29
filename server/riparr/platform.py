@@ -1073,6 +1073,107 @@ WIFI_STATE = "/run/riparr/wifi.state"
 WIFI_UNIT = "/etc/systemd/system/riparr-wifi.path"
 
 
+# ── what should be installed outside /opt/riparr, and whether it is ──
+#
+# Riparr is two halves. The half in /opt/riparr the service can replace itself; the half
+# in /etc/systemd/system and /usr/local/lib/riparr it cannot, because it runs as an
+# unprivileged account with NoNewPrivileges=yes and every root door executes a fixed
+# script from a directory it cannot write. That is deliberate -- the alternative is a
+# web service that can run anything as root.
+#
+# The consequence is that the two halves can drift, and until 0.3.3 nothing noticed:
+# riparr-library.service was never installed by anything, so no box mounted its share at
+# boot, and the interface reported a perfectly good share as permanently lost. Something
+# has to be able to say "this box is missing a part", or the next one is found the same
+# way -- by a user, weeks later, from the symptom.
+#
+# (unit-or-script name, where it belongs, what it does, is it required)
+SYSTEM_COMPONENTS = [
+    ("riparr.service",          "unit",   "Runs Riparr itself",                 True),
+    ("riparr-library.service",  "unit",   "Mounts your library share at boot",  True),
+    ("riparr-remount.path",     "unit",   "The Reconnect button",               True),
+    ("riparr-remount.service",  "unit",   "The Reconnect button",               True),
+    ("riparr-provision.path",   "unit",   "Applies system changes after an update", True),
+    ("riparr-provision.service","unit",   "Applies system changes after an update", True),
+    ("riparr-netwatch.service", "unit",   "Recovers Wi-Fi that dies silently",  True),
+    ("riparr-wifi.path",        "unit",   "Changing Wi-Fi networks",            True),
+    ("riparr-wifi.service",     "unit",   "Changing Wi-Fi networks",            True),
+    ("riparr-makemkv.path",     "unit",   "Installing MakeMKV",                 True),
+    ("riparr-makemkv.service",  "unit",   "Installing MakeMKV",                 True),
+    ("riparr-reboot.path",      "unit",   "Restart from the web page",          True),
+    ("riparr-reboot.service",   "unit",   "Restart from the web page",          True),
+    ("riparr-poweroff.path",    "unit",   "Shut down from the web page",        True),
+    ("riparr-poweroff.service", "unit",   "Shut down from the web page",        True),
+    ("riparr-usbhost.path",     "unit",   "The USB-C socket fix",               True),
+    ("riparr-usbhost.service",  "unit",   "The USB-C socket fix",               True),
+    ("wifi-apply.sh",           "script", "Changing Wi-Fi networks",            True),
+    ("usbhost-fix.sh",          "script", "The USB-C socket fix",               True),
+    ("makemkv-run.sh",          "script", "Installing MakeMKV",                 True),
+    ("netwatch.sh",             "script", "Recovers Wi-Fi that dies silently",  True),
+    ("mount-library.sh",        "script", "Mounts your library share",          True),
+    ("apply-system.sh",         "script", "Installs the parts on this list",    True),
+]
+
+UNIT_DIR = "/etc/systemd/system"
+HELPER_DIR = "/usr/local/lib/riparr"
+PKG_DIR = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))), "packaging")
+TOOLS_DIR = os.path.join(os.path.dirname(PKG_DIR), "tools")
+
+
+def _packaged(name):
+    """Where the shipped copy of a component lives inside /opt/riparr."""
+    for d in (PKG_DIR, TOOLS_DIR):
+        c = os.path.join(d, name)
+        if os.path.exists(c):
+            return c
+    return None
+
+
+def _same(a, b):
+    try:
+        with open(a, "rb") as f1, open(b, "rb") as f2:
+            return hashlib.sha256(f1.read()).digest() == \
+                   hashlib.sha256(f2.read()).digest()
+    except OSError:
+        return False
+
+
+def system_components():
+    """What is installed outside /opt/riparr, and whether it matches what shipped.
+
+    Three states, and the middle one is the interesting one:
+
+      ok      installed and identical to the copy in this release
+      stale   installed, but an older version than the one now in /opt/riparr --
+              which is what an update that could not apply its system half leaves
+      missing not installed at all
+
+    `stale` matters because it is invisible from every other angle. The box reports the
+    new version, the files are on disk, and the running units are last release's.
+    """
+    if MOCK:
+        return {"components": [], "ok": True, "missing": 0, "stale": 0,
+                "repairable": False, "mock": True}
+    out, missing, stale = [], 0, 0
+    for name, kind, why, required in SYSTEM_COMPONENTS:
+        target = os.path.join(UNIT_DIR if kind == "unit" else HELPER_DIR, name)
+        shipped = _packaged(name)
+        if not os.path.exists(target):
+            state = "missing"
+            missing += 1
+        elif shipped and not _same(target, shipped):
+            state = "stale"
+            stale += 1
+        else:
+            state = "ok"
+        out.append({"name": name, "kind": kind, "why": why, "state": state,
+                    "path": target, "required": required})
+    return {"components": out, "ok": not (missing or stale),
+            "missing": missing, "stale": stale,
+            "repairable": provision_bridge_available()}
+
+
 REMOUNT_REQUEST = "/run/riparr/remount.request"
 REMOUNT_UNIT = "/etc/systemd/system/riparr-remount.path"
 

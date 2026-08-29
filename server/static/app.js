@@ -2687,9 +2687,68 @@ function healthMessages(st) {
   return out;
 }
 
+/* Riparr is two halves, and only one of them can update itself. The half in
+   /opt/riparr the service replaces on its own; the half in /etc/systemd/system it
+   cannot touch, because it runs unprivileged with NoNewPrivileges=yes.
+
+   So they drift, and until this existed nothing said so. riparr-library.service was
+   never installed by any installer -- no box mounted its share at boot, and the only
+   visible symptom was a good share reported as permanently lost. That is a whole class
+   of fault that can only be found by a user, weeks later, from a misleading symptom.
+   This is the panel that names it instead. */
+function componentsPanel(c) {
+  if (!c || c.mock) return "";
+  const bad = (c.components || []).filter(x => x.state !== "ok");
+
+  if (!bad.length) {
+    return `<div class="section"><h2>System components</h2><div>
+      <p class="ok-line">${icon("circle-check", "ok")} All
+        ${(c.components || []).length} parts installed and current.</p>
+      <p class="muted">These live outside Riparr's own folder — the systemd units and
+        root-side scripts that mount your share, recover the Wi-Fi and let the web page
+        ask for privileged things. Riparr cannot update them by itself, so it checks.</p>
+    </div></div>`;
+  }
+
+  // Grouped by reason, because "6 parts missing" is a number and "the Reconnect button
+  // and the Wi-Fi watchdog are not installed" is a sentence somebody can act on.
+  const rows = bad.map(x => `<tr>
+      <td class="stat">${icon(x.state === "missing" ? "circle-exclamation" : "clock",
+                              x.state === "missing" ? "bad" : "warn")}</td>
+      <td><code>${esc(x.name)}</code></td>
+      <td>${esc(x.why)}</td>
+      <td><span class="badge ${x.state === "missing" ? "bad" : "warn"}">${
+        x.state === "missing" ? "not installed" : "out of date"}</span></td>
+    </tr>`).join("");
+
+  return `<div class="section"><h2>System components</h2><div>
+    <p class="ropt-warn">${icon("triangle-exclamation")}
+      <span><b>${bad.length} part${bad.length === 1 ? " is" : "s are"} missing or out of
+      date.</b> ${c.missing ? "Anything not installed simply does not happen — no error, "
+      + "no log line. " : ""}This is why the check exists.</span></p>
+    <table>
+      <thead><tr><th class="stat"></th><th>Part</th><th>What it does</th>
+        <th>State</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="row-actions">
+      <button class="btn" id="fix-components">Install the missing parts</button>
+      <span class="test-out" id="fix-components-out"></span>
+    </p>
+    ${c.repairable ? "" : `<p class="muted">${icon("circle-info")} This box predates the
+      part that installs the others, and that one cannot install itself — Riparr runs
+      unprivileged and cannot write a system file. The button will explain the one-time
+      fix, which is a click in the Riparr Preparer on your computer, not a terminal.</p>`}
+  </div></div>`;
+}
+
 /* ── Tasks ── */
 systemPages.tasks = async () => {
   const t = await api.get("/api/system/tasks");
+  // Best effort: an older box has no such endpoint, and the Tasks page should still
+  // draw rather than failing whole because the health check is new.
+  let comp = null;
+  try { comp = await api.get("/api/system/components"); } catch (e) { comp = null; }
   const rows = t.scheduled.map(s => `<tr>
       <td>${esc(s.label)}</td>
       <td>${interval(s.interval)}</td>
@@ -2712,7 +2771,10 @@ systemPages.tasks = async () => {
     </tr>`).join("")
     : `<tr><td colspan="7" class="muted">Nothing has run yet.</td></tr>`;
 
+  // Above Scheduled, deliberately: a missing part is a fault, and Scheduled is
+  // routine. The fault goes where somebody looking at this page will see it first.
   return `
+    ${componentsPanel(comp)}
     <div class="section"><h2>Scheduled</h2>
       <table>
         <thead><tr><th>Name</th><th>Interval</th><th>Last Execution</th>
@@ -3204,6 +3266,27 @@ function wireContent(section, sub) {
     }
     b.disabled = false;
   });
+
+  /* Repair is slow (systemd oneshot, then a poll until the files appear), so the
+     button says what it is doing rather than just disabling. A 45-second silence on a
+     button labelled "install" is indistinguishable from a hang. */
+  const fix = $("#fix-components");
+  if (fix) fix.onclick = async () => {
+    const out = $("#fix-components-out");
+    const say = (m, cls) => { out.className = "test-out " + (cls || ""); out.textContent = m; };
+    fix.disabled = true;
+    say("Installing\u2026 this takes a few seconds.");
+    try {
+      const r = await api.post("/api/system/components/repair", {});
+      say(r.message, r.ok ? "ok" : "warn");
+      if (r.ok) { toast("System components installed", "ok"); route(); return; }
+    } catch (e) {
+      // 503 is the honest case: no door, so no route from here. Show the whole
+      // explanation rather than a toast that scrolls away — it names what to do next.
+      say(e.message, "bad");
+    }
+    fix.disabled = false;
+  };
 
   /* ── System: Tasks, Backup, Events, Log Files ── */
   $$("[data-task]").forEach(b => b.onclick = async () => {

@@ -32,7 +32,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")

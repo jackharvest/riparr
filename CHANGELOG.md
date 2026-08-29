@@ -8,6 +8,36 @@ bother updating.
 
 ---
 
+## 0.3.4
+
+**System → Tasks now checks itself.** Riparr is two halves: the application, which
+updates itself, and a set of systemd units and root-side scripts that mount your share,
+recover the Wi-Fi and let the web page ask for privileged things. Riparr cannot update
+that second half on its own — it runs unprivileged and cannot write a system file — so
+until now the two could drift apart with nothing anywhere saying so.
+
+That is not hypothetical. `riparr-library.service` had never been installed by any
+installer, on any box, so no share was mounted at boot — and the only symptom was a
+perfectly good share reported as permanently lost, which looks like a network fault and
+sends you to re-enter credentials that were never wrong.
+
+There's a **System components** panel at the top of the Tasks page now. It lists any
+part that is missing or out of date, says what each one does in plain terms, and has a
+button that installs them. No terminal.
+
+**The one case the button can't fix, and why.** If the part that installs the other
+parts is itself missing, it cannot install itself — that's the security model, not an
+oversight: Riparr runs as an unprivileged account with no sudo, and every privileged
+action goes through a fixed, root-owned script it cannot modify. Weakening that would
+mean a web service that can run anything as root. On such a box the panel says so and
+points you at the fix, which is **"Update it in place" in the Riparr Preparer** on your
+computer — a button in the app you already have, not an SSH session. It keeps your
+settings, shares and history.
+
+Boxes set up with 0.3.4 or later never hit that case.
+
+---
+
 ## 0.3.3
 
 **Your share can be reconnected from the page now.** If the NAS slept, the router
