@@ -2155,8 +2155,11 @@ function testRow(channel) {
    that cannot reach the network your browser is on. So this is a list, the way a
    phone's has been since about 2007, and wpa_supplicant joins the best one it can
    see. */
-settingsPages.network = async () => {
+settingsPages.network = async (s) => {
   const w = await api.get("/api/wifi");
+  // Clamped for display only -- the value is validated server-side too. Without this a
+  // half-typed "" in the box makes the derived ladder read "reconnects at NaN".
+  const n = Math.max(1, Math.min(120, Number(s.netwatch_minutes) || 3));
   state.wifiSaved = w.saved || [];
   state.wifiHere = w.ssid || "";
   state.wifiOrder = null;
@@ -2179,6 +2182,31 @@ settingsPages.network = async () => {
           w.iface ? ` <span class="muted">· ${esc(w.iface)}</span>` : ""}</div>
       </div></div>
     </div>
+
+    <div class="section"><h2>If the connection drops</h2><div>
+      <p class="muted">This board's Wi-Fi can stop passing traffic while still reporting
+        itself as connected — the radio wedges, nothing is logged, and the box sits there
+        unreachable while otherwise running perfectly. Riparr guards against that by
+        pinging your router once a minute and, if nothing answers, working through
+        reconnecting, reloading the Wi-Fi driver, and finally restarting the box.</p>
+      ${sw("netwatch_enabled", "Recover the connection automatically", s.netwatch_enabled,
+           "Off means Riparr will notice nothing and do nothing. Only worth turning off if something else on your network already watches this box.")}
+      <label class="f"><span>Wait this long first</span>
+        <input type="number" min="1" max="120" data-set="netwatch_minutes"
+               value="${esc(String(s.netwatch_minutes ?? 3))}">
+        <span class="help">Minutes of no answer before Riparr does anything about it.
+          The rest follows from this number: it reconnects at <b>${n}</b>, reloads the
+          Wi-Fi driver at <b>${n * 2}</b>, and restarts the box at <b>${n * 4}</b>
+          minutes.
+          <br><br><b>Shorter if your access point changes channel often.</b> On 5&nbsp;GHz
+          the higher channels are shared with radar, and an access point using one has to
+          move when it detects any — this board's Wi-Fi driver does not always follow, and
+          a shorter wait gets you back sooner. <b>Longer if your router reboots on a
+          schedule</b>, or you will have the box recovering from an outage that was going
+          to end on its own.</span></label>
+      ${sw("netwatch_reboot", "Restart the box as a last resort", s.netwatch_reboot,
+           "Only after reconnecting and reloading the driver have both failed. Never during a rip — Riparr waits for the disc to finish, because the box is already unreachable and restarting would cost you the rip as well.")}
+    </div></div>
 
     <div class="section"><h2>Known networks
       <span class="grow"></span>
@@ -2207,7 +2235,8 @@ settingsPages.network = async () => {
         <p class="muted">A scan takes a few seconds. Anything found here can be added
           with one click — you will still need the password.</p>
       </div>
-    </div>`;
+    </div>
+    ${saveBar()}`;
 };
 
 /* The saved list. Reordering is arrows rather than drag: this page is read on a phone

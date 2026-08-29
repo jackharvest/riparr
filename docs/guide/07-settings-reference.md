@@ -129,6 +129,42 @@ somewhere, because `smbclient` cannot stream it.
 
 That second copy is the only reason to buy a card bigger than 8 GB.
 
+## If the connection drops
+
+This board's Wi-Fi can stop passing traffic **while still reporting itself as
+connected**. The radio wedges, the link still looks up, nothing is logged, and the box
+sits there unreachable while otherwise running perfectly — on the reference unit, once,
+for 17.5 hours. There is no event to react to, so the only way to catch it is to send a
+packet and see whether anything answers.
+
+Riparr pings your router once a minute and works up a ladder if nothing comes back.
+
+| Setting | Notes |
+|---|---|
+| **Recover the connection automatically** | On. Off means Riparr notices nothing and does nothing — only worth it if something else on your network already watches this box |
+| **Wait this long first** | `3` minutes *(default)*. Minutes of no answer before Riparr acts. Everything else follows from it: reconnect at **N**, reload the Wi-Fi driver at **2N**, restart the box at **4N** |
+| **Restart the box as a last resort** | On. Only after reconnecting and reloading the driver have both failed |
+
+**A restart never interrupts a rip.** If a disc is in progress Riparr waits for it to
+finish — the box is already unreachable, so waiting costs nothing that isn't already
+lost, whereas restarting would cost you the rip as well.
+
+### Which way to move the number
+
+**Shorter if your access point changes channel often.** On 5 GHz the higher channels are
+shared with weather and military radar, and an access point using one is required to
+move whenever it detects any. This board's Wi-Fi driver does not reliably follow that
+move, so it can be left sitting on a channel nothing is using any more. If your router
+picks channels automatically it may be doing this without telling you. A shorter wait
+gets the box back sooner.
+
+**Longer if your router reboots on a schedule**, or if your network drops briefly and
+often for reasons you already know about. Otherwise the box spends its time recovering
+from outages that were going to end on their own — and at the bottom of the ladder, that
+means restarting itself for no reason.
+
+Changes take effect within the minute. Nothing needs restarting.
+
 ## Handoff
 
 For sending finished rips somewhere else — a transcoder, an automation.

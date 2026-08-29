@@ -8,6 +8,27 @@ bother updating.
 
 ---
 
+## 0.3.7
+
+**The Wi-Fi recovery is yours to tune now.** It was fixed at three minutes, which is a
+guess about your network rather than a fact about it. **Settings → Network → If the
+connection drops** has a switch, a number of minutes, and a separate switch for whether
+Riparr may restart the box as a last resort.
+
+Everything follows from the one number: it reconnects at **N** minutes, reloads the
+Wi-Fi driver at **2N**, and restarts the box at **4N**.
+
+**Shorten it if your access point changes channel often.** On 5 GHz the higher channels
+are shared with radar, and an access point on one has to move when it detects any —
+this board's Wi-Fi driver does not reliably follow, which leaves the box sitting on a
+channel nothing is using. **Lengthen it if your router reboots on a schedule**, or the
+box will spend its time recovering from outages that were going to end by themselves.
+
+Changes apply within the minute; nothing needs restarting. And a restart still never
+interrupts a rip — it waits for the disc.
+
+---
+
 ## 0.3.6
 
 **Fixes an update that failed with "Could not install packages due to an OSError".**

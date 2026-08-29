@@ -94,6 +94,29 @@ it's browning out the Pi.
 - If you built it yourself: the board and the drive need **separate buck outputs**, and
   the 5V rail needs bulk capacitance. Sharing one node is exactly what causes this.
 
+## The box vanishes off the network for hours
+
+**Almost always the radio, not the box.** This board's Wi-Fi can stop passing traffic
+while still reporting itself connected — nothing is logged, because from the driver's
+point of view nothing happened. The box carries on running perfectly; it just cannot be
+reached.
+
+Riparr watches for this itself: it pings your router once a minute and reconnects,
+reloads the Wi-Fi driver, and finally restarts the box. Check
+**Settings → Network → If the connection drops** is on.
+
+**If it keeps happening**, shorten *Wait this long first*. The usual cause is an access
+point on one of the 5 GHz channels shared with radar: it has to change channel when it
+detects any, and this board's driver does not always follow.
+
+**To confirm it was the radio and not a crash**, over SSH:
+
+```
+journalctl -b -1 | grep fake-hwclock-save | tail -20
+```
+
+An unbroken hourly line through the outage means the box never stopped running.
+
 ## The rip failed
 
 The web page says how far it got and why.

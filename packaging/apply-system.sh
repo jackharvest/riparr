@@ -38,6 +38,13 @@ for s in wifi-apply.sh usbhost-fix.sh makemkv-run.sh netwatch.sh; do
     install -o root -g root -m 0755 "$PKG/$s" "$LIB/$s"
 done
 
+# netwatch.sh looks for this beside itself. Not executable -- it is run as an argument
+# to the interpreter, and a 0644 file is one fewer thing that can be invoked directly.
+if [ -f "$PKG/netwatch-settings.py" ]; then
+    install -o root -g root -m 0644 "$PKG/netwatch-settings.py" \
+            "$LIB/netwatch-settings.py"
+fi
+
 # mount-library.sh lives in tools/ rather than packaging/, but it is a root-side helper
 # like the rest and belongs under /usr/local/lib for the same reason: riparr-library
 # used to execute it straight out of /opt/riparr, which the riparr account owns.

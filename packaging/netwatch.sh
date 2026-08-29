@@ -41,13 +41,35 @@ MODULE="${RIPARR_NETWATCH_MODULE:-sprdwl_ng}"
 # radio is caught in minutes rather than hours, rare enough to be invisible.
 INTERVAL="${RIPARR_NETWATCH_INTERVAL:-60}"
 
-# Consecutive failures before each rung. At 60s: re-associate at 3 min, reload at
-# 5 min, reboot at 10 min. Deliberately not tighter -- a router rebooting, or a
-# firmware upgrade on the AP, is a normal event that resolves itself in under a
-# minute, and a watchdog that reboots the appliance over it is worse than the fault.
+DB="${RIPARR_DB:-/var/lib/riparr/riparr.db}"
+PY="${RIPARR_PYTHON:-/opt/riparr/.venv/bin/python}"
+[ -x "$PY" ] || PY=python3
+READER="$(dirname "$0")/netwatch-settings.py"
+
+# Consecutive failures before each rung, read from the database on every probe so a
+# change in the web interface takes effect within the minute with nothing to restart.
+# One small query against a file already in page cache; a config-reload path would be
+# more machinery than the thing it manages.
+#
+# These defaults match db.DEFAULTS and are what applies if the database cannot be read
+# at all -- during first boot, say. A watchdog that refuses to run because it could not
+# find a preference is worse than one running on sensible numbers.
+#
+# Deliberately not tighter than a few minutes: a router rebooting, or a firmware upgrade
+# on the access point, is a normal event that resolves itself, and a watchdog that
+# reboots the appliance over it is worse than the fault it is guarding against.
+ENABLED=1
 FAIL_ASSOC="${RIPARR_NETWATCH_FAIL_ASSOC:-3}"
-FAIL_RELOAD="${RIPARR_NETWATCH_FAIL_RELOAD:-5}"
-FAIL_REBOOT="${RIPARR_NETWATCH_FAIL_REBOOT:-10}"
+FAIL_RELOAD="${RIPARR_NETWATCH_FAIL_RELOAD:-6}"
+FAIL_REBOOT="${RIPARR_NETWATCH_FAIL_REBOOT:-12}"
+
+load_settings() {
+    [ -f "$READER" ] || return 0
+    local out
+    out="$("$PY" "$READER" "$DB" 2>/dev/null)" || return 0
+    [ -n "$out" ] && eval "$out"
+    return 0
+}
 
 log() { logger -t riparr-netwatch -p daemon.notice -- "$@"; echo "riparr-netwatch: $*"; }
 warn() { logger -t riparr-netwatch -p daemon.warning -- "$@"; echo "riparr-netwatch: $*" >&2; }
@@ -110,10 +132,23 @@ reload_driver() {
 main() {
     local fails=0 did_assoc=0 did_reload=0 deferred=0
 
+    load_settings
     log "Watching $IFACE. Probe every ${INTERVAL}s; re-associate after $FAIL_ASSOC, reload after $FAIL_RELOAD, reboot after $FAIL_REBOOT."
 
     while :; do
         sleep "$INTERVAL"
+        load_settings
+
+        # Switched off mid-outage means stop, not finish the ladder. Somebody turning it
+        # off while watching the box misbehave is asking it to stop now, not to carry on
+        # to the reboot it had already decided on.
+        if [ "$ENABLED" != "1" ]; then
+            if [ "$fails" -gt 0 ]; then
+                log "Watchdog switched off; abandoning recovery."
+                fails=0; did_assoc=0; did_reload=0; deferred=0
+            fi
+            continue
+        fi
 
         if probe; then
             if [ "$fails" -gt 0 ]; then

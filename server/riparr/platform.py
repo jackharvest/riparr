@@ -1142,6 +1142,7 @@ SYSTEM_COMPONENTS = [
     ("usbhost-fix.sh",          "script", "The USB-C socket fix",               True),
     ("makemkv-run.sh",          "script", "Installing MakeMKV",                 True),
     ("netwatch.sh",             "script", "Recovers Wi-Fi that dies silently",  True),
+    ("netwatch-settings.py",    "script", "Your Wi-Fi recovery settings",       True),
     ("mount-library.sh",        "script", "Mounts your library share",          True),
     ("apply-system.sh",         "script", "Installs the parts on this list",    True),
 ]
