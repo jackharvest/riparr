@@ -1,0 +1,18 @@
+[Unit]
+Description=Watch for a Riparr request to restart the Riparr service
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# Restarting riparr.service cannot be done by riparr.service: the account is
+# unprivileged with NoNewPrivileges=yes, so `systemctl restart` and `systemd-run` both
+# come back "Access denied". The updater used to try exactly those two and believe the
+# second one worked, because it backgrounded the command with `&` -- so the shell
+# exited 0 whatever happened, and the refusal went to /dev/null.
+#
+# Separate from riparr-reboot.path because restarting the application is not the same
+# act as restarting the machine, and an update should cost two seconds rather than a
+# minute of the box being gone.
+PathExists=/run/riparr/restart.request
+
+[Install]
+WantedBy=multi-user.target

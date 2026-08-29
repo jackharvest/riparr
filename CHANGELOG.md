@@ -8,6 +8,29 @@ bother updating.
 
 ---
 
+## 0.3.5
+
+**In-place updates from the web page actually restart now.** They have been swapping the
+code correctly and then not restarting, so the box kept serving the old version and the
+page kept showing the old version number. The message said *"Riparr is restarting"* and
+nothing was restarting.
+
+The cause: Riparr runs as an unprivileged account and cannot restart itself — both
+`systemctl restart` and `systemd-run` come back *Access denied*. The updater tried those
+two and fell back to a backgrounded shell, which **exits 0 whether or not the command
+inside it works**, with the refusal sent to `/dev/null`. So it always looked like it had
+succeeded. Three updates in a row failed this way with three successes in the log.
+
+Restarting now goes through a privileged request, like every other thing Riparr needs
+root for. If that isn't installed yet it restarts the whole box instead, which works on
+every box. And if neither is possible it **says so** and gives you a Restart button,
+rather than claiming a restart it never arranged.
+
+Nothing was ever lost to this. The new version was always correctly on the box — it just
+wasn't running yet, and the next restart would have picked it up.
+
+---
+
 ## 0.3.4
 
 **System → Tasks now checks itself.** Riparr is two halves: the application, which

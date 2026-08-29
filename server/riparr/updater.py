@@ -229,17 +229,28 @@ def install(repo=REPO):
         # changes to /opt/riparr/packaging and install none of them.
         provisioned = P.request_provision()
 
-        _restart_detached()
-        if not provisioned:
-            return {"ok": True,
-                    "message": "Updated to %s. Riparr is restarting — but this box "
-                               "predates the automatic system-update step, so run the "
-                               "installer once to finish." % info["latest"],
-                    "detail": "sudo bash %s/tools/install.sh" % INSTALL_DIR,
-                    "version": info["latest"]}
-        return {"ok": True,
-                "message": "Updated to %s. Riparr is restarting." % info["latest"],
-                "version": info["latest"]}
+        # Arranged *after* the swap and reported honestly. The new code is on disk
+        # either way -- what differs is whether anything is going to start running it,
+        # and that is the difference between "updated" and "updated, nothing happened".
+        how = _arrange_restart()
+        note = ("" if provisioned else
+                " This box predates the automatic system-update step, so open "
+                "System \u2192 Tasks afterwards to finish installing it.")
+
+        if how == "restart":
+            msg = "Updated to %s. Riparr is restarting." % info["latest"]
+        elif how == "reboot":
+            msg = ("Updated to %s. The box is restarting to finish \u2014 about a "
+                   "minute." % info["latest"])
+        else:
+            msg = ("Updated to %s, but Riparr could not restart itself, so it is "
+                   "still running the previous version. Restart it from the account "
+                   "menu to finish \u2014 nothing is lost, and the new version is "
+                   "already on the box." % info["latest"])
+
+        return {"ok": True, "message": msg + note, "version": info["latest"],
+                "restarted": how, "needs_restart": how is None,
+                "provisioned": provisioned}
     except Exception as e:
         if swapped:
             _rollback(backup)
@@ -276,25 +287,46 @@ def _rollback(backup):
         pass
 
 
-def _restart_detached():
-    """Restart after this request has been answered, not during it.
+def _arrange_restart():
+    """Get the new code running. Returns "restart", "reboot" or None.
 
-    The updater runs inside riparr.service, so `systemctl restart` kills the process
-    that is still writing the HTTP response -- the browser gets a dropped connection at
-    the exact moment it most needs to be told the update worked. A short-lived transient
-    unit does the restart a moment later, from outside the service being restarted.
+    None is the important return value and the reason this was rewritten.
+
+    The old version tried `systemd-run` and then a backgrounded shell, and treated a
+    zero exit status as proof. Both are refused for this account -- verified on the
+    reference box, where each answers "Access denied", because riparr.service runs as
+    an unprivileged user with NoNewPrivileges=yes. The shell nevertheless exited 0,
+    every time, because `&` backgrounds the command and the refusal went to /dev/null.
+
+    So `install()` swapped the code correctly, reported "Riparr is restarting", and
+    restarted nothing. The box kept serving the old version from a process holding its
+    own deleted files open, the page still showed the old version, and the only clue
+    was that nothing happened. Three updates in a row failed that way with three 200s
+    in the log and no restart between them.
+
+    The lesson is the one this codebase keeps relearning: a privileged action attempted
+    directly from this process cannot work, and must go through a door. Restarting is
+    now a door of its own. Rebooting is the fallback, because that door has existed
+    since early versions and is present on every box that could be running this.
     """
-    delay = "sleep 2; systemctl restart %s" % SERVICE
-    for cmd in (["systemd-run", "--collect", "--unit=riparr-update-restart",
-                 "/bin/sh", "-c", delay],
-                # No systemd-run on a stripped image: fall back to an orphaned shell,
-                # which survives its parent being killed.
-                ["/bin/sh", "-c", "(" + delay + ") >/dev/null 2>&1 &"]):
-        try:
-            if subprocess.run(cmd, capture_output=True, timeout=10).returncode == 0:
-                return
-        except Exception:
-            continue
+    if P.request_service_restart():
+        return "restart"
+    ok, _ = P.power_action("reboot")
+    if ok:
+        return "reboot"
+    # Running as root (a developer box, or an install that never dropped privileges) is
+    # the only case where doing it here can work. Checked last and checked honestly:
+    # no backgrounding, so the return code means something.
+    try:
+        r = subprocess.run(["systemd-run", "--collect", "--on-active=2",
+                            "--unit=riparr-update-restart",
+                            "systemctl", "restart", SERVICE],
+                           capture_output=True, timeout=10)
+        if r.returncode == 0:
+            return "restart"
+    except Exception:
+        pass
+    return None
 
 
 def _download(url, dest):

@@ -3400,7 +3400,31 @@ function wireContent(section, sub) {
   const eject = $("#t-eject");
   if (eject) eject.onclick = async () => {
     const r = await api.post("/api/drive/eject");
-    toast(r.message, r.ok ? "ok" : "bad");
+    toast(r.message, r.ok && !r.needs_restart ? "ok" : r.ok ? "warn" : "bad");
+    // A successful swap the box could not restart is not a failure and must not be
+    // dressed as one -- the new version is on disk and one restart away. But it is not
+    // a plain success either, and reporting it as one is exactly the bug this fixes:
+    // "Riparr is restarting" followed by nothing, forever.
+    if (r.ok && r.needs_restart) {
+      const out0 = $("#upd-result");
+      if (out0) {
+        out0.hidden = false;
+        out0.className = "alert warn";
+        out0.innerHTML = `<b>${esc(r.message)}</b>
+          <div class="why" style="margin-top:8px">
+            <button class="btn" id="upd-restart">Restart Riparr now</button>
+          </div>`;
+        const rb = $("#upd-restart");
+        if (rb) rb.onclick = () => powerAction("reboot", "Restarting to finish the update",
+          "Riparr is restarting. It comes back on the new version in about a minute. "
+          + "This page reconnects on its own.");
+      }
+      inst.disabled = false;
+      return;
+    }
+    // The box is going away on its own; watch for it rather than leaving a page that
+    // silently stops matching reality.
+    if (r.ok && r.restarted) waitForBoxBack();
   };
 
   // Offered when the diagnosis says the drive is probably in the socket that cannot

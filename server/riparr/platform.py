@@ -531,6 +531,36 @@ def power_action(action):
     return True, ("Restarting" if action == "reboot" else "Shutting down")
 
 
+RESTART_REQUEST = "/run/riparr/restart.request"
+RESTART_UNIT = "/etc/systemd/system/riparr-restart.path"
+
+
+def restart_available():
+    return os.path.exists(RESTART_UNIT) and os.access(RUN_DIR, os.W_OK)
+
+
+def request_service_restart():
+    """Ask the root side to restart riparr.service. True if the request was placed.
+
+    This process cannot restart itself. It runs as an unprivileged account with
+    NoNewPrivileges=yes, so both `systemctl restart` and `systemd-run` answer "Access
+    denied" -- verified on the reference box, not assumed. The updater used to try
+    those two and treat the second as success because it backgrounded the command,
+    which makes the shell exit 0 no matter what happens next. Every in-place update
+    therefore reported "Riparr is restarting" and restarted nothing.
+    """
+    if MOCK:
+        return True
+    if not restart_available():
+        return False
+    try:
+        with open(RESTART_REQUEST, "w") as f:
+            f.write("%d\n" % int(time.time()))
+        return True
+    except OSError:
+        return False
+
+
 USBHOST_REQUEST = "/run/riparr/usbhost.request"
 
 
@@ -1091,6 +1121,8 @@ WIFI_UNIT = "/etc/systemd/system/riparr-wifi.path"
 SYSTEM_COMPONENTS = [
     ("riparr.service",          "unit",   "Runs Riparr itself",                 True),
     ("riparr-library.service",  "unit",   "Mounts your library share at boot",  True),
+    ("riparr-restart.path",     "unit",   "Restarting Riparr after an update",  True),
+    ("riparr-restart.service",  "unit",   "Restarting Riparr after an update",  True),
     ("riparr-remount.path",     "unit",   "The Reconnect button",               True),
     ("riparr-remount.service",  "unit",   "The Reconnect button",               True),
     ("riparr-provision.path",   "unit",   "Applies system changes after an update", True),

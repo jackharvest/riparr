@@ -61,6 +61,7 @@ for u in riparr.service \
          riparr-wifi.service riparr-wifi.path \
          riparr-netwatch.service \
          riparr-provision.service riparr-provision.path \
+         riparr-restart.service riparr-restart.path \
          riparr-remount.service riparr-remount.path \
          riparr-library.service; do
     [ -f "$PKG/$u" ] || continue
@@ -75,7 +76,7 @@ systemctl daemon-reload
 # it is not already running -- restarting it during an outage would reset the
 # escalation counter and start the clock again from zero.
 for p in riparr-makemkv riparr-poweroff riparr-reboot riparr-usbhost riparr-wifi \
-         riparr-provision riparr-remount; do
+         riparr-provision riparr-remount riparr-restart; do
     [ -f "/etc/systemd/system/$p.path" ] || continue
     systemctl enable --quiet "$p.path" 2>/dev/null || true
     systemctl start "$p.path" 2>/dev/null || true
