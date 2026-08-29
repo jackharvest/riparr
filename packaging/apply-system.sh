@@ -38,13 +38,21 @@ for s in wifi-apply.sh usbhost-fix.sh makemkv-run.sh netwatch.sh; do
     install -o root -g root -m 0755 "$PKG/$s" "$LIB/$s"
 done
 
+# mount-library.sh lives in tools/ rather than packaging/, but it is a root-side helper
+# like the rest and belongs under /usr/local/lib for the same reason: riparr-library
+# used to execute it straight out of /opt/riparr, which the riparr account owns.
+if [ -f "$INSTALL_DIR/tools/mount-library.sh" ]; then
+    install -o root -g root -m 0755 "$INSTALL_DIR/tools/mount-library.sh" \
+            "$LIB/mount-library.sh"
+fi
+
 # ── units ──
 # Same argument: an explicit list, so this cannot install something unreviewed.
 #
-# riparr-library.service is deliberately NOT here. It exists in packaging/ but no
-# installer has ever copied it, and it is absent from the reference box -- so adding it
-# would start mounting shares on every existing unit as a side effect of a Wi-Fi fix.
-# If it is meant to be live, that is its own change with its own testing.
+# riparr-library.service IS here as of 0.3.3, and its absence was a real bug: nothing
+# had ever installed it, so no box mounted its share at boot. /srv/library did not even
+# exist on the reference unit. That is what made a configured share read as permanently
+# lost, with no way back from the interface short of deleting it and adding it again.
 for u in riparr.service \
          riparr-makemkv.service riparr-makemkv.path \
          riparr-poweroff.service riparr-poweroff.path \
@@ -52,7 +60,9 @@ for u in riparr.service \
          riparr-usbhost.service riparr-usbhost.path \
          riparr-wifi.service riparr-wifi.path \
          riparr-netwatch.service \
-         riparr-provision.service riparr-provision.path; do
+         riparr-provision.service riparr-provision.path \
+         riparr-remount.service riparr-remount.path \
+         riparr-library.service; do
     [ -f "$PKG/$u" ] || continue
     install -m 0644 "$PKG/$u" "/etc/systemd/system/$u"
 done
@@ -65,11 +75,24 @@ systemctl daemon-reload
 # it is not already running -- restarting it during an outage would reset the
 # escalation counter and start the clock again from zero.
 for p in riparr-makemkv riparr-poweroff riparr-reboot riparr-usbhost riparr-wifi \
-         riparr-provision; do
+         riparr-provision riparr-remount; do
     [ -f "/etc/systemd/system/$p.path" ] || continue
     systemctl enable --quiet "$p.path" 2>/dev/null || true
     systemctl start "$p.path" 2>/dev/null || true
 done
+
+# The library mount is a oneshot, not a door. Enabling it is what makes a share come
+# back on its own after a reboot; starting it now is what makes it come back today,
+# without the user having to reboot to get the fix they just installed.
+if [ -f /etc/systemd/system/riparr-library.service ]; then
+    systemctl enable --quiet riparr-library.service 2>/dev/null || true
+    systemctl start riparr-library.service 2>/dev/null || true
+    if mountpoint -q /srv/library 2>/dev/null; then
+        say "library share mounted at /srv/library"
+    else
+        say "library share not mounted yet — add or test a share in the web interface"
+    fi
+fi
 
 if [ -f /etc/systemd/system/riparr-netwatch.service ]; then
     systemctl enable --quiet riparr-netwatch.service 2>/dev/null || true

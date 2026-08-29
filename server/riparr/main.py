@@ -870,6 +870,48 @@ def shares_list(user=Depends(require_user)):
             "library": {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}}
 
 
+@app.post("/api/shares/remount")
+def shares_remount(user=Depends(require_user)):
+    """Mount the configured shares again, without touching what is configured.
+
+    The gap this fills: a share that dropped -- NAS asleep, router rebooted, cable --
+    left a configured, correct, tested share that the box reported as lost, and the
+    only route the interface offered was deleting it and adding it back. That means
+    retyping credentials to fix something that was never wrong with them, and it is the
+    kind of dead end that makes an appliance feel broken.
+
+    Nothing here re-tests or re-validates: the share was already proved when it was
+    added. This asks the root side to run the same idempotent mount it runs at boot.
+
+    Waits for the result rather than returning "asked". A button that says "reconnect"
+    and then leaves the page looking identical is indistinguishable from one that does
+    nothing, and this is exactly the moment somebody is already suspicious.
+    """
+    if not P.request_remount():
+        raise HTTPException(
+            status_code=503,
+            detail="This box can't remount from here yet. Re-run the installer once "
+                   "over SSH to add it: sudo bash /opt/riparr/tools/install.sh")
+
+    # The mount is a systemd oneshot reached through a path unit, so there is no return
+    # value to wait on -- poll the thing that actually matters instead. cifs mounts on
+    # this hardware land in about a second; 20 is generous enough for a NAS that has to
+    # spin its disks up first.
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        time.sleep(0.5)
+        lib = {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}
+        if any(v.get("mounted") for v in lib.values()):
+            return {"ok": True, "message": "Reconnected.", "library": lib}
+
+    lib = {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}
+    return {"ok": False,
+            "message": "Riparr asked, but the share still isn't mounted. The machine "
+                       "is probably asleep or off the network — nothing here needs "
+                       "changing, and rips will use the card until it answers.",
+            "library": lib}
+
+
 @app.post("/api/shares/discover")
 def shares_discover(user=Depends(require_user)):
     return {"hosts": SH.discover()}

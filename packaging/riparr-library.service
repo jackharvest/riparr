@@ -19,7 +19,11 @@ Before=riparr.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/opt/riparr/tools/mount-library.sh
+# /usr/local/lib/riparr, not /opt/riparr: that tree is owned by the riparr account,
+# and a root unit executing from it would hand the unprivileged service a way to run
+# anything as root. install.sh already states that rule for every other helper; this
+# unit predates it being applied here.
+ExecStart=/usr/local/lib/riparr/mount-library.sh
 # Lazy: a NAS that has gone away must not leave a unit that cannot stop, because
 # riparr.service is ordered after this one and would never start again.
 ExecStop=/bin/sh -c '/bin/umount -l /srv/library 2>/dev/null || true'

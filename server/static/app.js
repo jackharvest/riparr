@@ -1251,7 +1251,9 @@ function ripOptions() {
           : `The rip is safe on the card before anything is sent, so a network that drops
              mid-disc costs a re-send rather than a re-rip.`}</p>
       ${!lib.mounted && direct ? `<p class="ropt-warn">${icon("triangle-exclamation")}
-        <span>Your library isn't mounted, so rips will stage on the card until it is.</span></p>` : ""}
+        <span>Your library isn't connected, so rips will stage on the card until it is.
+        <button class="btn tiny" data-remount>Reconnect</button>
+        <span class="test-out" data-remount-out></span></span></p>` : ""}
       <span class="test-out ropt-out" id="ar-speed-out"></span>
     </div>
 
@@ -1643,11 +1645,11 @@ settingsPages.library = async (s) => {
           : lib.mounted
             ? `${icon("circle-check", "ok")} Mounted at <code>${esc(lib.mount)}</code>,
                so <b>Straight to your library</b> works for this one.`
-            : `${icon("circle-info")} <b>Not mounted yet.</b> Rips will finish on the
+            : `${icon("circle-info")} <b>Not connected.</b> Rips will finish on the
                SD card and be copied across afterwards — nothing is lost, it is just
-               slower and uses card space. Riparr mounts shares when it starts, so this
-               one needs a restart to be picked up.
-               <button class="btn tiny" data-mount-restart>Restart now</button>`}
+               slower and uses card space. Nothing here needs changing.
+               <button class="btn tiny" data-remount>Reconnect</button>
+               <span class="test-out" data-remount-out></span>`}
         </div>
       </div>`;
   };
@@ -3888,19 +3890,44 @@ $("#logout").onclick = async (e) => {
    things you do to the appliance, not to the queue. Progress goes on the same
    full-screen overlay that covers a cold start, because the service is about to stop
    answering and any in-page element saying so is about to be unreachable anyway. */
-/* A share added after the box booted is not mounted, and the only lever the web service
-   has is a restart: mounting happens in riparr-library.service, which runs as root and
-   before riparr.service, and there is no request-file bridge for it the way there is for
-   Wi-Fi. So the honest button is the one that actually works, with the cost stated.
-   Delegated from the document because the destinations block is repainted on every
-   settings change. */
-document.addEventListener("click", (e) => {
-  const b = e.target.closest("[data-mount-restart]");
+/* Reconnecting a share used to mean rebooting the box, because mounting happens in
+   riparr-library.service as root and the web service had no way to ask for it. It now
+   has the same request-file bridge as Wi-Fi, so this is a one-second remount instead of
+   a one-minute restart -- and, crucially, instead of what people were actually doing,
+   which was deleting a perfectly good share and retyping its password to get the box to
+   try again.
+
+   The reboot is kept as the fallback for a box whose bridge predates this, rather than
+   dropping a button that used to work. Delegated from the document because the
+   destinations block is repainted on every settings change. */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-remount]");
   if (!b) return;
   e.preventDefault();
-  powerAction("reboot", "Restarting to mount the share",
-              "Riparr is restarting. The share is mounted as it comes back — about a "
-              + "minute. This page reconnects on its own.");
+  const out = b.parentElement.querySelector("[data-remount-out]");
+  const say = (msg, cls) => { if (out) { out.className = "test-out " + (cls || ""); out.textContent = msg; } };
+  b.disabled = true;
+  say("Reconnecting\u2026");
+  try {
+    const r = await api.post("/api/shares/remount", {});
+    say(r.message, r.ok ? "ok" : "warn");
+    if (r.ok) { toast("Reconnected", "ok"); route(); return; }
+  } catch (err) {
+    // 503 means this box has no remount bridge yet -- offer the old lever rather than
+    // leaving somebody with a button that only ever fails.
+    if (/installer/i.test(err.message || "")) {
+      say("");
+      if (confirm(err.message + "\n\nRestart the box instead? That also mounts it.")) {
+        powerAction("reboot", "Restarting to mount the share",
+                    "Riparr is restarting. The share is mounted as it comes back — "
+                    + "about a minute. This page reconnects on its own.");
+        return;
+      }
+    } else {
+      say(err.message, "bad");
+    }
+  }
+  b.disabled = false;
 });
 
 async function powerAction(action, label, after) {

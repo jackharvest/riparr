@@ -1,0 +1,17 @@
+[Unit]
+Description=Watch for a Riparr request to remount the library shares
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# Mounting needs root; the web service is unprivileged and must stay that way. Same
+# one-way door as wifi/reboot/poweroff/usbhost: the service creates one empty file in
+# its own runtime directory and that is the whole interface.
+#
+# Nothing in the file is read. The request means exactly "mount the shares that are in
+# the database", and only this service can write that database, and only behind
+# authentication. So a compromised service can ask for the shares it already has to be
+# mounted, and nothing else.
+PathExists=/run/riparr/remount.request
+
+[Install]
+WantedBy=multi-user.target

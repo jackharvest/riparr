@@ -10,6 +10,19 @@ bother updating.
 
 ## 0.3.3
 
+**Your share can be reconnected from the page now.** If the NAS slept, the router
+rebooted, or a cable moved, a configured share went to "not mounted" and stayed there —
+and the only way back the interface offered was deleting the share and typing its
+password in again, to fix something that was never wrong with it. There's a
+**Reconnect** button on the Library page and next to the warning on the Queue page. It
+takes about a second.
+
+**And the underlying reason it dropped is fixed.** The unit that mounts your shares at
+boot, `riparr-library.service`, existed but *nothing had ever installed it* — on the
+reference box `/srv/library` did not exist at all. So shares were mounted only by
+whatever had mounted them last, and never came back after a reboot. They mount at boot
+now, and after every update.
+
 **The Wi-Fi can die without telling anyone, and now the box notices.** On the reference
 unit the radio stopped passing traffic and stayed that way for 17.5 hours. The box was
 never down — it logged an unbroken hourly heartbeat the whole time — but nothing could
@@ -20,25 +33,12 @@ when its firmware wedges, so there is no event to react to.
 There's now a watchdog that pings your router once a minute. If nothing answers it
 re-associates after 3 minutes, reloads the Wi-Fi driver after 5, and reboots after 10.
 **It will not reboot during a rip** — it waits for the disc to finish, because the box
-is already unreachable and rebooting would additionally cost you the forty minutes of
-work in progress.
+is already unreachable and rebooting would additionally cost you the work in progress.
 
-Wi-Fi power saving was already off, and wasn't the cause.
-
-**Updates from the web page now install system changes.** This is the bigger fix. The
-in-app updater replaced Riparr itself but never touched systemd units or the root-side
-helper scripts — so any release that added one shipped the file and installed nothing,
-on every box that updated from the web page. A freshly written card got it; an updated
-box didn't. There's one definition now, used by both the installer and the updater.
-
-**One-time step for existing boxes.** Yours predates the piece that applies system
-changes, so this update will tell you to finish it by running the installer once over
-SSH: `sudo bash /opt/riparr/tools/install.sh`. It keeps your database, settings and
-shares. From the next release onward this is automatic.
-
----
-
-## 0.3.2
+Wi-Fi power saving was already off, and wasn't the cause. If this keeps happening, check
+whether your router has put the 5 GHz band on a **DFS channel** (100–140): a radar event
+makes the access point change channel, and this board's Wi-Fi driver does not always
+follow. Channels 36–48 or 149–165 avoid it.
 
 **Rips now go straight to your library by default.** They used to land on the SD card
 first and get sent afterwards. Writing to your share directly is about twice as fast on
@@ -46,33 +46,42 @@ this hardware (18 MB/s against the card's 9.4), there's no size ceiling — a 22
 never did fit on a 32 GB card — and the card stops having tens of gigabytes pushed
 through it every disc.
 
-Nothing to set up, and nothing to switch back. **If your library isn't mounted when a
+Nothing to set up, and nothing to switch back. **If your library isn't connected when a
 disc goes in, that rip stages on the card by itself** and is sent when the share
 reappears. If you'd rather always stage — a NAS that sleeps, patchy Wi-Fi — *Each rip
 goes → onto the card first* on the Queue page. If you'd already chosen a mode, yours is
-kept.
-
-**So an 8 GB card is genuinely enough**, and a bigger one buys nothing unless you want
-deep verification.
+kept. **So an 8 GB card is genuinely enough**, and a bigger one buys nothing unless you
+want deep verification.
 
 **Deep verification is no longer offered when rips go straight to your library.** It
 works by reading the file back off the share and comparing it against the original, and
 going direct leaves one copy rather than two — so it was hashing a file against itself
-and reporting a success it hadn't earned. It's still there for staged rips, where it
-means something. Choosing it alongside direct rips now switches it to the size check and
-says so, rather than silently doing less than you asked.
+and reporting a success it hadn't earned. It's still there for staged rips. Choosing it
+alongside direct rips now switches it to the size check and says so.
 
-**Storage now says the card isn't the limit** when rips go direct, instead of counting
-how many Blu-rays fit on a card the films never touch. And a disc refused for space
-tells you your share is away, rather than telling you to buy a bigger card.
+**Storage says the card isn't the limit** when rips go direct, instead of counting how
+many Blu-rays fit on a card the films never touch. And a disc refused for space tells
+you your share is away, rather than telling you to buy a bigger card.
+
+**Updates from the web page now install system changes.** This is the one behind several
+of the above. The in-app updater replaced Riparr itself but never touched systemd units
+or the root-side helper scripts — so any release that added one shipped the file and
+installed nothing, on every box that updated from the web page. A freshly written card
+got it; an updated box didn't. That is why the mount unit was missing. There's one
+definition now, used by both the installer and the updater.
+
+**One-time step for existing boxes.** Yours predates the piece that applies system
+changes, so this update will tell you to finish it by running the installer once over
+SSH: `sudo bash /opt/riparr/tools/install.sh`. It keeps your database, settings and
+shares, and it's what installs the mount unit, the Reconnect bridge and the watchdog.
+From the next release onward this is automatic.
 
 **Guide corrected.** It described a "Riparr Slim" and a "Riparr Full" — two products that
 were never built — and quoted 30 W and 100 W supplies, both guesses. The measured unit
-peaks at **18 W**, and what actually matters is voltage: the trigger board needs to ask
-your brick for 15 V or 20 V, which USB-C only guarantees at **45 W and above**. 12 V isn't
-a standard USB-C voltage at all, which is why setting the trigger to 12 V and deleting a
-buck doesn't work. The parts are all named now, including the data-only SATA bridge and
-the right-angle cable.
+peaks at **18 W**, and what matters is voltage: the trigger board needs to ask your brick
+for 15 V or 20 V, which USB-C only guarantees at **45 W and above**. 12 V isn't a standard
+USB-C voltage at all. The parts are all named now, including the data-only SATA bridge
+and the right-angle cable.
 
 ---
 

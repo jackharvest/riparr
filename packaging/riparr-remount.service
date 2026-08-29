@@ -1,0 +1,18 @@
+[Unit]
+Description=Remount Riparr's library shares on request
+Documentation=https://github.com/jackharvest/riparr
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/rm -f /run/riparr/remount.request
+# A share that went away leaves a mount point behind that is no longer the share, and
+# mount.cifs will not replace it. Tear the stale one down first -- lazily, because a
+# NAS that stopped answering makes a plain umount hang forever, which would leave this
+# unit stuck and every later request queued behind it.
+ExecStartPre=-/bin/sh -c 'for m in /srv/library /srv/library-*; do [ -d "$m" ] && mountpoint -q "$m" && ! timeout 5 test -r "$m" && umount -l "$m"; done; true'
+ExecStart=/usr/local/lib/riparr/mount-library.sh
+TimeoutStartSec=120
+
+# Not sandboxed, deliberately. A mount made inside a private namespace succeeds and is
+# invisible to everything outside it -- which is the exact failure already recorded in
+# JOURNAL.md and the reason riparr-library.service is a separate unit at all.

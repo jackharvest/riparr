@@ -1073,6 +1073,39 @@ WIFI_STATE = "/run/riparr/wifi.state"
 WIFI_UNIT = "/etc/systemd/system/riparr-wifi.path"
 
 
+REMOUNT_REQUEST = "/run/riparr/remount.request"
+REMOUNT_UNIT = "/etc/systemd/system/riparr-remount.path"
+
+
+def remount_bridge_available():
+    """Can this process ask the root side to remount the library shares?
+
+    Same one-way door as the rest. Mounting needs privileges this service does not have
+    and must never be given, so the whole interface is one empty file.
+    """
+    return os.path.exists(REMOUNT_UNIT) and os.path.isdir(RUN_DIR) and os.access(
+        RUN_DIR, os.W_OK)
+
+
+def request_remount():
+    """Ask the root side to remount. True if the request was placed.
+
+    Exists because there was no way back. A share that dropped -- a NAS asleep, a
+    reboot, a cable -- left a configured share that read as permanently lost, and the
+    only route the interface offered was deleting it and adding it again, retyping the
+    credentials to fix something that was never wrong with them. The mount script is
+    idempotent and never fails, so asking again is always safe.
+    """
+    if not remount_bridge_available():
+        return False
+    try:
+        with open(REMOUNT_REQUEST, "w"):
+            pass
+        return True
+    except OSError:
+        return False
+
+
 PROVISION_REQUEST = "/run/riparr/provision.request"
 PROVISION_UNIT = "/etc/systemd/system/riparr-provision.path"
 
