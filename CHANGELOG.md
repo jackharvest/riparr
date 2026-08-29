@@ -8,6 +8,36 @@ bother updating.
 
 ---
 
+## 0.3.3
+
+**The Wi-Fi can die without telling anyone, and now the box notices.** On the reference
+unit the radio stopped passing traffic and stayed that way for 17.5 hours. The box was
+never down — it logged an unbroken hourly heartbeat the whole time — but nothing could
+reach it. The kernel logged nothing about the radio in a seven-day boot, and
+systemd-networkd logged nothing either: the driver leaves the link looking connected
+when its firmware wedges, so there is no event to react to.
+
+There's now a watchdog that pings your router once a minute. If nothing answers it
+re-associates after 3 minutes, reloads the Wi-Fi driver after 5, and reboots after 10.
+**It will not reboot during a rip** — it waits for the disc to finish, because the box
+is already unreachable and rebooting would additionally cost you the forty minutes of
+work in progress.
+
+Wi-Fi power saving was already off, and wasn't the cause.
+
+**Updates from the web page now install system changes.** This is the bigger fix. The
+in-app updater replaced Riparr itself but never touched systemd units or the root-side
+helper scripts — so any release that added one shipped the file and installed nothing,
+on every box that updated from the web page. A freshly written card got it; an updated
+box didn't. There's one definition now, used by both the installer and the updater.
+
+**One-time step for existing boxes.** Yours predates the piece that applies system
+changes, so this update will tell you to finish it by running the installer once over
+SSH: `sudo bash /opt/riparr/tools/install.sh`. It keeps your database, settings and
+shares. From the next release onward this is automatic.
+
+---
+
 ## 0.3.2
 
 **Rips now go straight to your library by default.** They used to land on the SD card

@@ -1073,6 +1073,44 @@ WIFI_STATE = "/run/riparr/wifi.state"
 WIFI_UNIT = "/etc/systemd/system/riparr-wifi.path"
 
 
+PROVISION_REQUEST = "/run/riparr/provision.request"
+PROVISION_UNIT = "/etc/systemd/system/riparr-provision.path"
+
+
+def provision_bridge_available():
+    """Can this process ask the root side to install the units it just downloaded?
+
+    The in-app updater replaces /opt/riparr and restarts the service, but it runs as
+    the riparr account and cannot write /etc/systemd/system -- so for a long time a
+    release that added a systemd unit shipped the file and installed nothing on every
+    box that updated from the web page, while a freshly written card got it. The unit
+    sat in packaging/ looking installed.
+
+    Same one-way door as the rest: one empty file, nothing in it to parse. The request
+    means "install what is in /opt/riparr/packaging now", and that arrived through a
+    checksum-verified release archive.
+    """
+    return os.path.exists(PROVISION_UNIT) and os.path.isdir(RUN_DIR) and os.access(
+        RUN_DIR, os.W_OK)
+
+
+def request_provision():
+    """Ask the root side to apply system changes. True if the request was placed.
+
+    False means this box predates the door -- the units cannot be installed from here
+    and somebody has to re-run the installer once. The caller says so rather than
+    reporting a clean update that silently left half of itself on disk.
+    """
+    if not provision_bridge_available():
+        return False
+    try:
+        with open(PROVISION_REQUEST, "w"):
+            pass
+        return True
+    except OSError:
+        return False
+
+
 def wifi_bridge_available():
     """Can this process ask the root side to rewrite wpa_supplicant's config?
 

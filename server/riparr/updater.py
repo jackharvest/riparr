@@ -220,7 +220,23 @@ def install(repo=REPO):
                                    "so the previous one was put back.",
                         "detail": (p.stderr or p.stdout or "")[-400:]}
 
+        # Units and root-side helper scripts live outside /opt/riparr, so the swap
+        # above did not install them -- this process cannot write /etc/systemd/system
+        # and should never be able to. Ask the root side through the same one-way door
+        # the rest of the privileged actions use.
+        #
+        # This is the step whose absence made every previous release ship its systemd
+        # changes to /opt/riparr/packaging and install none of them.
+        provisioned = P.request_provision()
+
         _restart_detached()
+        if not provisioned:
+            return {"ok": True,
+                    "message": "Updated to %s. Riparr is restarting — but this box "
+                               "predates the automatic system-update step, so run the "
+                               "installer once to finish." % info["latest"],
+                    "detail": "sudo bash %s/tools/install.sh" % INSTALL_DIR,
+                    "version": info["latest"]}
         return {"ok": True,
                 "message": "Updated to %s. Riparr is restarting." % info["latest"],
                 "version": info["latest"]}

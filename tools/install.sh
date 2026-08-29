@@ -211,57 +211,24 @@ ok "environment ready"
 
 # ── 5. service ──
 say "5/6  Service"
-install -m 0644 "$INSTALL_DIR/packaging/riparr.service" "/etc/systemd/system/$SERVICE"
-
-# ── the MakeMKV privilege bridge ──
-# Building MakeMKV needs root; the web service is unprivileged with NoNewPrivileges=yes
-# and cannot get there. Rather than sending the user to a terminal, give the service
-# exactly one capability: it can create /run/riparr/makemkv.request, and a path unit
-# turns that into a root oneshot whose command line is fixed here.
+# Everything that lives outside /opt/riparr -- units, and the root-side helper scripts
+# the one-way doors call -- is installed by one script that the in-app updater also
+# runs. It used to be inlined here, which meant a release that added a unit installed
+# it on a fresh card and silently did not on a box that updated from the web page.
+# One definition, two callers. See packaging/apply-system.sh.
 #
 # The scripts deliberately go to /usr/local/lib/riparr, NOT /opt/riparr: that tree is
 # owned by the riparr account, and a root unit executing from it would hand the service
 # a way to run anything as root.
+#
+# makemkv-install.sh is the exception -- it comes from tools/, not packaging/, so it is
+# placed here rather than in the shared list.
 install -d -o root -g root -m 0755 /usr/local/lib/riparr
-install -o root -g root -m 0755 "$INSTALL_DIR/packaging/makemkv-run.sh" \
-        /usr/local/lib/riparr/makemkv-run.sh
 install -o root -g root -m 0755 "$INSTALL_DIR/tools/makemkv-install.sh" \
         /usr/local/lib/riparr/makemkv-install.sh
-install -m 0644 "$INSTALL_DIR/packaging/riparr-makemkv.service" \
-        /etc/systemd/system/riparr-makemkv.service
-install -m 0644 "$INSTALL_DIR/packaging/riparr-makemkv.path" \
-        /etc/systemd/system/riparr-makemkv.path
-
-# Restart and shut down, through the same one-way door. There is no power button on
-# the enclosure, so "unplug it" is the only alternative -- and pulling power from a
-# running Linux box is how filesystems get corrupted. Each action is a separate path
-# unit, so the request file carries nothing to parse and nothing to trust.
-for act in reboot poweroff; do
-  install -m 0644 "$INSTALL_DIR/packaging/riparr-$act.path" \
-          "/etc/systemd/system/riparr-$act.path"
-  install -m 0644 "$INSTALL_DIR/packaging/riparr-$act.service" \
-          "/etc/systemd/system/riparr-$act.service"
-done
-
-# "Make both USB-C sockets host a drive", through the same door. This board has two
-# identical-looking sockets and only one can host; the other enumerates nothing and
-# logs nothing, which reads as a dead drive. One button beats one paragraph.
-# Wi-Fi, through the same one-way door. The box is meant to be carried, so it keeps an
-# ordered list of networks rather than one -- and writing /etc/wpa_supplicant needs
-# root, which the service does not have and must not be given.
-install -o root -g root -m 0755 "$INSTALL_DIR/packaging/wifi-apply.sh" \
-        /usr/local/lib/riparr/wifi-apply.sh
-install -m 0644 "$INSTALL_DIR/packaging/riparr-wifi.service" \
-        /etc/systemd/system/riparr-wifi.service
-install -m 0644 "$INSTALL_DIR/packaging/riparr-wifi.path" \
-        /etc/systemd/system/riparr-wifi.path
-
-install -o root -g root -m 0755 "$INSTALL_DIR/packaging/usbhost-fix.sh" \
-        /usr/local/lib/riparr/usbhost-fix.sh
-install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.path" \
-        /etc/systemd/system/riparr-usbhost.path
-install -m 0644 "$INSTALL_DIR/packaging/riparr-usbhost.service" \
-        /etc/systemd/system/riparr-usbhost.service
+install -o root -g root -m 0755 "$INSTALL_DIR/packaging/apply-system.sh" \
+        /usr/local/lib/riparr/apply-system.sh
+RIPARR_INSTALL_DIR="$INSTALL_DIR" /usr/local/lib/riparr/apply-system.sh
 
 # ── a dead host must not cost two minutes ──
 # MakeMKV contacts its own server on every invocation. That server has been returning
@@ -290,14 +257,12 @@ MKSET
   chown "$RIPARR_USER":"$RIPARR_USER" "$DATA_DIR/.MakeMKV/settings.conf"
 fi
 
-systemctl daemon-reload
-systemctl enable --quiet riparr-makemkv.path
-systemctl start riparr-makemkv.path
-for act in reboot poweroff usbhost wifi; do
-  systemctl enable --quiet "riparr-$act.path"
-  systemctl start "riparr-$act.path"
-done
+# apply-system.sh already did daemon-reload and enabled every path unit and the
+# watchdog. What is left is the web service itself, which it deliberately does not
+# start -- an install has more to do first (see below), and a restart belongs at the
+# end of that, not in the middle of it.
 ok "MakeMKV, restart, shut down, Wi-Fi and the USB-C fix all work from the web interface"
+ok "the Wi-Fi watchdog is running — a radio that dies silently gets recovered"
 systemctl enable --quiet "$SERVICE"
 systemctl restart "$SERVICE"
 ok "riparr.service enabled and started"

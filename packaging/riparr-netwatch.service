@@ -1,0 +1,28 @@
+[Unit]
+Description=Riparr Wi-Fi watchdog — recover a radio that died without saying so
+Documentation=https://github.com/jackharvest/riparr
+After=network.target wpa_supplicant@wlan0.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/riparr/netwatch.sh
+Restart=always
+RestartSec=30
+
+# Deliberately NOT sandboxed the way riparr.service is. This restarts units, reloads a
+# kernel module and reboots the box; PrivateTmp/ProtectSystem would let every one of
+# those succeed privately and change nothing outside the namespace, which is the exact
+# failure mode already recorded in JOURNAL.md for the mount units.
+#
+# The one restriction that costs nothing: it never needs to write anything.
+ProtectHome=yes
+
+# A watchdog that ties up the CPU during a rip is a worse problem than the one it
+# solves. It sleeps 60s at a time, so this is nearly free anyway -- it is here so a
+# future change cannot quietly make it expensive.
+Nice=10
+CPUWeight=20
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=Watch for a Riparr request to apply system changes after an update
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# The in-app updater replaces /opt/riparr but cannot write /etc/systemd/system — it
+# runs as the riparr user, and must keep running as the riparr user. This is the same
+# one-way door as riparr-wifi.path: the service can create one empty file in its own
+# runtime directory, and that is the entire interface.
+#
+# Nothing in the file is read. The request means exactly "apply the units that are in
+# /opt/riparr/packaging now", and those arrived through a signed, checksum-verified
+# release archive — so a compromised service can ask for the code it already has to be
+# installed, and nothing else.
+PathExists=/run/riparr/provision.request
+
+[Install]
+WantedBy=multi-user.target

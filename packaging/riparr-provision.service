@@ -1,0 +1,13 @@
+[Unit]
+Description=Apply Riparr system changes after an in-app update
+Documentation=https://github.com/jackharvest/riparr
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/rm -f /run/riparr/provision.request
+ExecStart=/usr/local/lib/riparr/apply-system.sh
+TimeoutStartSec=120
+
+# Not sandboxed, for the reason recorded in riparr-wifi.service: this writes
+# /etc/systemd/system and calls systemctl, and a namespaced unit would do both
+# privately and invisibly.
