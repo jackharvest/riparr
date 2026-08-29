@@ -75,7 +75,13 @@ async function offerBetaKey(intoSel, inputSel, opts = {}) {
 
 /* Poll until the box answers again after a restart, then reload. The service is gone
    for most of this, so every failure here is expected and silent. */
-async function waitForBoxBack() {
+/* `startAfter` because the two things this waits for are an order of magnitude apart. A
+   whole-box reboot takes about a minute and the box answers for a few seconds after
+   being asked, so polling immediately would reload into a page that is about to be torn
+   down -- hence the original 12s. A service restart is about two seconds, and making
+   somebody stare at a stale page for twelve of them to guard against the first case is
+   how "did that work?" happens. */
+async function waitForBoxBack({ startAfter = 12000 } = {}) {
   const started = Date.now();
   const tick = async () => {
     if (Date.now() - started > 5 * 60 * 1000) {
@@ -89,9 +95,9 @@ async function waitForBoxBack() {
     } catch (e) { /* expected while it is down */ }
     setTimeout(tick, 3000);
   };
-  // Do not start polling instantly: the box is still up for the first few seconds and
-  // would answer immediately, reloading into a page about to be torn down.
-  setTimeout(tick, 12000);
+  // Never poll instantly: the box is still up for the moment after being asked and
+  // would answer straight away, reloading into a page about to be torn down.
+  setTimeout(tick, startAfter);
 }
 
 function signalBars(pct) {
@@ -3429,31 +3435,7 @@ function wireContent(section, sub) {
   const eject = $("#t-eject");
   if (eject) eject.onclick = async () => {
     const r = await api.post("/api/drive/eject");
-    toast(r.message, r.ok && !r.needs_restart ? "ok" : r.ok ? "warn" : "bad");
-    // A successful swap the box could not restart is not a failure and must not be
-    // dressed as one -- the new version is on disk and one restart away. But it is not
-    // a plain success either, and reporting it as one is exactly the bug this fixes:
-    // "Riparr is restarting" followed by nothing, forever.
-    if (r.ok && r.needs_restart) {
-      const out0 = $("#upd-result");
-      if (out0) {
-        out0.hidden = false;
-        out0.className = "alert warn";
-        out0.innerHTML = `<b>${esc(r.message)}</b>
-          <div class="why" style="margin-top:8px">
-            <button class="btn" id="upd-restart">Restart Riparr now</button>
-          </div>`;
-        const rb = $("#upd-restart");
-        if (rb) rb.onclick = () => powerAction("reboot", "Restarting to finish the update",
-          "Riparr is restarting. It comes back on the new version in about a minute. "
-          + "This page reconnects on its own.");
-      }
-      inst.disabled = false;
-      return;
-    }
-    // The box is going away on its own; watch for it rather than leaving a page that
-    // silently stops matching reality.
-    if (r.ok && r.restarted) waitForBoxBack();
+    toast(r.message, r.ok ? "ok" : "bad");
   };
 
   // Offered when the diagnosis says the drive is probably in the socket that cannot
@@ -3860,7 +3842,44 @@ function wireContent(section, sub) {
     let r;
     try { r = await api.post("/api/update/install"); }
     catch (e) { r = { ok: false, message: e.message || "The update failed." }; }
-    toast(r.message, r.ok ? "ok" : "bad");
+    // Three outcomes, not two. A swap the box could not restart is not a failure --
+    // the new version is on disk and one restart away -- but reporting it as a plain
+    // success is the bug that had somebody watching "Riparr is restarting" forever.
+    toast(r.message, r.ok && !r.needs_restart ? "ok" : r.ok ? "warn" : "bad");
+
+    if (r.ok && r.needs_restart) {
+      const out0 = $("#upd-result");
+      if (out0) {
+        out0.hidden = false;
+        out0.className = "alert warn";
+        out0.innerHTML = `<b>${esc(r.message)}</b>
+          <div class="why" style="margin-top:8px">
+            <button class="btn" id="upd-restart">Restart Riparr now</button>
+          </div>`;
+        const rb = $("#upd-restart");
+        if (rb) rb.onclick = () => powerAction("reboot", "Restarting to finish the update",
+          "Riparr is restarting. It comes back on the new version in about a minute. "
+          + "This page reconnects on its own.");
+      }
+      inst.disabled = false;
+      return;
+    }
+
+    // The box is about to go away on its own. Cover the page and wait for it, rather
+    // than leaving somebody looking at the old version number wondering whether it
+    // worked -- which is what a silent success looks like from the outside, and is
+    // indistinguishable from the failure it replaced.
+    //
+    // A service restart is ~2s and a reboot ~60s, so the poll starts at very different
+    // times; `restarted` says which happened.
+    if (r.ok && r.restarted) {
+      showWaiting(r.restarted === "reboot"
+        ? "Updated. The box is restarting \u2014 about a minute."
+        : "Updated. Riparr is restarting\u2026");
+      waitForBoxBack({ startAfter: r.restarted === "reboot" ? 12000 : 2500 });
+      return;
+    }
+
     // A toast is the wrong place for the only copy of a diagnosis. It vanishes, it
     // cannot be selected, and `detail` — the one field that says *why* — was being
     // dropped on the floor entirely: an update that failed on a permission error read

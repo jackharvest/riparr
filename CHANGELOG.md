@@ -8,6 +8,23 @@ bother updating.
 
 ---
 
+## 0.3.8
+
+**The page now waits for the box and reloads itself after an update.** It used to hand
+back "Riparr is restarting" and then sit there showing the old version number, so the
+only way to see whether it had worked was to reload by hand — which looks exactly like
+the bug where it genuinely hadn't.
+
+It covers the page while the box is away and comes back on the new version by itself.
+A service restart is about two seconds and a whole-box restart about a minute, and it
+now waits the right amount for each rather than always assuming the slow one.
+
+**Also fixes the "restart it yourself" button never appearing.** On a box that can't
+restart itself, the update is finished and one restart away — that case had a button and
+the button was wired into the wrong place on the page, so nobody ever saw it.
+
+---
+
 ## 0.3.7
 
 **The Wi-Fi recovery is yours to tune now.** It was fixed at three minutes, which is a
