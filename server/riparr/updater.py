@@ -140,6 +140,24 @@ def install(repo=REPO):
                 "detail": "Re-run the installer over SSH to repair the permissions: "
                           "sudo bash %s/tools/install.sh" % INSTALL_DIR}
 
+    # Stand somewhere that will still exist in a moment.
+    #
+    # riparr.service sets WorkingDirectory=/opt/riparr/server, and the swap below MOVES
+    # that directory into .previous. A process's cwd follows the directory it is in, so
+    # this process ends up standing inside .previous -- and the next update deletes
+    # .previous, leaving it in a directory that no longer exists. Every subprocess then
+    # inherits a dead cwd and dies on it: pip reported
+    # "OSError: [Errno 2] No such file or directory" and the update rolled back, with
+    # nothing wrong with the venv or the requirements at all.
+    #
+    # INSTALL_DIR is the right place to stand because only its *contents* are moved --
+    # the directory itself is never touched. This also covers makemkvcon and every other
+    # subprocess spawned before the restart lands, not just pip.
+    try:
+        os.chdir(INSTALL_DIR)
+    except OSError:
+        pass
+
     tmp = tempfile.mkdtemp(prefix="riparr-update-")
     backup = os.path.join(INSTALL_DIR, PREV_DIR)
     swapped = False
@@ -211,8 +229,13 @@ def install(repo=REPO):
         pip = os.path.join(INSTALL_DIR, ".venv", "bin", "pip")
         reqs = os.path.join(INSTALL_DIR, "server", "requirements.txt")
         if os.path.exists(pip) and os.path.exists(reqs):
+            # cwd is explicit rather than inherited. The chdir above prevents this
+            # process acquiring a dead cwd in the first place, but a box that already
+            # has one -- from an update installed before that fix -- would otherwise
+            # keep failing here forever with no way out through this page.
             p = subprocess.run([pip, "install", "--quiet", "-r", reqs],
-                               capture_output=True, text=True, timeout=600)
+                               capture_output=True, text=True, timeout=600,
+                               cwd=INSTALL_DIR)
             if p.returncode != 0:
                 _rollback(backup)
                 return {"ok": False,

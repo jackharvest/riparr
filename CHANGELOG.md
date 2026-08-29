@@ -8,6 +8,30 @@ bother updating.
 
 ---
 
+## 0.3.6
+
+**Fixes an update that failed with "Could not install packages due to an OSError".**
+Nothing was wrong with the box, the virtualenv or the download — the update was being
+run from a directory that no longer existed.
+
+Riparr runs from `/opt/riparr/server`, and installing an update *moves* that directory
+aside before putting the new one in place. A running program follows the directory it is
+standing in, so Riparr ended up inside the backup copy — and the next update deleted that
+backup, leaving it standing nowhere. Everything it then tried to run failed instantly,
+including `pip`, so the update rolled itself back.
+
+It now steps somewhere stable before it starts, which also protects rips: `makemkvcon`
+would have failed the same way in the same window.
+
+**If you already have a box in this state**, restart Riparr once from the account menu
+before updating — that puts it back on solid ground. This release then prevents it
+recurring.
+
+This only bit boxes where the previous bug (0.3.5) stopped updates restarting, because
+that is what left the old program running long enough to have its floor removed twice.
+
+---
+
 ## 0.3.5
 
 **In-place updates from the web page actually restart now.** They have been swapping the
