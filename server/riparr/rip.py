@@ -837,9 +837,19 @@ def _plan_transfer(needed_bytes, kind="movie"):
     if needed_bytes and free < needed_bytes + WINDOW_BYTES:
         if SH.Transport.supports_follow_copy:
             return "stream", None
-        return None, ("This disc needs about %d GB and there's %d GB free. Let the "
-                      "queue drain, or use a larger card."
-                      % (needed_bytes // 2 ** 30, free // 2 ** 30))
+        # Two different problems reach this line, and only one of them is about the
+        # card. Rips normally go straight to the library, where a disc this size is a
+        # non-question -- so if we are counting card space at all, either the user
+        # chose to stage or the share is away. Telling somebody to buy a bigger card
+        # when their NAS is simply asleep sends them to the wrong shop.
+        short = "This disc needs about %d GB and there's %d GB free on the card." % (
+            needed_bytes // 2 ** 30, free // 2 ** 30)
+        if (_settings() or {}).get("transfer_mode") == "direct":
+            return None, (short + " Rips normally go straight to your library, which "
+                          "has no such limit — reconnect the share and this disc will "
+                          "fit.")
+        return None, (short + " Let the queue drain, switch rips to go straight to "
+                      "your library, or use a larger card.")
     return "burst", None
 
 

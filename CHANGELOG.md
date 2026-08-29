@@ -8,6 +8,44 @@ bother updating.
 
 ---
 
+## 0.3.2
+
+**Rips now go straight to your library by default.** They used to land on the SD card
+first and get sent afterwards. Writing to your share directly is about twice as fast on
+this hardware (18 MB/s against the card's 9.4), there's no size ceiling — a 22 GB Blu-ray
+never did fit on a 32 GB card — and the card stops having tens of gigabytes pushed
+through it every disc.
+
+Nothing to set up, and nothing to switch back. **If your library isn't mounted when a
+disc goes in, that rip stages on the card by itself** and is sent when the share
+reappears. If you'd rather always stage — a NAS that sleeps, patchy Wi-Fi — *Each rip
+goes → onto the card first* on the Queue page. If you'd already chosen a mode, yours is
+kept.
+
+**So an 8 GB card is genuinely enough**, and a bigger one buys nothing unless you want
+deep verification.
+
+**Deep verification is no longer offered when rips go straight to your library.** It
+works by reading the file back off the share and comparing it against the original, and
+going direct leaves one copy rather than two — so it was hashing a file against itself
+and reporting a success it hadn't earned. It's still there for staged rips, where it
+means something. Choosing it alongside direct rips now switches it to the size check and
+says so, rather than silently doing less than you asked.
+
+**Storage now says the card isn't the limit** when rips go direct, instead of counting
+how many Blu-rays fit on a card the films never touch. And a disc refused for space
+tells you your share is away, rather than telling you to buy a bigger card.
+
+**Guide corrected.** It described a "Riparr Slim" and a "Riparr Full" — two products that
+were never built — and quoted 30 W and 100 W supplies, both guesses. The measured unit
+peaks at **18 W**, and what actually matters is voltage: the trigger board needs to ask
+your brick for 15 V or 20 V, which USB-C only guarantees at **45 W and above**. 12 V isn't
+a standard USB-C voltage at all, which is why setting the trigger to 12 V and deleting a
+buck doesn't work. The parts are all named now, including the data-only SATA bridge and
+the right-angle cable.
+
+---
+
 ## 0.3.1
 
 **Small SD cards work now.** The Preparer was reserving 8.5 GB for the system and calling

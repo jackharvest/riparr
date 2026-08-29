@@ -43,9 +43,13 @@ the Wi-Fi that sends it onward.
 |---|---|---|
 | **Reading the disc** | Cataloguing what is on it | ~9 min |
 | **Decrypting** | Unscrambling, in software. **Nothing is written yet** | ~7 min |
-| **Saving to the card** | The film comes off the disc onto the card | ~9 min |
-| **Uploading** | Card to your library | ~5 min |
-| **Verifying** | Proving it arrived | seconds, or as long as the upload if set to deep |
+| **Writing to your library** | The film comes off the disc onto your share | ~9 min |
+| **Filing it in your library** | Moving it from the scratch folder into place | instant |
+| **Verifying** | Proving it arrived | seconds |
+
+Those middle two are named for what is actually happening, so they read differently if
+you have switched rips to stage on the card: **Saving to the card**, then **Uploading**
+— which takes about another 5 minutes, because the film gets written twice.
 
 The first two have **no percentage available, and never will**. MakeMKV reports none
 during the scan, and the reads go to the drive by a route the operating system cannot

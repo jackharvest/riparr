@@ -59,7 +59,7 @@ prerequisite whether or not it's met, so the row that isn't green is your answer
 | **The MakeMKV key is current** | There's a key and it hasn't lapsed. Amber means it lapses within a week — rips fail the day it does |
 | **A drive to read them in** | An optical drive is on the USB bus. A working adapter shows up here even with no disc in the tray |
 | **Somewhere to put the files** | A library share is configured *and* has been tested |
-| **Room to work** | Amber only if the card is too full to rip safely, in which case discs are refused before they start |
+| **Room to work** | Amber only if the card is too full to rip safely. Rips go to your library by default, so this normally means the share is away and the card is being used as the fallback |
 
 A red row disables the switch entirely and links to the page that fixes it. An amber row
 leaves Auto Rip on but explains why a disc you just put in might not get ripped.

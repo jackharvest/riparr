@@ -288,8 +288,14 @@ DISC_NAMES = {"uhd": ("4K UHD disc", "4K UHD discs"),
 DISC_ORDER = ("uhd", "bluray", "dvd")
 
 
-def _capacity(free_bytes):
+def _capacity(free_bytes, direct=None):
     """Capacity, in the terms the engine actually operates in.
+
+    `direct` matters because it changes what the card *is*. When rips go straight to
+    the library the card holds no films at all, so counting how many Blu-rays fit on it
+    answers a question nobody is asking and reads as a ceiling that does not exist.
+    What still matters is the working window -- MakeMKV needs scratch room wherever it
+    writes -- so "not enough room to rip safely" is still reachable and still true.
 
     This used to describe D11 as designed rather than as built, and the two disagree.
     D11 says a buffer too small for the next disc means stream mode, not refusal — but
@@ -310,12 +316,19 @@ def _capacity(free_bytes):
     Count each kind and say which is which.
     """
     streaming = SH.Transport.supports_follow_copy
+    if direct is None:
+        direct = RIP.use_direct()
     usable = max(0, free_bytes - WINDOW_BYTES)
     by_kind = {k: int(usable // v) for k, v in DISC_BYTES.items()}
     discs = by_kind["bluray"]
 
     if free_bytes < WINDOW_BYTES:
         mode, phrase = "degraded", "Not enough room to rip safely"
+    elif direct:
+        # The films are not going here, so the card's size is not the limit. Say where
+        # they are going instead -- the number somebody wants when rips go direct is
+        # their library's free space, which the Library panel already shows.
+        mode, phrase = "direct", "Rips go straight to your library — the card isn't the limit"
     elif any(by_kind[k] for k in DISC_ORDER):
         mode = "burst"
         parts = []
@@ -336,7 +349,7 @@ def _capacity(free_bytes):
         mode, phrase = "full", "Not enough room for another disc — let the queue drain"
 
     return {"discs_free": discs, "by_kind": by_kind, "mode": mode, "phrase": phrase,
-            "streaming": streaming,
+            "streaming": streaming, "direct": direct,
             "disc_names": {k: list(v) for k, v in DISC_NAMES.items()},
             "window_bytes": WINDOW_BYTES}
 
@@ -418,9 +431,15 @@ def storage_speedtest(body: SpeedTest = SpeedTest(), user=Depends(require_user))
         result["why"] = "Riparr couldn't measure the card."
         return result
     if not lib.get("mounted"):
-        result["recommend"] = "auto"
-        result["why"] = ("Your card writes at about %s MB/s. Writing straight to your "
-                         "library needs the share mounted, which it isn't yet." % w)
+        # No recommendation rather than "switch to the card". A share that is not
+        # mounted right now is not evidence about which mode suits this box -- and
+        # rips already fall back to the card on their own when it is missing (see
+        # rip.use_direct), so there is nothing here for the user to fix by changing a
+        # setting they would then have to remember to change back.
+        result["recommend"] = None
+        result["why"] = ("Your card writes at about %s MB/s. Riparr can't compare that "
+                         "with your library until the share is mounted — rips will use "
+                         "the card while it's away, either way." % w)
         return result
     # No network measurement here: it would mean writing a test file into somebody's
     # library, and the honest comparison is against what this box has actually done.
@@ -761,7 +780,15 @@ async def put_settings(request: Request, user=Depends(require_user)):
         MK.apply_key(body["makemkv_key"])
         MK.record_expiry_for(body["makemkv_key"])
 
-    return _redact(db.all_settings())
+    # Some settings stop meaning anything in direct mode -- see db.DIRECT_FORBIDS. The
+    # response is the whole settings object, so a client that re-renders from it picks
+    # the correction up for free; `adjusted` is there for one that wants to say why.
+    adjusted = db.reconcile(body)
+
+    out = _redact(db.all_settings())
+    if adjusted:
+        out["adjusted"] = adjusted
+    return out
 
 
 @app.get("/api/notifications")

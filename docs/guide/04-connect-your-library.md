@@ -79,10 +79,14 @@ Add a second share from the **Shares** section on the same page, then pick it in
 dropdown. Riparr creates per-title folders inside whatever you choose, and does not touch
 anything already there.
 
-Each block also says whether that share is **mounted** — which is what lets Riparr write
-a rip straight into your library instead of staging it on the card first. On the
-reference board that is about twice as fast and removes the card as a size limit. A share
-you added since the last restart is mounted on the next one.
+Each block also says whether that share is **mounted**. That matters more than it looks:
+writing a rip straight into your library is what Riparr does by default, and a mounted
+share is what makes it possible. On the reference board it is about twice as fast as
+going via the card, and it removes the card as a size limit. A share you added since the
+last restart is mounted on the next one.
+
+**A share that isn't mounted doesn't break anything** — that rip stages on the card and
+is sent when the share comes back.
 
 ## What happens if the share goes offline later
 

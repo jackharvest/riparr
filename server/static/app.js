@@ -983,12 +983,29 @@ function stageClock(j) {
        style="width:${Math.min(100, (elapsed / mine) * 100).toFixed(1)}%"></i></div>`;
 }
 
-function verifyNote() {
+/* The server is allowed to change a setting you did not send -- see db.reconcile,
+   where turning on direct rips takes deep verification with it, because deep has
+   nothing to compare against once there is only one copy. Everything it changed comes
+   back under `adjusted`, so the fix is to copy it into local state rather than to
+   re-fetch, and callers get the map back so they can mention it. */
+function applyAdjusted(res) {
+  const adj = (res && res.adjusted) || {};
+  if (state.settings) Object.assign(state.settings, adj);
+  return adj;
+}
+
+/* `direct` is passed rather than read, because the caller has already worked out
+   whether this rip has two copies and the answer changes what "quick" is worth saying
+   about. On a direct rip the size check is not the cheap half of a choice -- it is the
+   whole of what can honestly be checked, and the note should say why rather than
+   leaving somebody hunting for a deep option that is deliberately absent. */
+function verifyNote(direct) {
   const s = state.settings || {};
-  return s.verify_mode === "deep"
-    ? "Reads the whole film back off the share — roughly doubles the time and needs as much free space again."
-    : s.verify_mode === "off"
-    ? "Nothing is checked after the upload."
+  if (s.verify_mode === "off") return "Nothing is checked after the upload.";
+  if (s.verify_mode === "deep")
+    return "Reads the whole film back off the share — roughly doubles the time and needs as much free space again.";
+  return direct
+    ? "Compares the size on your library with what was sent. Going straight to your library leaves one copy, so there is nothing to hash it against — this is the whole check."
     : "Compares the size on your library with what was sent.";
 }
 
@@ -1214,7 +1231,6 @@ function ripOptions() {
   const lib = (state.status && state.status.library) || {};
   const direct = s.transfer_mode === "direct";
   const card = s.card_speed || {};
-  const deepOnDirect = direct && s.verify_mode === "deep";
   return `
   <div class="rip-opts">
     <div class="ropt">
@@ -1224,7 +1240,7 @@ function ripOptions() {
                 title="Measures your card and says which of these suits it">Test my card</button>
         <select id="ar-route" title="Applies to every rip, automatic or started by hand">
           ${opt("direct", "straight to your library", s.transfer_mode)}
-          ${opt("auto", "onto the card, then sent", s.transfer_mode)}
+          ${opt("auto", "onto the card first, then sent", s.transfer_mode)}
         </select>
       </div>
       <p class="ropt-why">${
@@ -1244,14 +1260,11 @@ function ripOptions() {
         <span class="ropt-k">${icon("circle-check")} After each rip</span>
         <select id="ar-verify" title="Applies to every rip, automatic or started by hand">
           ${opt("quick", "quick check", s.verify_mode)}
-          ${opt("deep", "deep check (slow)", s.verify_mode)}
+          ${direct ? "" : opt("deep", "deep check (slow)", s.verify_mode)}
           ${opt("off", "no check", s.verify_mode)}
         </select>
       </div>
-      <p class="ropt-why">${verifyNote()}</p>
-      ${deepOnDirect ? `<p class="ropt-warn">${icon("triangle-exclamation")}
-        <span>Deep checking needs two copies. Straight-to-library leaves one, so Riparr
-        will check the size instead.</span></p>` : ""}
+      <p class="ropt-why">${verifyNote(direct)}</p>
     </div>
   </div>`;
 }
@@ -1727,8 +1740,8 @@ settingsPages.ripping = (s) => `
   <div class="section"><h2>Transfer</h2><div>
     <label class="f"><span>Mode</span>
       <select data-set="transfer_mode">
-        ${opt("auto", "Automatic (recommended)", s.transfer_mode)}
-        ${opt("direct", "Straight to your library — skip the card", s.transfer_mode)}
+        ${opt("direct", "Straight to your library (recommended)", s.transfer_mode)}
+        ${opt("auto", "Onto the card first, then sent", s.transfer_mode)}
         ${opt("burst", "Always burst", s.transfer_mode)}
         ${opt("stream", "Always stream", s.transfer_mode)}
       </select>
@@ -1737,25 +1750,37 @@ settingsPages.ripping = (s) => `
         board that is about <b>18 MB/s against the card's 9.4</b> — so it is roughly
         twice as fast — and it removes the card as a size limit, which is the only
         reason a 22 GB Blu-ray will not fit on a 32 GB card. It also stops writing tens
-        of gigabytes per disc through flash that wears out.
+        of gigabytes per disc through flash that wears out. That is why it is the
+        default, and why an 8 GB card is enough to run the whole box.
+        <br><br>It is also safe to leave on: if your library isn't mounted when a disc
+        goes in, that rip stages on the card by itself rather than failing.
         <br><br>The trade: the rip needs the network for its whole length rather than
-        only at the end, and there is no second copy, so verification checks the size
-        rather than hashing. If your NAS sleeps or your Wi-Fi is patchy, leave this
-        off.</span></label>
+        only at the end, and there is one copy rather than two, so verification checks
+        the size rather than hashing. <b>Onto the card first</b> is the answer if your
+        NAS sleeps, your Wi-Fi is patchy, or you want deep verification.</span></label>
     <label class="f"><span>Verify after transfer</span>
       <select data-set="verify_mode">
         ${opt("quick", "Quick — check the size", s.verify_mode)}
-        ${opt("deep", "Deep — read every byte back", s.verify_mode)}
+        ${s.transfer_mode === "direct" ? ""
+          : opt("deep", "Deep — read every byte back", s.verify_mode)}
         ${opt("off", "Don't verify", s.verify_mode)}
       </select>
       <span class="help">Quick asks the share how big the file is and compares it with
         what was sent. It is nearly free and catches what actually goes wrong — a
         truncated transfer, a share that filled up, a write that was refused.
-        <b>Deep</b> reads the entire file back and hashes it, so it also catches silent
-        corruption of bytes that did arrive. That means downloading the whole rip again:
-        it roughly doubles the time after a rip and needs as much free space on the card
-        as the film itself. Worth it for an archive you will never re-rip; overkill for
-        most.</span></label>
+        ${s.transfer_mode === "direct"
+          ? `<br><br><b>Deep checking isn't offered while rips go straight to your
+             library</b>, because it works by reading the file back and comparing it
+             with the original — and going direct leaves one copy, not two. Hashing it
+             against itself would pass every time and prove nothing. Switch the mode
+             above to <b>onto the card first</b> if you want it, and give the card room
+             for two copies of the largest title you rip.`
+          : `<b>Deep</b> reads the entire file back and hashes it, so it also catches
+             silent corruption of bytes that did arrive. That means downloading the
+             whole rip again: it roughly doubles the time after a rip and needs
+             <b>as much free space on the card as the film itself</b>, on top of the
+             rip. It is the one reason to want a big card. Worth it for an archive you
+             will never re-rip; overkill for most.`}</span></label>
     ${sw("keep_local_copy", "Keep the local copy", s.keep_local_copy,
         "Retains the rip until the space is needed, so a downstream problem is a re-copy rather than a re-rip.")}
   </div></div>
@@ -3313,10 +3338,17 @@ function wireContent(section, sub) {
   const arRoute = $("#ar-route");
   if (arRoute) arRoute.onchange = async () => {
     try {
-      await api.put("/api/settings", { transfer_mode: arRoute.value });
+      const r = await api.put("/api/settings", { transfer_mode: arRoute.value });
       if (state.settings) state.settings.transfer_mode = arRoute.value;
-      toast(arRoute.value === "direct" ? "Rips go straight to your library"
-                                       : "Rips are cached on the card first", "ok");
+      // Turning on direct can take deep verification with it -- see db.reconcile. Take
+      // the correction from the response rather than assuming, and say so: a second
+      // control changing on its own is alarming unless somebody explains it.
+      const changed = applyAdjusted(r);
+      toast(arRoute.value === "direct"
+              ? (changed.verify_mode === "quick"
+                   ? "Rips go straight to your library. Deep checking needs two copies, so it's a size check now."
+                   : "Rips go straight to your library")
+              : "Rips are cached on the card first", "ok");
       route();
     } catch (e) { toast(e.message, "bad"); }
   };
@@ -3338,8 +3370,9 @@ function wireContent(section, sub) {
       if (r.recommend && r.recommend !== (state.settings || {}).transfer_mode) {
         if (confirm(`${r.why}\n\nSwitch to ${
             r.recommend === "direct" ? "writing straight to your library" : "caching on the card"}?`)) {
-          await api.put("/api/settings", { transfer_mode: r.recommend });
+          const saved = await api.put("/api/settings", { transfer_mode: r.recommend });
           if (state.settings) state.settings.transfer_mode = r.recommend;
+          applyAdjusted(saved);
           route();
           return;
         }
@@ -3532,7 +3565,17 @@ function wireContent(section, sub) {
   const save = $("#save-settings");
   if (save) save.onclick = async () => {
     try {
-      await api.put("/api/settings", collectSettings());
+      const r = await api.put("/api/settings", collectSettings());
+      // The page can be showing a combination the box will not keep -- direct rips and
+      // deep verification, saved together. Re-render when that happened, so the
+      // controls agree with what was actually stored instead of quietly disagreeing
+      // until the next reload.
+      const adj = applyAdjusted(r);
+      if (adj.verify_mode) {
+        toast("Saved. Deep checking needs two copies, so verification is a size check while rips go straight to your library.", "ok");
+        route();
+        return;
+      }
       toast("Settings saved", "ok");
     } catch (e) { toast(e.message, "bad"); }
   };

@@ -14,7 +14,7 @@ that's been in a drawer since 2014.
 |---|---|
 | **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most, and the only one you can get expensively wrong. |
 | **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board — the **1 GB** model is plenty. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. Whichever you pick, the Preparer downloads the right OS for it. |
-| **microSD card** | 8GB runs it. Bigger only buys staging room — see [which card](#which-card). |
+| **microSD card** | **8 GB, and bigger buys you nothing** unless you want deep verification — see [which card](#which-card). Films go straight to your library, not the card. |
 | **USB-C PD brick** | **45W or more.** It's the volts that matter, not the watts — see [how it's powered](#how-its-powered). |
 | **The power bits inside** | A PD trigger board and two buck converters. About $20 all in, and [the list is below](#how-its-powered). |
 | **Enclosure** | 3D printed. **PETG or ASA — not PLA.** A drive plus a board in a sealed box gets hot enough to soften PLA. |
@@ -189,36 +189,57 @@ bug. It isn't.
 
 ## Which card
 
-**Two answers, and the cheap one is probably right.**
+**Buy an 8 GB card.** That's the whole answer for almost everybody, and a bigger one
+buys you nothing.
 
-Riparr itself uses about 2.3 GB, so **an 8 GB card runs the box**. What card size actually
-buys you is *staging* — room to hold a rip on the box while it uploads.
+Riparr uses about 2.3 GB, and out of the box **rips go straight to your library** —
+MakeMKV writes onto your share as the disc is read, and nothing is staged on the card at
+all. So the film never touches it, and its size never comes up. On the reference board
+that's about 18 MB/s against the card's 9.4, so it's the faster route as well as the
+cheaper one, and the card isn't having tens of gigabytes pushed through it every disc.
 
-**If you turn on “straight to your library”** (Queue page → *Each rip goes*), nothing is
-staged at all. MakeMKV writes onto your share through the mount. On the reference board
-that's about 18 MB/s against the card's 9.4, so it's faster as well as cheaper, and card
-size stops mattering entirely. The trade is that the rip needs the network for its whole
-length instead of only at the end — a NAS that goes to sleep mid-disc costs you the rip.
+If your library isn't mounted when a disc goes in, that rip falls back to the card by
+itself and gets sent when the share comes back. You don't have to set anything up for
+that, and you don't have to change it back afterwards.
 
-**If you leave it staging on the card** (the default), the card has to hold one whole
-title plus working room:
+### The one reason to buy a bigger card
 
-| Card | Staging room | Comfortably handles |
+**Deep verification.** Riparr checks every rip arrived, and the normal check — comparing
+the size your share reports against what was sent — is free and catches what actually
+goes wrong: a truncated transfer, a share that filled up, a write that was refused.
+
+**Deep** goes further: it reads the whole film back off the share and hashes it, which
+also catches silent corruption of bytes that did arrive. To do that it needs *two*
+copies to compare, so it only exists for rips staged on the card — and it needs room for
+the film **twice over**, the rip plus the read-back. That's the one thing that makes card
+size a real question.
+
+It isn't offered while rips go straight to your library, because there'd be one copy and
+hashing a file against itself passes every time while proving nothing.
+
+**If you want it**, switch *Each rip goes* to **onto the card first** on the Queue page,
+and size the card for two copies of the biggest title you'll rip:
+
+| Card | Free space | Biggest title it can deep-verify |
 |---|---|---|
-| **8 GB** | ~4 GiB | Runs fine. DVD main titles. |
-| **16 GB** | ~11 GiB | DVDs easily, one Blu-ray main title. |
-| **32 GB** | ~26 GiB | Blu-rays one at a time. |
-| **128 GB** | ~116 GiB | Blu-rays back to back, 4K. |
+| **8 GB** | ~4 GiB | ~2 GiB — a short DVD title, not a feature |
+| **16 GB** | ~11 GiB | ~5 GiB — a DVD main title |
+| **32 GB** | ~26 GiB | ~13 GiB — a Blu-ray main title |
+| **128 GB** | ~116 GiB | ~58 GiB — anything, 4K included |
 
-The Preparer tells you what the card you've plugged in buys you, in discs, before it
-writes anything.
+The third column is the second one halved, and that is the whole point: the film and its
+read-back both have to be on the card at once. The Preparer tells you what the card
+you've plugged in buys you, in discs, before it writes anything.
 
-Two notes if you're going to stage Blu-rays on the card:
+Worth it for an archive you'll never re-rip. Overkill for most people, which is why it
+isn't the default — and why the recommendation above is still an 8 GB card.
+
+### Two notes if you do stage on the card
 
 - **Get a high-endurance card** — SanDisk Max Endurance or Samsung Pro Endurance. Every
-  disc pushes tens of gigabytes through it, and ordinary cards aren't built for that much
-  sustained writing. Going straight to your library avoids this entirely. For DVDs only,
-  any decent card is fine.
+  disc pushes tens of gigabytes through it, and ordinary cards aren't built for that
+  much sustained writing. This is only a concern if you've turned staging on; the
+  default never writes a film to the card.
 - **Don't buy an SD Express card.** They cost 3–4× more, these boards can't use the fast
   interface at all, and they run hotter inside the box.
 

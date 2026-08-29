@@ -113,20 +113,21 @@ people notice.
 
 ## Storage & transfer
 
-Mostly informational. The defaults adapt to your card.
-
 | Setting | Notes |
 |---|---|
-| **Mode** | `Automatic` *(recommended)* — streams when space is tight, rips at full speed and ejects early when there's room |
-| **Verify after transfer** | `Quick` *(default)* — asks your library how big the file is and compares it with what was sent. Nearly free, and it catches what actually goes wrong: a truncated transfer, a share that filled up, a write that was refused. `Deep` also reads every byte back and hashes it, so it catches silent corruption too — but it downloads the whole film again, roughly doubling the time after a rip and needing as much free space on the card as the film itself. `Don't verify` trusts the upload. The choice applies to automatic and manual rips alike. |
+| **Mode** | `Straight to your library` *(default)* — MakeMKV writes onto your share as the disc is read, and nothing is staged on the card. Faster on this hardware (about 18 MB/s against the card's 9.4), no size ceiling, and no wear on the card. If the share isn't mounted when a disc goes in, that rip stages on the card by itself and is sent when the share comes back — so it is safe to leave on. `Onto the card first` is the answer if your NAS sleeps, your Wi-Fi is patchy, or you want deep verification. `Always burst` and `always stream` force one staged behaviour or the other. |
+| **Verify after transfer** | `Quick` *(default)* — asks your library how big the file is and compares it with what was sent. Nearly free, and it catches what actually goes wrong: a truncated transfer, a share that filled up, a write that was refused. `Deep` also reads every byte back and hashes it, so it catches silent corruption too. `Don't verify` trusts the upload. Applies to automatic and manual rips alike. |
 | **Keep local copy** | On. Riparr retains the local copy until it needs the room, so a downstream problem is a re-copy instead of a re-rip. |
 | **Space remaining** | Shown in discs, not gigabytes |
 
-> **Resolved 2026-08-26.** Deep verification is no longer the only option, and it is no
-> longer the default. It reads the whole file back, so on top of the time it needs as much
-> free space as the film — the read-back has to land somewhere, because `smbclient` cannot
-> stream it. Quick verification catches the failures that actually happen and costs
-> nothing, so it is the default; deep is there for an archive you never intend to re-rip.
+**Deep verification is only offered when rips stage on the card.** It works by reading
+the file back off the share and comparing it with the original, so it needs two copies.
+Going straight to your library leaves one — hashing it against itself would pass every
+time and prove nothing. Switch **Mode** to *onto the card first* if you want it, and give
+the card room for two copies of the largest title you rip: the read-back has to land
+somewhere, because `smbclient` cannot stream it.
+
+That second copy is the only reason to buy a card bigger than 8 GB.
 
 ## Handoff
 

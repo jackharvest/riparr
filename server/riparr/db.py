@@ -137,7 +137,13 @@ DEFAULTS = {
     # Blu-ray does not fit on a 32 GB card, ever), and it stops writing tens of
     # gigabytes per disc through flash. The cost is that a rip now depends on the
     # network for its whole length instead of only at the end.
-    "transfer_mode": "auto",
+    #
+    # Direct is the default because on this hardware it is faster, has no size ceiling
+    # and does not wear out the card -- staging won on none of the three. It is also
+    # self-limiting rather than a promise: use_direct() checks the share is mounted and
+    # writable for this job, so a box whose NAS is asleep stages on the card by itself
+    # instead of failing. Nobody has to choose anything for either case to work.
+    "transfer_mode": "direct",
     "card_speed": {},              # last measured card throughput; see /api/storage/speedtest
     # "quick" | "deep" | "off". Quick compares the size the share reports against the
     # file that was sent -- nearly free, and it catches the failure that actually
@@ -145,6 +151,11 @@ DEFAULTS = {
     # hashes it, which is correct and expensive: it costs a second full download and,
     # because smbclient needs a seekable destination, as much free space again as the
     # title itself.
+    #
+    # Deep only means anything when there are two copies to compare, so it belongs to
+    # staged rips alone. On a direct rip the only copy is the one on the share, and
+    # hashing it against itself is a success it did not earn -- see rip._verify, which
+    # downgrades to quick, and DIRECT_FORBIDS below, which stops it being offered.
     "verify_mode": "quick",
     "keep_local_copy": True,
     # Looks the disc up on Wikipedia to put its poster faintly behind the page. It is
@@ -205,6 +216,36 @@ DEFAULTS = {
     # here because this is where the box keeps things that must survive a power cut.
     "last_update_announced": "",
 }
+
+
+# Settings that stop meaning anything in direct mode, and what they become instead.
+# Deep verification proves a *copy* matches its original; a direct rip has no copy, so
+# the only thing deep could hash is the file against itself. rip._verify already
+# downgrades at run time (the mode can change between a rip starting and finishing),
+# but a setting that silently does something else is a lie told in the UI. This is the
+# same rule applied where the choice is made, so the box never stores an intent it has
+# no intention of honouring.
+DIRECT_FORBIDS = {"verify_mode": {"deep": "quick"}}
+
+
+def reconcile(changed=None):
+    """Fix settings that the current transfer mode makes meaningless.
+
+    Returns {key: new_value} for whatever was changed, so a caller can say so rather
+    than moving a control under somebody's cursor without explanation.
+
+    Called on every settings write instead of only when transfer_mode is the thing
+    being written, because either order gets you there: turning on direct with deep
+    already set, or setting deep while direct is already on.
+    """
+    if get("transfer_mode") != "direct":
+        return {}
+    out = {}
+    for key, remap in DIRECT_FORBIDS.items():
+        now = get(key)
+        if now in remap:
+            out[key] = set(key, remap[now])
+    return out
 
 
 def _lock_down(path):

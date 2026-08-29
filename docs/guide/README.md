@@ -22,7 +22,7 @@ line here. Prices move and vary by where you are — treat these as ballpark, no
 |---|---|---|
 | Optical drive | The one out of a dead laptop or tower — [read this before you buy one](01-what-you-need.md#which-drive) | $0–90 |
 | Board | Orange Pi Zero 2W. The 1 GB model is plenty | $40–50 |
-| SD card | Any 8 GB or bigger. Riparr uses about 2.3 GB | $5 |
+| SD card | 8 GB. Films go to your NAS, not the card — bigger buys nothing | $5 |
 | USB-C PD trigger | Solderless, DIP-switch selected. Set it to 15 V or 20 V | $10 for four |
 | Buck converters | Two: one down to 12 V, one down to 5 V | $10 each |
 | USB-C pigtail | Red-and-black bare wires to a USB-C plug. Powers the board | $6 |
