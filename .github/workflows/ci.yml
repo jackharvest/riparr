@@ -168,6 +168,14 @@ jobs:
         run: |
           python server/updater-swap.test.py
 
+      # A 3D Blu-ray's two cuts are the same film at the same length, so longest-wins
+      # picks the 3D one -- twice the size, and most players will not use it. The first
+      # fix for that took the smallest title of any runtime tie, which on an obfuscated
+      # disc means picking a decoy playlist over the film. Both regressions are in here.
+      - name: The right title comes off the disc
+        run: |
+          python server/choose-title.test.py
+
       - name: Shell parses
         run: |
           for f in $(git ls-files '*.sh'); do

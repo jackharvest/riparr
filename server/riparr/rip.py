@@ -669,22 +669,110 @@ def pretty_label(label):
     return s.title() if s.isupper() or s.islower() else s
 
 
-def choose_title(titles, min_seconds, mode="main"):
+# Two titles this close in runtime are the same film, not two different ones. Six
+# seconds is deliberately tight: a 3D disc's two cuts are frame-identical, and decoy
+# playlists on an obfuscated disc sit minutes apart, not seconds.
+SAME_FILM_SECONDS = 6
+
+
+def choose_title(titles, min_seconds, mode="main", prefer_3d=False):
     """Which title is the film.
 
     Longest-wins, with a floor. This is knowingly the naive answer: major-studio discs
     ship ~100 near-identical decoy playlists specifically to defeat it (R5). The
     defence is not a cleverer heuristic here, it is that the choice is remembered per
     fingerprint, so a disc that picks wrong is corrected once and never again.
+
+    The one tiebreak: **among titles of the same runtime, the smaller file wins.** A
+    3D Blu-ray carries the 2D and 3D cuts of one film at the same length, and the 3D
+    (MVC) one is roughly twice the size -- so longest-wins alone picks 3D, every time,
+    on every 3D disc. Most players will not use that stream and nobody asked for twice
+    the bytes. `prefer_3d` flips the tiebreak for somebody who did.
+
+    Size is the discriminator rather than anything MakeMKV reports, because what it
+    reports about 3D is a stream attribute we do not read and this is one number we
+    already have (read_titles collects code 11 for every title).
     """
     usable = [t for t in titles if t["seconds"] >= min_seconds]
     if not usable:
         usable = list(titles)
     if not usable:
         return None
-    if mode == "main":
-        return max(usable, key=lambda t: t["seconds"])
-    return max(usable, key=lambda t: t["seconds"])
+    tied = _same_length(usable)
+    # The tiebreak fires *only* on a 2D/3D-sized gap. An obfuscated disc's decoys are
+    # also within seconds of each other, but they are within a rounding error of each
+    # other's size -- and picking the smallest of those means picking a decoy, which
+    # is a worse answer than the longest-wins it replaced. Measured the hard way: the
+    # first version of this quietly changed the pick on every obfuscated disc.
+    if _splits_on_size(tied):
+        # Split the tie into the two cuts and keep the wanted one, rather than simply
+        # taking the smallest -- a disc can carry two 2D playlists of nearly the same
+        # size, and "smallest" would pick between them on a rounding error. Inside the
+        # group the ordinary rule applies again.
+        small = min(t.get("bytes") or 0 for t in tied)
+        want_big = prefer_3d
+        group = [t for t in tied
+                 if ((t.get("bytes") or 0) >= small * _3D_SIZE_RATIO) == want_big]
+        # `_splits_on_size` guarantees both groups are populated, so this cannot empty
+        # the list today. Guarded anyway: the cost is one comparison and the failure it
+        # prevents is a ValueError out of min() in the middle of a rip.
+        if group:
+            tied = group
+    # Longest wins, lowest index breaks a draw so the same disc picks the same title on
+    # every scan. Unchanged from before the tiebreak existed.
+    return min(tied, key=lambda t: (-t["seconds"], t["index"]))
+
+
+def _identify_question(ask_name, titles, min_seconds):
+    """The sentence at the top of the prompt. Say which thing is actually unclear.
+
+    "This disc has several titles of almost the same length" was the only wording
+    there was, and it went out over a 3D Blu-ray -- where the near-identical lengths
+    are not a studio hiding anything, they are the 2D and 3D cuts of one film. Being
+    told the wrong reason is worse than being told nothing, because it sends somebody
+    looking for a problem that is not there.
+    """
+    if ask_name:
+        return "Riparr couldn't work out what this disc is."
+    if _looks_like_3d(titles, min_seconds):
+        return ("This disc carries two versions of the same film at the same length, "
+                "one about twice the size — usually the 2D and the 3D cut. The "
+                "smaller one is the 2D version.")
+    return ("This disc has several titles of almost the same length, which usually "
+            "means the studio is hiding the real one. Pick the film.")
+
+
+# A 3D cut is roughly twice the size of the 2D one at identical runtime. Well clear of
+# the few percent that separates two encodes of the same thing, and well under 2x so a
+# disc that is merely generous still counts.
+_3D_SIZE_RATIO = 1.5
+
+
+def _same_length(titles):
+    """The titles that are the same film: as long as the longest, within a few seconds."""
+    longest = max(t["seconds"] for t in titles)
+    return [t for t in titles if longest - t["seconds"] <= SAME_FILM_SECONDS]
+
+
+def _splits_on_size(tied):
+    """Same runtime, one title far bigger than another. That shape is a 2D/3D pair.
+
+    Inferred from what MakeMKV reports about size, **not** confirmed against a 3D disc
+    in a drive. It decides a tiebreak and the wording of a question, and the choice it
+    makes is remembered per fingerprint -- so being wrong costs one correction.
+    """
+    sizes = [t.get("bytes") or 0 for t in tied]
+    if len(sizes) < 2 or not min(sizes):
+        return False
+    return max(sizes) / min(sizes) >= _3D_SIZE_RATIO
+
+
+def _looks_like_3d(titles, min_seconds):
+    """`_splits_on_size`, asked of the long titles only. Used to word the prompt."""
+    usable = [t for t in titles if t["seconds"] >= max(min_seconds, 1800)]
+    if len(usable) < 2:
+        return False
+    return _splits_on_size(_same_length(usable))
 
 
 def looks_obfuscated(titles, min_seconds):
@@ -1027,40 +1115,50 @@ def _identify(job, s):
     if chosen_index is not None:
         chosen = next((t for t in titles if t["index"] == int(chosen_index)), None)
     else:
-        chosen = choose_title(titles, s["min_title_seconds"], s.get("rip_mode", "main"))
+        chosen = choose_title(titles, s["min_title_seconds"], s.get("rip_mode", "main"),
+                              prefer_3d=s.get("title_3d") == "3d")
     if not chosen:
         raise RipFailed("Nothing on this disc is longer than %d seconds, so there is "
                         "nothing worth ripping." % s["min_title_seconds"])
 
     name = job.get("title") or remembered.get("title") or pretty_label(d.get("label"))
-    ambiguous = looks_obfuscated(titles, s["min_title_seconds"])
 
-    # The one place `on_unknown_disc` has ever been able to mean anything.
-    if (not name or ambiguous) and chosen_index is None:
-        behaviour = s.get("on_unknown_disc", "ask")
+    # Two separate questions, and they were one setting until a 3D Blu-ray walked into
+    # it. "What do I call this" is answered by the volume label; "which title is the
+    # film" is answered by the runtimes. A disc can need either, both or neither, and
+    # conflating them meant that answering the naming question with "use the label"
+    # also silently answered the title question -- with longest-wins, which on a 3D
+    # disc is the wrong cut.
+    ask_name = not name
+    ask_title = (chosen_index is None
+                 and looks_obfuscated(titles, s["min_title_seconds"])
+                 and s.get("on_ambiguous_title", "auto") == "ask")
+
+    if ask_name:
+        behaviour = s.get("on_unknown_disc", "label")
         if behaviour == "skip":
             db.stage_end(job["id"])
             db.update_job(job["id"], state="cancelled", finished_at=int(time.time()),
                           error="Couldn't identify the disc, and the setting is to skip.")
             P.eject()
             return None
+        # "label" with no label to use is not an answer, so it falls through and asks.
         if behaviour == "label" and d.get("label"):
             name = pretty_label(d.get("label")) or d.get("label")
-        else:
-            question = ("Riparr couldn't work out what this disc is."
-                        if not name else
-                        "This disc has several titles of almost the same length, which "
-                        "usually means the studio is hiding the real one. Pick the film.")
-            db.stage_end(job["id"])
-            db.update_job(job["id"], state="needs_input", question=question,
-                          phase="Waiting for you",
-                          titles=titles, title=name or None,
-                          chosen_title=chosen["index"],
-                          disc_label=d.get("label") or job.get("disc_label"))
-            log.info("Job %d needs a human: %s", job["id"], question)
-            notify.send("needs_you", title=name or d.get("label") or "A disc",
-                        body=question)
-            return None
+            ask_name = False
+
+    if ask_name or ask_title:
+        question = _identify_question(ask_name, titles, s["min_title_seconds"])
+        db.stage_end(job["id"])
+        db.update_job(job["id"], state="needs_input", question=question,
+                      phase="Waiting for you",
+                      titles=titles, title=name or None,
+                      chosen_title=chosen["index"],
+                      disc_label=d.get("label") or job.get("disc_label"))
+        log.info("Job %d needs a human: %s", job["id"], question)
+        notify.send("needs_you", title=name or d.get("label") or "A disc",
+                    body=question)
+        return None
 
     title_name, year = _split_year(name)
     # The UHD hedge is recorded, not acted on: MakeMKV is the only thing that can say

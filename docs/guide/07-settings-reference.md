@@ -90,10 +90,17 @@ adding a share for box sets cannot quietly redirect your films.
 |---|---|
 | **Film template** | `{Title} ({Year})/{Title} ({Year}).mkv` |
 | **TV template** | `{Title} ({Year})/Season {Season:00}/{Title} - S{Season:00}E{Episode:00} - {EpisodeTitle}.mkv` |
-| **On unknown disc** | Ask me *(recommended)* / Use disc label / Skip |
+| **On unknown disc** | **Use the disc label** *(default)* / Ask me / Skip |
 
-`Ask me` is the default because a wrongly named file silently pollutes your library, which
-is worse than one that's waiting for ten seconds of your attention.
+**This is only about the *name*.** Which title gets ripped is a separate setting, under
+[Ripping](#ripping) — they used to be one, and answering the naming question also
+silently answered the other one.
+
+`Use the disc label` is the default because the box's promise is that you put a disc in
+and walk away, and most rips land in a folder that gets tidied or compressed later
+rather than straight into a library somebody is browsing. A folder named off the disc
+label is something you can fix in ten seconds; a queue that stopped at 2am waiting for
+you is not. Switch it to `Ask me` if your rips go directly into a library you browse.
 
 ## Track selection
 
@@ -107,6 +114,8 @@ Bigger effect on file size than anything else here.
 | **Keep commentary tracks** | Off |
 | **Minimum title length** | 120 seconds — filters menus and logo stings |
 | **Rip mode** | Main title *(default)* / All titles / Full disc backup |
+| **When Riparr can't tell which title is the film** | **Use the most likely one** *(default)* / Ask me |
+| **On a disc with a 3D version** | **Rip the 2D version** *(default)* / Rip the 3D version |
 
 Keeping every language and commentary can roughly double file size for no benefit most
 people notice.

@@ -1281,8 +1281,9 @@ class DiscAnswer(BaseModel):
 
 @app.post("/api/queue/{job_id}/answer")
 def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
-    """The other end of `on_unknown_disc: ask`, which has been the default setting
-    since the beginning with nothing anywhere that could do the asking."""
+    """The other end of the two "ask me" settings: `on_unknown_disc` for the name, and
+    `on_ambiguous_title` for which title is the film. One prompt answers both, because
+    a disc that needs both questions asked should not need answering twice."""
     ok, message = RIP.answer(job_id, title_index=body.title_index,
                              name=(body.name or "").strip(), skip=body.skip)
     if not ok:

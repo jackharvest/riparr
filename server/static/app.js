@@ -597,12 +597,13 @@ const wizard = {
           <input id="s-tv" value="${esc(s.tv_template)}"></label>
         <label class="f"><span>When Riparr can't identify a disc</span>
           <select id="s-unknown">
-            <option value="ask" ${s.on_unknown_disc === "ask" ? "selected" : ""}>Ask me (recommended)</option>
-            <option value="label" ${s.on_unknown_disc === "label" ? "selected" : ""}>Use the disc label</option>
+            <option value="label" ${s.on_unknown_disc === "label" ? "selected" : ""}>Use the disc label (default)</option>
+            <option value="ask" ${s.on_unknown_disc === "ask" ? "selected" : ""}>Ask me</option>
             <option value="skip" ${s.on_unknown_disc === "skip" ? "selected" : ""}>Skip the disc</option>
           </select>
-          <span class="help">A wrongly named file quietly pollutes your library, which is
-            worse than one waiting ten seconds for your attention.</span></label>
+          <span class="help">Only about the name. The disc label is the better answer
+            if rips land in a folder you tidy up later; pick "Ask me" if they go
+            straight into a library you browse.</span></label>
       </div></div>
       <div class="wz-actions">
         <div class="grow"></div>
@@ -1699,12 +1700,14 @@ settingsPages.library = async (s) => {
         <input data-set="tv_template" value="${esc(s.tv_template)}"></label>
       <label class="f"><span>When a disc can't be identified</span>
         <select data-set="on_unknown_disc">
-          ${opt("ask", "Ask me (recommended)", s.on_unknown_disc)}
-          ${opt("label", "Use the disc label", s.on_unknown_disc)}
+          ${opt("label", "Use the disc label (default)", s.on_unknown_disc)}
+          ${opt("ask", "Ask me", s.on_unknown_disc)}
           ${opt("skip", "Skip it", s.on_unknown_disc)}
         </select>
-        <span class="help">A wrongly named file quietly pollutes your library, which is
-          worse than one waiting ten seconds for your attention.</span></label>
+        <span class="help">Only about the <em>name</em>. Which title gets ripped is
+          <a href="#/settings/ripping">a separate setting</a>. Pick "Ask me" if these
+          land straight in a library you browse; the disc label is the better answer
+          if they land in a folder you tidy up later.</span></label>
     </div></div>${saveBar()}`;
 };
 
@@ -1729,6 +1732,21 @@ settingsPages.ripping = (s) => `
     <label class="f"><span>Minimum title length (seconds)</span>
       <input type="number" data-set="min_title_seconds" value="${s.min_title_seconds}">
       <span class="help">Filters menus and logo stings.</span></label>
+    <label class="f"><span>When Riparr can't tell which title is the film</span>
+      <select data-set="on_ambiguous_title">
+        ${opt("auto", "Use the most likely one (default)", s.on_ambiguous_title)}
+        ${opt("ask", "Ask me", s.on_ambiguous_title)}
+      </select>
+      <span class="help">The longest title wins, and where two are the same length the
+        smaller file wins. Riparr remembers what you pick for a disc, so a wrong guess
+        is corrected once rather than every time.</span></label>
+    <label class="f"><span>On a disc with a 3D version</span>
+      <select data-set="title_3d">
+        ${opt("2d", "Rip the 2D version (default)", s.title_3d)}
+        ${opt("3d", "Rip the 3D version", s.title_3d)}
+      </select>
+      <span class="help">Both cuts are the same length, so length alone can't separate
+        them. The 3D one is roughly twice the size and most players won't use it.</span></label>
   </div></div>
 
   <div class="section"><h2>Tracks

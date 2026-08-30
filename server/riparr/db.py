@@ -124,7 +124,29 @@ DEFAULTS = {
     # nothing has to be chosen before the box works. See db.destination().
     "movie_share_id": None,
     "tv_share_id": None,
-    "on_unknown_disc": "ask",
+    # Two different questions, and they used to be one setting.
+    #
+    # `on_unknown_disc` is *what to call it* -- it fires when the volume label gives
+    # nothing a person would accept as a film name. "label" is the shipped answer
+    # because the box's whole promise is that you put a disc in and walk away, and
+    # most rips land in a staging folder to be compressed later rather than straight
+    # into a library somebody is browsing. A folder named off the disc label is a
+    # thing you can fix later; a queue that stopped at 2am is not.
+    "on_unknown_disc": "label",
+    # `on_ambiguous_title` is *which title is the film* -- it fires when several long
+    # titles sit within a couple of minutes of each other. That is the signature of
+    # playlist obfuscation, and it is also just what a 3D disc looks like, because the
+    # 2D and 3D cuts are the same film and therefore the same length. "auto" takes
+    # choose_title()'s answer; the choice is remembered per fingerprint, so a disc
+    # that picks wrong is corrected once and never again.
+    "on_ambiguous_title": "auto",
+    # "2d" | "3d". On a disc carrying both cuts, which one is the film. They are the
+    # same length, so runtime alone cannot separate them; the 3D (MVC) title is
+    # roughly twice the size and most players will not use it, so 2D is the shipped
+    # answer. A string rather than a boolean to match every other choice here, and
+    # because a settings file full of `false` says nothing about what false meant.
+    # See rip.choose_title.
+    "title_3d": "2d",
     "audio_languages": ["eng"],
     "subtitle_languages": ["eng"],
     "keep_forced_subtitles": True,

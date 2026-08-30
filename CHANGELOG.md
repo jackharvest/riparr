@@ -8,6 +8,39 @@ bother updating.
 
 ---
 
+## 0.3.9
+
+**A 3D Blu-ray no longer rips the 3D version by mistake.** A 3D disc carries both cuts
+of the film at exactly the same length, and Riparr picked the longest title — so it
+picked the 3D one, which is roughly twice the size and which most players will not use.
+It now takes the smaller of two titles that are the same length, which is the 2D cut.
+**Settings → Ripping → On a disc with a 3D version** switches it back if you want 3D.
+
+**Riparr stops less.** "When a disc can't be identified" was one setting doing two
+jobs — what to call the film, *and* which title on the disc is the film. So a 3D disc
+stopped the queue and asked, saying the studio was probably hiding the real title,
+which was not what was happening.
+
+They are two settings now:
+
+- **Ripping → When Riparr can't tell which title is the film.** New, and it defaults to
+  **use the most likely one** rather than asking. Riparr remembers what you pick for a
+  disc, so a wrong guess costs one correction, not one per disc.
+- **Naming → When a disc can't be identified.** Now only about the name, and it now
+  defaults to **use the disc label**. Most rips land somewhere that gets tidied later
+  rather than straight into a library, and a folder you rename in ten seconds beats a
+  queue that stopped overnight waiting for you.
+
+**Both defaults only apply to a box that never set them.** If you have been through
+setup, your existing choices stand — change them on those two pages if you want the new
+behaviour.
+
+**And when it does ask, it says which thing is unclear** — whether it can't name the
+disc, or can't tell which title is the film, and whether the two titles it is looking at
+are a 2D/3D pair rather than a studio hiding something.
+
+---
+
 ## 0.3.8
 
 **The page now waits for the box and reloads itself after an update.** It used to hand
