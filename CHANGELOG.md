@@ -8,6 +8,54 @@ bother updating.
 
 ---
 
+## 0.4.0
+
+**TV box sets work.** Put a season disc in and Riparr rips every episode on it, in
+order, numbered and named — instead of ripping one file and quietly discarding the rest,
+which is what it did before.
+
+Six titles of about the same length is a season disc, not a film with five decoys.
+Riparr finds the episodes, throws out the "play all" title and the duplicate playlists
+most discs carry, and works out what order the episodes go in.
+
+**The order comes from the disc.** Most Blu-ray season discs carry a hidden "play all"
+playlist, and it is the disc's own record of what order its episodes go in — so when
+it's there, the order is a fact, not a guess, and Riparr gets it right without asking.
+When it isn't there, Riparr falls back to the disc's playlist numbering and shows you
+the plan before it rips anything.
+
+**Episode names come from [TVmaze](https://www.tvmaze.com)**, which needs no account and
+no API key.
+
+**Disc order and broadcast order don't always agree,** and Riparr always keeps the
+disc's. Firefly is the famous case — the disc opens with "Serenity", which aired second.
+Riparr takes the sequence from the disc and only the names from the lookup, so you see
+the disagreement on the plan, before anything is written, rather than a year later.
+Changing **first episode** renumbers and renames the whole disc in one move.
+
+**Correct the first disc of a season and the rest follow.** Disc two carries on from
+where disc one stopped, with nothing to answer.
+
+The episode plan is a table, one row per file that will be written. Untick a duplicate,
+move an episode with the arrows, type over a name, change where the numbering starts —
+the numbers update as you go, so what's on screen is what will be written.
+
+New settings under **Settings → Ripping → Television**: whether to look for season discs
+at all, when to stop and show you the plan (the default asks only when Riparr isn't
+sure), whether to look up episode names, and where specials go.
+
+**The naming templates fill `{Season:00}`, `{Episode:00}` and `{EpisodeTitle}`,** which
+the settings page has listed as "not yet" since the first release. A double-length
+premiere or finale becomes `S01E01-E02` on its own, which is what Plex and Jellyfin read
+as one file holding two episodes.
+
+**Two things a season disc can do that Riparr still can't.** A season welded into a
+single four-hour title gets ripped as one file — Riparr says so, but splitting it needs
+MKVToolNix on another machine. And nothing here reads production or DVD ordering; the
+disc's own order is what you get, which is usually what you want from a disc.
+
+---
+
 ## 0.3.9
 
 **A 3D Blu-ray no longer rips the 3D version by mistake.** A 3D disc carries both cuts

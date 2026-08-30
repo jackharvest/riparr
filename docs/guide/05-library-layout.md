@@ -36,16 +36,21 @@ If you name things your own way, the templates are editable, Sonarr-style:
 | `{Title}` | `Blade Runner` | yes |
 | `{Year}` | `1982` | yes |
 | `{Source}` | `DVD`, `Bluray`, `UHD` | yes |
-| `{Season:00}` | `01` | **not yet** |
-| `{Episode:00}` | `01` | **not yet** |
-| `{EpisodeTitle}` | `Pilot` | **not yet** |
+| `{Season:00}` | `01` | yes |
+| `{Episode:00}` | `01` | yes |
+| `{EpisodeTitle}` | `Pilot` | yes |
 | `{Quality}` | `Bluray-1080p` | **not yet** |
 | `{Edition}` | `Director's Cut` | **not yet** |
 
+The zeroes set the padding: `{Season:0}` gives `1`, `{Season:000}` gives `001`.
+
+A file holding two episodes — a double-length premiere or finale — expands
+`E{Episode:00}` to `E01-E02` by itself. That is the form Plex and Jellyfin both read as
+one file containing two episodes, and you do not need to change the template to get it.
+
 A token that is not built is left in the filename as written, rather than blanked — a
 template with a typo should produce a visibly odd name, not a file called ` ().mkv`.
-The TV tokens wait on TV support; `{Quality}` waits on Riparr reading the video stream,
-which it does not do.
+`{Quality}` waits on Riparr reading the video stream, which it does not do.
 
 ## Two copies of the same film
 
@@ -71,29 +76,53 @@ To tag every rip from the start instead, put `{Source}` in the template:
 
 ## How Riparr identifies a disc
 
-**Blu-ray usually just works.** Most Blu-rays carry the real title on the disc itself.
-Riparr reads it, checks the runtime, matches against TMDB, and names the file.
+**The name comes off the disc label.** Most Blu-rays carry a usable one —
+`BLADE_RUNNER_2049` becomes `Blade Runner 2049`. Riparr tidies it and files it under
+that.
 
 **DVDs are rougher.** DVD volume labels are frequently garbage like `LOGICAL_VOLUME_ID`.
-Riparr falls back to fingerprinting the disc structure — how many titles, how long each
-is — and matching that against TMDB runtimes.
+When the label gives nothing a person would accept as a name, Riparr asks rather than
+inventing one.
 
-**When it isn't sure, it asks rather than guessing.** A wrongly named file is worse than
-an unnamed one, because it quietly pollutes your library. Unidentified rips wait in the
-queue with a "needs review" flag, and you pick the right match from a short list.
+**It does not guess a year.** A year only appears in a filename if it was in brackets on
+the disc label or you typed one into the prompt. `Blade Runner 2049.mkv` is a name Plex
+matches and claims nothing untrue; `Blade Runner (2049).mkv` would be a confident lie.
 
 **It only asks once per disc.** Riparr remembers your correction against that specific
 disc's fingerprint. Rip the same disc on the same box a year later and it already knows.
 
+There is no film-metadata lookup. Riparr names films from the disc and lets Plex,
+Jellyfin or Emby do the matching, which they are better at and already do. The one
+exception is television, below, where the numbers have to be right *before* the file is
+written.
+
 ## Two cases worth knowing about
 
-**TV season discs.** Six titles of about 42 minutes each is an episode disc. Riparr detects
-the pattern and maps the titles onto the TMDB episode list — but disc order and broadcast
-order don't always agree, so **check the first disc of a season.** Correct it there and the
-rest of the season follows.
+**TV season discs.** Six titles of about 42 minutes each is a season disc, not a film
+with five decoys. Riparr rips all six, in order, numbered and named.
 
-Every ripper gets this wrong. Riparr aims to get it right most of the time and to make the
-fix take five seconds when it doesn't.
+The order comes from the disc. Most Blu-ray season discs carry a hidden "play all"
+playlist, and that playlist is the disc's own record of what order its episodes go in —
+when it's there, the order is a fact and Riparr just uses it. When it isn't, the order
+comes from the disc's playlist numbering, which is right on almost every disc but not
+all of them, and Riparr stops to show you the plan before it rips.
+
+The names come from [TVmaze](https://www.tvmaze.com), which needs no account.
+
+**Disc order and broadcast order don't always agree.** Firefly is the famous one: the
+disc opens with "Serenity", but it aired second, so every episode guide numbers "The
+Train Job" as S01E01. Riparr always keeps the *disc's* order and only takes *names* from
+the lookup — so when the two disagree you see it immediately, on the plan, before
+anything is written. Shifting the first episode number renumbers and renames the whole
+disc in one move.
+
+**Later discs of the same season need no answer.** Correct disc one, and disc two
+carries on from where it stopped.
+
+**A disc that carries each episode twice** — once with the "next time" trailer, once
+without — is normal, and Riparr keeps one of each. So is a season welded into a single
+four-hour title, which Riparr will tell you about and rip as one file; splitting that
+needs MKVToolNix on another machine.
 
 **Decoy titles.** Some studios — Disney and Warner especially — put around a hundred
 near-identical fake playlists on a disc specifically to defeat "pick the longest one."

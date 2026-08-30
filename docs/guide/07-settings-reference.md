@@ -117,6 +117,20 @@ Bigger effect on file size than anything else here.
 | **When Riparr can't tell which title is the film** | **Use the most likely one** *(default)* / Ask me |
 | **On a disc with a 3D version** | **Rip the 2D version** *(default)* / Rip the 3D version |
 
+## Television
+
+| Setting | Notes |
+|---|---|
+| **Look for season discs** | On. A disc with several titles of the same length is read as a season rather than a film with decoys. Turn it off if you only own films. |
+| **Before ripping a season** | **Show me the plan when Riparr isn't sure** *(default)* / Always show me / Never. Most Blu-ray season discs carry a "play all" playlist, which is the disc's own record of its episode order — when that's present the order is a fact and there is nothing to check. When it isn't, the order is a good guess. The default asks only in the second case. **A disc with no season number always asks**, whatever this is set to, because there is no answer to get on with. |
+| **Look up episode names** | On. From [TVmaze](https://www.tvmaze.com), no account needed. Off gives correctly numbered files with no names — Plex and Jellyfin match on the numbers, so they still land correctly. |
+| **Specials go in** | `Season 00` *(default)* / `Specials`. Both are read as season zero. Set the season to 0 on the episode plan to file a disc here. |
+
+The episode plan is a table, one row per file that will be written. Untick a row to skip
+it, use the arrows to move an episode, type over a name to correct it, or change **first
+episode** to shift the whole disc — the numbers and names update together as you go.
+Later discs of the same season carry on from where the last one stopped without asking.
+
 Keeping every language and commentary can roughly double file size for no benefit most
 people notice.
 

@@ -176,7 +176,7 @@ No SD card and no drive will make this faster. There's no Ethernet option on thi
 
 - **Check the disc's queue entry** — Riparr flags anything it was unsure about rather than
   guessing
-- **TV discs:** correct the first disc of a season and the rest follow
+- **TV discs:** correct the first disc of a season and the rest follow — Riparr carries the numbering on from where the last disc stopped
 - **Corrections are remembered** per disc, forever. You'll never fix the same disc twice.
 - **Consistently wrong across many discs:** check your naming template in
   [settings](07-settings-reference.md#naming)
