@@ -11,13 +11,15 @@ from fastapi import (FastAPI, File, HTTPException, Request, Response, Depends,
                      UploadFile)
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from typing import Dict, List
+
 from pydantic import BaseModel
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 from . import (__version__, artwork as ART, db, drives as DRV, led as LED,
                makemkv as MK,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
-               updater)
+               tv as TV, updater)
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
@@ -1160,6 +1162,8 @@ def _job_out(j):
             j["titles"] = json.loads(j["titles"])
         except (ValueError, TypeError):
             j["titles"] = []
+    if j.get("episode_plan"):
+        j["episode_plan"] = db.episode_plan(j)
     # Which stage is running and since when. The queue's counting timer is built from
     # this against the medians: the two slowest stages of a rip -- the disc scan and
     # the decrypt pass -- can report no progress at all, so "this box usually takes
@@ -1277,18 +1281,52 @@ class DiscAnswer(BaseModel):
     title_index: int = None
     name: str = ""
     skip: bool = False
+    # A season disc answers with rather more. Every field is optional and whatever is
+    # left out keeps the value Riparr proposed, so the common answer -- "yes, that is
+    # right" -- is still an empty body.
+    season: int = None
+    first_episode: int = None
+    series_id: int = None
+    include: List[int] = None           # title indexes to keep; None means keep all
+    episode_titles: Dict[str, str] = None   # title index -> a name typed by hand
+    order: List[int] = None             # title indexes, in the order they should go
 
 
 @app.post("/api/queue/{job_id}/answer")
 def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
-    """The other end of the two "ask me" settings: `on_unknown_disc` for the name, and
-    `on_ambiguous_title` for which title is the film. One prompt answers both, because
-    a disc that needs both questions asked should not need answering twice."""
+    """The other end of the "ask me" settings: `on_unknown_disc` for the name,
+    `on_ambiguous_title` for which title is the film, and `on_season_disc` for the
+    episode plan. One prompt answers all of them, because a disc that needs more than
+    one question asked should not need answering more than once."""
     ok, message = RIP.answer(job_id, title_index=body.title_index,
-                             name=(body.name or "").strip(), skip=body.skip)
+                             name=(body.name or "").strip(), skip=body.skip,
+                             season=body.season, first_episode=body.first_episode,
+                             series_id=body.series_id, include=body.include,
+                             episode_titles=body.episode_titles, order=body.order)
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"ok": True, "message": message}
+
+
+@app.get("/api/tv/search")
+def tv_search(q: str = "", user=Depends(require_user)):
+    """Series matching a name, for the picker on the episode-plan prompt.
+
+    Proxied through the box rather than called from the browser so that the only thing
+    talking to TVmaze is the box -- the same reasoning as the artwork proxy, minus the
+    image. Returns an empty list rather than an error when TVmaze is unreachable,
+    because a box with no internet must still be able to rip and file a season.
+    """
+    return {"results": TV.search_series(q, limit=8), "credit": "TVmaze"}
+
+
+@app.get("/api/tv/episodes")
+def tv_episode_list(series_id: int, season: int = None, user=Depends(require_user)):
+    """Every episode of a series, so the prompt can show what a numbering will produce."""
+    eps = TV.episodes(series_id)
+    if season is not None:
+        eps = [e for e in eps if e["season"] == season]
+    return {"episodes": eps, "credit": "TVmaze"}
 
 
 @app.post("/api/discs/{fingerprint}/rerip")

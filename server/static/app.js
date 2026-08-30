@@ -826,6 +826,22 @@ function sendingStrip(sending) {
 }
 
 
+/* What a season job is, in the four words there is room for next to its title. A TV
+   job's own title is the series, which on its own reads exactly like a film -- and the
+   difference between "ripping Twin Peaks" and "ripping six episodes of Twin Peaks"
+   is the whole reason somebody would look at this panel. */
+function seasonTag(j) {
+  const plan = j.episode_plan;
+  if (!plan || !(plan.episodes || []).length) return "";
+  const kept = plan.episodes.filter(e => e.include !== false);
+  if (!kept.length) return "";
+  const done = kept.filter(e => e.state === "done").length;
+  const range = kept.length === 1 ? episodeCode(kept[0])
+    : `${episodeCode(kept[0])}–${episodeCode(kept[kept.length - 1]).split("E").pop()}`;
+  return ` <span class="season-tag">${esc(range)}${
+    done && done < kept.length ? ` · ${done}/${kept.length} done` : ""}</span>`;
+}
+
 function jobRow(j) {
   if (j.state === "needs_input") return identifyPrompt(j);
   const ripPct = pct(j.bytes_ripped, j.bytes_total);
@@ -895,7 +911,8 @@ function jobRow(j) {
     <div class="job">
       <div class="job-head">
         <div class="grow">
-          <div class="job-title">${esc(j.title || j.disc_label || "Unknown disc")}</div>
+          <div class="job-title">${esc(j.title || j.disc_label || "Unknown disc")}${
+            seasonTag(j)}</div>
           <div class="job-phase">${esc(j.phase || STATE_LABEL[j.state] || j.state)}</div>
         </div>
         ${familyTag(j.disc_family)}
@@ -1040,7 +1057,117 @@ function duration(sec) {
 /* ── the identify prompt ──
    `on_unknown_disc` has defaulted to "ask" since the beginning and nothing anywhere
    asked. This is the asking. */
+/* ── the episode plan ──
+   A season disc asks a different question from a film disc. A film asks "what is this
+   and which title is it"; a season asks "is this the right order, starting at the right
+   number", which is a table, not a radio group.
+
+   The table is the answer to a problem that has no clean automatic solution: the disc
+   knows its own episode order and the metadata knows the episode names, and on a
+   handful of famous shows the two disagree because the broadcast order was not the
+   production order. Riparr takes the sequence from the disc and the names from TVmaze
+   and shows both together, so the disagreement is visible in one glance instead of
+   being discovered a year later mid-rewatch. Shifting the first episode number
+   renumbers and renames in one move, which fixes the whole disc in one control. */
+
+function seasonPrompt(j) {
+  const plan = j.episode_plan || {};
+  const rows = plan.episodes || [];
+  const opts = plan.series_options || [];
+  const trust = { high: ["Read off the disc", "ok"], medium: ["Very likely right", ""],
+                  low: ["A guess", "warn"] }[plan.confidence] || ["", ""];
+  return `
+    <div class="job needs">
+      <div class="job-head">
+        <div class="grow">
+          <div class="job-title">${esc(plan.series || j.disc_label || "A season disc")}</div>
+          <div class="job-phase">${esc(j.question || "Check this before Riparr rips it.")}</div>
+        </div>
+        <span class="badge warn">Needs you</span>
+      </div>
+
+      ${(plan.warnings || []).length ? `
+        <ul class="ep-warnings">
+          ${plan.warnings.map(w => `<li>${esc(w)}</li>`).join("")}
+        </ul>` : ""}
+
+      <div class="ep-controls">
+        <label class="f"><span>Series</span>
+          ${opts.length ? `
+            <select id="ep-series">
+              ${opts.map(o => `<option value="${o.id}"
+                ${o.id === plan.series_id ? "selected" : ""}>${esc(o.name)}${
+                  o.year ? ` (${esc(o.year)})` : ""}${
+                  o.network ? ` — ${esc(o.network)}` : ""}</option>`).join("")}
+              <option value="">Not listed — use the name below</option>
+            </select>` : ""}
+          <input id="ep-name" value="${esc(plan.series || "")}"
+                 placeholder="e.g. Twin Peaks">
+        </label>
+        <label class="f"><span>Season</span>
+          <input id="ep-season" type="number" min="0" max="99" style="width:80px"
+                 value="${plan.season === null || plan.season === undefined
+                          ? "" : plan.season}">
+          <span class="help">0 files as specials.</span></label>
+        <label class="f"><span>First episode</span>
+          <input id="ep-first" type="number" min="1" max="999" style="width:80px"
+                 value="${rows.length ? rows[0].episode : 1}">
+          <span class="help">Shift this if the disc doesn't start where TVmaze does.</span>
+        </label>
+      </div>
+
+      ${trust[0] ? `<div class="ep-trust">
+        <span class="badge ${trust[1]}">${esc(trust[0])}</span>
+        <span class="muted">Episode order ${plan.order_source === "segments"
+          ? "came from the disc's own “play all” list, which is as good as it gets."
+          : plan.order_source === "source"
+          ? "came from the disc's playlist numbering."
+          : "could not be read from the disc — this is the order MakeMKV found them in."
+        }</span></div>` : ""}
+
+      <div class="ep-table" id="ep-rows">
+        ${rows.map((e, i) => episodeRow(e, i, rows.length)).join("")}
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary" data-answer-season="${j.id}">
+          Rip ${rows.length} episode${rows.length === 1 ? "" : "s"}</button>
+        <button class="btn" data-skip="${j.id}">Skip this disc</button>
+      </div>
+      <div class="ep-credit muted">Episode names from
+        <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a>.</div>
+    </div>`;
+}
+
+function episodeRow(e, i, total) {
+  const span = e.episode_last && e.episode_last > e.episode;
+  return `
+    <div class="ep-row" data-ti="${e.title_index}">
+      <input type="checkbox" class="ep-keep" ${e.include === false ? "" : "checked"}>
+      <span class="ep-num">${esc(episodeCode(e))}${span ? "" : ""}</span>
+      <span class="ep-dur">${esc(duration(e.seconds))}</span>
+      <input class="ep-title" value="${esc(e.episode_title || "")}"
+             placeholder="${span ? "Two episodes in one file" : "No name"}">
+      <span class="ep-src muted">${esc(e.source || `Title ${e.title_index}`)}</span>
+      <span class="ep-move">
+        <button class="btn tiny" data-up="${e.title_index}" ${i === 0 ? "disabled" : ""}
+                title="Move earlier">↑</button>
+        <button class="btn tiny" data-down="${e.title_index}"
+                ${i === total - 1 ? "disabled" : ""} title="Move later">↓</button>
+      </span>
+    </div>`;
+}
+
+function episodeCode(e) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const head = (e.season === null || e.season === undefined)
+    ? `E${pad(e.episode)}` : `S${pad(e.season)}E${pad(e.episode)}`;
+  return (e.episode_last && e.episode_last > e.episode)
+    ? `${head}-E${pad(e.episode_last)}` : head;
+}
+
 function identifyPrompt(j) {
+  if ((j.episode_plan || {}).episodes) return seasonPrompt(j);
   const titles = (j.titles || []).filter(t => t.seconds >= 60);
   return `
     <div class="job needs">
@@ -1697,7 +1824,13 @@ settingsPages.library = async (s) => {
       <label class="f"><span>Film file name</span>
         <input data-set="movie_template" value="${esc(s.movie_template)}"></label>
       <label class="f"><span>Episode file name</span>
-        <input data-set="tv_template" value="${esc(s.tv_template)}"></label>
+        <input data-set="tv_template" value="${esc(s.tv_template)}">
+        <span class="help"><code>{Season:00}</code>, <code>{Episode:00}</code> and
+          <code>{EpisodeTitle}</code> as well as <code>{Title}</code>,
+          <code>{Year}</code> and <code>{Source}</code>. The zeroes set the padding.
+          A file holding two episodes expands <code>E{Episode:00}</code> to
+          <code>E01-E02</code> on its own, which is what Plex and Jellyfin read as a
+          double.</span></label>
       <label class="f"><span>When a disc can't be identified</span>
         <select data-set="on_unknown_disc">
           ${opt("label", "Use the disc label (default)", s.on_unknown_disc)}
@@ -1747,6 +1880,38 @@ settingsPages.ripping = (s) => `
       </select>
       <span class="help">Both cuts are the same length, so length alone can't separate
         them. The 3D one is roughly twice the size and most players won't use it.</span></label>
+  </div></div>
+
+  <div class="section"><h2>Television</h2><div>
+    ${sw("tv_detect", "Look for season discs", s.tv_detect,
+        "A disc with six titles of the same length is a season disc, not a film with "
+        + "five decoys. Turn this off if you only own films — every test that finds "
+        + "television is a test that can be wrong about a film.")}
+    <label class="f"><span>Before ripping a season</span>
+      <select data-set="on_season_disc">
+        ${opt("unsure", "Show me the plan when Riparr isn't sure (default)",
+              s.on_season_disc)}
+        ${opt("ask", "Always show me the plan", s.on_season_disc)}
+        ${opt("auto", "Never — just rip it", s.on_season_disc)}
+      </select>
+      <span class="help">Most Blu-ray season discs carry a "play all" title, and its
+        playlist is the disc's own record of what order its episodes go in — when
+        that's there, the order is a fact and there is nothing to check. When it
+        isn't, the order is a good guess, and a wrong guess writes a whole season into
+        your library under the wrong numbers. The default asks only in the second
+        case. A disc with no season number always asks, whatever this says, because
+        there is no answer to get on with.</span></label>
+    ${sw("tv_metadata", "Look up episode names", s.tv_metadata,
+        "From TVmaze, which needs no account. Off gives you correctly numbered files "
+        + "with no names — Plex and Jellyfin still match those perfectly, because they "
+        + "match on the numbers.")}
+    <label class="f"><span>Specials go in</span>
+      <select data-set="tv_specials_folder">
+        ${opt("Season 00", "Season 00 (default)", s.tv_specials_folder)}
+        ${opt("Specials", "Specials", s.tv_specials_folder)}
+      </select>
+      <span class="help">Both are read as season zero by Plex and Jellyfin. Set the
+        season to 0 on the episode plan to file a disc here.</span></label>
   </div></div>
 
   <div class="section"><h2>Tracks
@@ -3629,6 +3794,85 @@ function wireContent(section, sub) {
     try { await api.post(`/api/queue/${b.dataset.answer}/answer`, body); }
     catch (e) { toast(e.message, "bad"); b.disabled = false; return; }
     route();
+  });
+
+  /* The episode plan, sent as one answer. Everything the user can touch is read off
+     the DOM at submit time rather than tracked in a model: the panel is redrawn from
+     the server on every poll, so a model would have to be reconciled with it, and the
+     reconciliation is more code than the read. */
+  $$("[data-answer-season]").forEach(b => b.onclick = async () => {
+    const rows = $$("#ep-rows .ep-row");
+    const include = [], titles = {}, order = [];
+    rows.forEach(r => {
+      const ti = Number(r.dataset.ti);
+      order.push(ti);
+      if (r.querySelector(".ep-keep").checked) include.push(ti);
+      titles[String(ti)] = r.querySelector(".ep-title").value || "";
+    });
+    if (!include.length) {
+      toast("Tick at least one episode, or skip the disc.", "bad");
+      return;
+    }
+    const season = ($("#ep-season") || {}).value;
+    if (season === "") {
+      toast("Give it a season number — the files need one.", "bad");
+      return;
+    }
+    const picked = ($("#ep-series") || {}).value;
+    const body = {
+      season: Number(season),
+      first_episode: Number(($("#ep-first") || {}).value || 1),
+      include, order, episode_titles: titles,
+      name: (($("#ep-name") || {}).value || "").trim(),
+    };
+    if (picked) body.series_id = Number(picked);
+    b.disabled = true;
+    try { await api.post(`/api/queue/${b.dataset.answerSeason}/answer`, body); }
+    catch (e) { toast(e.message, "bad"); b.disabled = false; return; }
+    route();
+  });
+
+  /* Reordering is done in the page and renumbered as it goes, so the numbers on screen
+     always describe what would be written if the button were pressed now. Sending a
+     move to the server and redrawing would work too and would cost a round trip per
+     click on a box that is busy reading a disc. */
+  const moveRow = (ti, delta) => {
+    const box = $("#ep-rows");
+    if (!box) return;
+    const rows = $$("#ep-rows .ep-row");
+    const i = rows.findIndex(r => Number(r.dataset.ti) === ti);
+    const to = i + delta;
+    if (i < 0 || to < 0 || to >= rows.length) return;
+    // Keep what the user has typed or unticked: the nodes are moved, not re-rendered.
+    if (delta < 0) box.insertBefore(rows[i], rows[to]);
+    else box.insertBefore(rows[to], rows[i]);
+    renumberRows();
+  };
+  const renumberRows = () => {
+    const seasonRaw = ($("#ep-season") || {}).value;
+    const season = seasonRaw === "" ? null : Number(seasonRaw);
+    let n = Number(($("#ep-first") || {}).value || 1);
+    $$("#ep-rows .ep-row").forEach((r, i, all) => {
+      const keep = r.querySelector(".ep-keep").checked;
+      const span = r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
+      const cell = r.querySelector(".ep-num");
+      r.classList.toggle("dropped", !keep);
+      if (!keep) { cell.textContent = "—"; }
+      else {
+        cell.textContent = episodeCode({ season, episode: n,
+                                         episode_last: n + span - 1 });
+        n += span;
+      }
+      r.querySelector("[data-up]").disabled = i === 0;
+      r.querySelector("[data-down]").disabled = i === all.length - 1;
+    });
+  };
+  $$("[data-up]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.up), -1));
+  $$("[data-down]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.down), 1));
+  $$("#ep-rows .ep-keep").forEach(c => c.onchange = renumberRows);
+  ["ep-season", "ep-first"].forEach(id => {
+    const el = $("#" + id);
+    if (el) el.oninput = renumberRows;
   });
 
   $$("[data-skip]").forEach(b => b.onclick = async () => {
