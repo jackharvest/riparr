@@ -542,27 +542,93 @@ def _titles_key(disc):
                          disc.get("size_bytes") or 0)
 
 
+def _mock_titles():
+    """The disc the mock drive is pretending to hold.
+
+    `RIPARR_MOCK_DISC=tv` swaps the film for a television season disc, because every
+    interesting thing about TV support is a property of the *title list* and none of it
+    can be exercised off-hardware otherwise. The fixture is deliberately nasty rather
+    than tidy -- it carries the four things that break naive episode detection, all of
+    which are documented on the MakeMKV forums and all of which are on real discs:
+
+    * a **play-all** title as long as the whole disc, which longest-wins picks every
+      time and which must not be ripped as an episode;
+    * **duplicate playlists**, one per episode -- the disc authors ship an episode both
+      with and without its "next time on" trailer, so six episodes appear as twelve;
+    * **.mpls source files that do not sort with the title index** (title 3 is 00800,
+      title 1 is 00803), which is exactly why title order cannot be trusted; and
+    * a **short special** that is not an episode and must not be numbered as one.
+
+    The segment maps are consistent with the play-all, so `tv.py` has a correct answer
+    to find. `RIPARR_MOCK_DISC=tv-noplayall` removes the play-all to exercise the
+    .mpls fallback, and `tv-blob` is the single-giant-title disc we can only warn about.
+    """
+    disc = (os.environ.get("RIPARR_MOCK_DISC") or "movie").strip().lower()
+    gb = float(os.environ.get("RIPARR_MOCK_DISC_GB", "7.8"))
+
+    if disc.startswith("tv"):
+        if disc == "tv-blob":
+            # Every episode welded into one title. Nothing on this box can split it, so
+            # the only honest behaviour is to say so. 24 chapters, 6 episodes.
+            return [_mt(0, 15120, 21.0, source="00001.mpls", segments="1", chapters=24),
+                    _mt(1, 96, 0.2, source="00100.mpls", segments="40", chapters=1)]
+
+        # Six episodes, ~42 minutes, in broadcast order 1..6. The .mpls numbers are in
+        # episode order; the title indexes deliberately are not.
+        eps = [(3, "00800.mpls", "1", 2540), (1, "00801.mpls", "2", 2551),
+               (5, "00802.mpls", "3", 2534), (0, "00803.mpls", "4", 2549),
+               (4, "00804.mpls", "5", 2528), (2, "00805.mpls", "6", 2545)]
+        out = [_mt(i, secs, 3.9, source=src, segments=seg, chapters=6)
+               for i, src, seg, secs in eps]
+        # The same six episodes again, without the trailer segment: a few seconds
+        # shorter, same segment, and a higher .mpls block. This is the duplicate set.
+        out += [_mt(10 + n, secs - 22, 3.8, source="009%02d.mpls" % n,
+                    segments=seg, chapters=5)
+                for n, (i, src, seg, secs) in enumerate(eps)]
+        # A featurette. Long enough to clear the floor, far too short to be an episode.
+        out.append(_mt(20, 612, 0.6, source="00950.mpls", segments="40", chapters=1))
+        if disc != "tv-noplayall":
+            # Play-all: the six episodes end to end, and the segment map that says so.
+            out.append(_mt(21, sum(e[3] for e in eps), 23.4, source="00700.mpls",
+                           segments="1,2,3,4,5,6", chapters=36))
+        return sorted(out, key=lambda t: t["index"])
+
+    # A DVD-sized main title by default, because the mock card reports ~16 GiB free
+    # and the happy path has to be reachable. RIPARR_MOCK_DISC_GB=28 turns this
+    # into a Blu-ray and exercises the preflight refusal instead.
+    return [
+        _mt(0, 7860, gb, name="The Matrix", source="00001.mpls", segments="1",
+            chapters=32),
+        _mt(1, 132, 0.39, name="Trailer", source="00002.mpls", segments="20"),
+        _mt(2, 61, 0.09, name="Menu loop", source="00003.mpls", segments="21"),
+    ]
+
+
+def _mt(index, seconds, gb, name="", source="", segments="", chapters=1):
+    """One mock title, in the shape `read_titles` returns."""
+    return {"index": index, "seconds": int(seconds), "bytes": int(gb * 2 ** 30),
+            "name": name, "file": "title_t%02d.mkv" % index, "source": source,
+            "segments": segments, "chapters": chapters}
+
+
 def read_titles(device, disc=None, on_progress=None):
     """Every title on the disc, with its runtime and size.
 
-    Codes are MakeMKV's own AP_ItemAttributeId: 2 name, 9 duration, 10 size as text,
-    11 size in bytes, 27 the output filename. Reading them by number is unpleasant and
-    is what the tool gives; the alternative is parsing its human output, which is
-    localised.
+    Codes are MakeMKV's own AP_ItemAttributeId: 2 name, 8 chapter count, 9 duration,
+    10 size as text, 11 size in bytes, 16 the source file, 26 the segment map, 27 the
+    output filename. Reading them by number is unpleasant and is what the tool gives;
+    the alternative is parsing its human output, which is localised.
+
+    16 and 26 exist for television. A season disc carries six playlists of the same
+    length and nothing in the runtime tells you which is episode one -- but the disc
+    knows, in two places. `source` is the .mpls filename (00800.mpls, 00801.mpls...),
+    which sorts into episode order on almost every Blu-ray, and `segments` is the list
+    of stream segments a title is built from. A "play all" title's segment map is the
+    ordered list of its episodes, which is the one authoritative answer on the disc.
+    See `tv.py`, which does the reasoning; this only has to carry the numbers out.
     """
     if P.MOCK:
-        # A DVD-sized main title by default, because the mock card reports ~16 GiB free
-        # and the happy path has to be reachable. RIPARR_MOCK_DISC_GB=28 turns this
-        # into a Blu-ray and exercises the preflight refusal instead.
-        gb = float(os.environ.get("RIPARR_MOCK_DISC_GB", "7.8"))
-        return [
-            {"index": 0, "seconds": 7860, "bytes": int(gb * 2 ** 30),
-             "name": "The Matrix", "file": "title_t00.mkv"},
-            {"index": 1, "seconds": 132, "bytes": 400 * 2 ** 20,
-             "name": "Trailer", "file": "title_t01.mkv"},
-            {"index": 2, "seconds": 61, "bytes": 90 * 2 ** 20,
-             "name": "Menu loop", "file": "title_t02.mkv"},
-        ]
+        return _mock_titles()
     key = _titles_key(disc)
     if key and _titles_cache["key"] == key and _titles_cache["titles"] \
             and time.time() - _titles_cache["at"] < TITLES_TTL:
@@ -625,7 +691,8 @@ def read_titles(device, disc=None, on_progress=None):
             continue
         idx, code, value = int(m.group(1)), int(m.group(2)), m.group(3)
         t = titles.setdefault(idx, {"index": idx, "seconds": 0, "bytes": 0,
-                                    "name": "", "file": ""})
+                                    "name": "", "file": "", "source": "",
+                                    "segments": "", "chapters": 0})
         if code == 9:
             t["seconds"] = _seconds(value)
         elif code == 11:
@@ -634,6 +701,12 @@ def read_titles(device, disc=None, on_progress=None):
             t["name"] = value
         elif code == 27:
             t["file"] = value
+        elif code == 16:
+            t["source"] = value
+        elif code == 26:
+            t["segments"] = value
+        elif code == 8:
+            t["chapters"] = int(value or 0)
     out = [titles[k] for k in sorted(titles)]
     if key and out:
         _titles_cache.update(key=key, titles=out, at=time.time())
