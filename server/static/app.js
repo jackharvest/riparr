@@ -1103,12 +1103,15 @@ function seasonPrompt(j) {
             </select>` : ""}
           <input id="ep-name" value="${esc(plan.series || "")}"
                  placeholder="e.g. Twin Peaks">
-        </label>
+          <span class="help">${opts.length
+            ? "Picking a different series re-fetches the episode names. The box below "
+              + "is the folder name."
+            : "This is the folder name."}</span></label>
         <label class="f"><span>Season</span>
           <input id="ep-season" type="number" min="0" max="99" style="width:80px"
                  value="${plan.season === null || plan.season === undefined
                           ? "" : plan.season}">
-          <span class="help">0 files as specials.</span></label>
+          <span class="help">Set 0 to file these as specials.</span></label>
         <label class="f"><span>First episode</span>
           <input id="ep-first" type="number" min="1" max="999" style="width:80px"
                  value="${rows.length ? rows[0].episode : 1}">
