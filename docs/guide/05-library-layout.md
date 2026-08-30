@@ -105,7 +105,11 @@ The order comes from the disc. Most Blu-ray season discs carry a hidden "play al
 playlist, and that playlist is the disc's own record of what order its episodes go in —
 when it's there, the order is a fact and Riparr just uses it. When it isn't, the order
 comes from the disc's playlist numbering, which is right on almost every disc but not
-all of them, and Riparr stops to show you the plan before it rips.
+all of them.
+
+**Riparr shows you the plan once per season** — on the first disc, where one correction
+fixes every disc after it — and again on any later disc whose order it couldn't read off
+the disc itself.
 
 The names come from [TVmaze](https://www.tvmaze.com), which needs no account.
 

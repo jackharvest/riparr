@@ -33,8 +33,9 @@ Riparr takes the sequence from the disc and only the names from the lookup, so y
 the disagreement on the plan, before anything is written, rather than a year later.
 Changing **first episode** renumbers and renames the whole disc in one move.
 
-**Correct the first disc of a season and the rest follow.** Disc two carries on from
-where disc one stopped, with nothing to answer.
+**Correct the first disc of a season and the rest follow.** Riparr shows you the plan
+once per season, on the first disc; disc two carries on from where disc one stopped with
+nothing to answer.
 
 The episode plan is a table, one row per file that will be written. Untick a duplicate,
 move an episode with the arrows, type over a name, change where the numbering starts —

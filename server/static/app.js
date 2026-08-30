@@ -1894,12 +1894,16 @@ settingsPages.ripping = (s) => `
         ${opt("ask", "Always show me the plan", s.on_season_disc)}
         ${opt("auto", "Never — just rip it", s.on_season_disc)}
       </select>
-      <span class="help">Most Blu-ray season discs carry a "play all" title, and its
-        playlist is the disc's own record of what order its episodes go in — when
-        that's there, the order is a fact and there is nothing to check. When it
-        isn't, the order is a good guess, and a wrong guess writes a whole season into
-        your library under the wrong numbers. The default asks only in the second
-        case. A disc with no season number always asks, whatever this says, because
+      <span class="help">The default stops <b>once per season</b> — on the first disc,
+        where one correction fixes every disc after it — and on any later disc whose
+        episode order Riparr could not read off the disc itself.
+        <br><br>Reading the order off the disc is reliable; most Blu-ray season discs
+        carry a "play all" playlist that <em>is</em> the disc's record of its own
+        episode order. What that can't settle is whether the numbering matches your
+        episode guide: a few shows were released on disc in production order while
+        every guide lists them in broadcast order. Riparr can't detect which kind a
+        show is, so it shows you the first disc and gets on with the rest.
+        <br><br>A disc with no season number always asks, whatever this says, because
         there is no answer to get on with.</span></label>
     ${sw("tv_metadata", "Look up episode names", s.tv_metadata,
         "From TVmaze, which needs no account. Off gives you correctly numbered files "

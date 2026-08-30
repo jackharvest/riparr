@@ -23,6 +23,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -31,6 +32,7 @@ _tmp = tempfile.mkdtemp(prefix="riparr-tv-test-")
 os.environ["RIPARR_DB"] = os.path.join(_tmp, "test.db")
 os.environ["RIPARR_MOCK_CONTENT"] = "tv"
 os.environ["RIPARR_APPLIANCE"] = "0"
+os.environ["RIPARR_MOCK_FAST"] = "1"   # skip the mock rip's deliberate pacing
 
 from riparr import db, rip, shares as SH  # noqa: E402
 
@@ -130,6 +132,33 @@ check("disc two starts at episode 7", plan2["episodes"][0]["episode"], 7)
 check("and runs to twelve", plan2["episodes"][-1]["episode_last"], 12)
 check("twelve files in the library now", len(share_files()), 12)
 
+# ── "unsure": stop once per season, not once per disc ────────────────────────
+
+print("the default stops on the first disc of a season and not the rest")
+# Reading the order off the disc is high confidence about the *sequence*. It says
+# nothing about whether the numbering lines up with a broadcast-order episode guide,
+# which is a different claim and the one that is wrong on Firefly. It cannot be
+# detected, so it is shown -- once, on the disc where one control fixes all of them.
+fresh_share()
+db.set("on_season_disc", "unsure")
+d1 = new_job("SOME_SHOW_S05_D01")
+check("first disc asks even though the order is certain",
+      rip._identify(d1, rip._settings()), None)
+d1 = db.get_job(d1["id"])
+check("...and it is the confident kind of question",
+      db.episode_plan(d1)["confidence"], "high")
+rip.answer(d1["id"], season=5, first_episode=1)
+d1 = db.get_job(d1["id"])
+d1["_device"], d1["_plan"] = "/dev/sr0", db.episode_plan(d1)
+b = rip._rip_season(d1, rip._settings(), threading.Event())
+tr, fo, b = rip._transfer_season(d1, rip._settings(), b, threading.Event())
+rip._finish_season(d1, rip._settings(), tr, fo, b)
+
+d2 = run(new_job("SOME_SHOW_S05_D02"))
+check("the second disc does not ask", d2 is not None and d2["state"], "done")
+check("and carries on from seven", db.episode_plan(d2)["episodes"][0]["episode"], 7)
+db.set("on_season_disc", "auto")
+
 # ── the film path is unchanged ───────────────────────────────────────────────
 
 print("a film disc still rips as a film")
@@ -217,6 +246,44 @@ dj = run(new_job("DIRECT_SHOW_S01_D01"))
 check("finished", dj["state"], "done")
 check("all six survived the transfer", len(share_files()), 6)
 db.set("transfer_mode", "burst")
+
+# ── interrupted, then resumed ────────────────────────────────────────────────
+
+print("a season interrupted mid-transfer resumes where it stopped")
+# What a reboot leaves behind: some episodes in the library, some still on the card,
+# and a plan that says which is which. The bug this guards is that a season job's
+# `local_path` is a *directory*, and `_send_one` used to hand it to the single-file
+# transfer -- which takes the size of a directory entry and uploads that.
+fresh_share()
+db.set("transfer_mode", "burst")
+rj = run(new_job("INTERRUPTED_S04_D01"))
+check("all six landed first time", len(share_files()), 6)
+
+rplan = db.episode_plan(rj)
+for e in rplan["episodes"][3:]:                 # pretend the last three never went
+    os.remove(os.path.join(SH.MOCK_SHARE_ROOT, "nas", "Media", e["remote_name"]))
+    e["state"] = "ripped"
+    e.pop("remote_name", None)
+db.update_job(rj["id"], episode_plan=rplan, state="transferring",
+              finished_at=None, error=None)
+check("three files left in the library", len(share_files()), 3)
+
+rip._send_one(db.get_job(rj["id"]))
+resumed = db.get_job(rj["id"])
+check("the job finished on the second pass", resumed["state"], "done")
+check("and all six are there again", len(share_files()), 6)
+check("every row marked done",
+      [e["state"] for e in db.episode_plan(resumed)["episodes"]], ["done"] * 6)
+
+print("re-verification checks every episode, not a directory")
+ok, msg = rip.reverify(rj["id"], mode="quick")
+check("accepted", ok, True)
+contains("and says how many", msg, "6 episodes")
+for _ in range(80):
+    if db.get_job(rj["id"])["state"] in ("done", "failed"):
+        break
+    time.sleep(0.05)
+check("and they all pass", db.get_job(rj["id"])["state"], "done")
 
 # ── specials ─────────────────────────────────────────────────────────────────
 

@@ -1362,11 +1362,16 @@ def _identify_season(job, s, d, titles, remembered):
             season = seasons.pop()
 
     first = remembered.get("first_episode")
+    continued = False
     if first is None:
         first = db.next_episode((series or {}).get("id"), season,
                                 series_name=(series or {}).get("name") or series_name)
+        continued = first is not None
     if first is None:
         first = 1
+    # Whether anything about this season has been settled before. The first disc is the
+    # one worth stopping on: a correction made there propagates to every disc after it.
+    first_of_season = not continued and remembered.get("first_episode") is None
 
     plan = tv.build_plan(found, season=season, first_episode=first, series=series,
                          episode_list=episode_list)
@@ -1377,6 +1382,18 @@ def _identify_season(job, s, d, titles, remembered):
     # the library and made every disc of a box set start again at episode one.
     plan["series"] = plan.get("series") or series_name
     plan["warnings"] = tv.plan_warnings(plan, found, episode_list or None)
+    if first_of_season and any(e["episode_title"] for e in plan["episodes"]):
+        # The one thing no amount of reading the disc can settle. TVmaze and TVDB both
+        # publish *aired* order, and a handful of shows were released on disc in
+        # production order instead -- Firefly being the standard example, where the disc
+        # opens with "Serenity" and every guide numbers "The Train Job" as episode one.
+        # Riparr cannot tell which kind of show this is, so it says so, once, on the
+        # disc where fixing it is one control.
+        plan["warnings"].insert(0, (
+            "These names are in broadcast order. A few shows were released on disc in "
+            "a different order \u2014 if the first episode here isn't what actually "
+            "plays first, change \u201cfirst episode\u201d and the whole disc "
+            "renumbers."))
     plan["series_options"] = options
     plan["extras"] = [{"title_index": t["index"], "seconds": t["seconds"],
                        "bytes": t.get("bytes") or 0} for t in found["extras"]]
@@ -1393,10 +1410,20 @@ def _identify_season(job, s, d, titles, remembered):
     # Ripping anyway would write `Season {Season:00}` into the library as a literal
     # folder name, and the setting says how much to trust Riparr's judgement, not
     # whether to accept an obviously broken one.
+    #
+    # "unsure" also stops on the *first* disc of a season, even when the order is read
+    # straight off the disc. High confidence there means confidence in the *sequence*,
+    # which is a different claim from confidence in the *numbering*: the sequence comes
+    # from the disc and the numbers come from an episode guide, and on a show released
+    # in production order those two are correct individually and wrong together. That
+    # cannot be detected, only shown -- so it is shown once per season, on the disc
+    # where one control fixes every disc after it. Which is what the guide has been
+    # promising about season discs since before any of this was built.
     behaviour = s.get("on_season_disc", "unsure")
     ask = (season is None
            or behaviour == "ask"
-           or (behaviour == "unsure" and found["confidence"] != "high"))
+           or (behaviour == "unsure"
+               and (found["confidence"] != "high" or first_of_season)))
 
     db.update_job(job["id"], kind="tv", titles=titles, episode_plan=plan,
                   season=season, series_id=(series or {}).get("id"),
@@ -1809,7 +1836,7 @@ def _mock_rip(job, out_dir, cancel_ev):
     path = os.path.join(out_dir, "title_t00.mkv")
     # `_rip` already opened "decrypt". Stand in for MakeMKV's silent analysis pass so
     # the stage breakdown off-hardware has the same shape it has on the box.
-    time.sleep(1.5)
+    _mock_pause(1.5)
     db.stage_start(job["id"], "save")
     total = 32 * 2 ** 20
     chunk = total // 40
@@ -1829,17 +1856,28 @@ def _mock_rip(job, out_dir, cancel_ev):
                           stage_pct=round(frac, 4),
                           phase="Reading title %d" % job["_title"]["index"],
                           eta_seconds=int(elapsed / frac - elapsed) if frac > 0.05 else None)
-            time.sleep(0.25)
+            _mock_pause(0.25)
     db.stage_end(job["id"])
     db.update_job(job["id"], local_path=path, bytes_ripped=total, bytes_total=total,
                   eta_seconds=None)
     return path
 
 
+# The mock rips sleep so that the interface can be watched behaving like a real rip --
+# progress that climbs, an ETA that settles. A test does not want that: the pipeline
+# suite rips seven seasons and the pacing was most of two minutes of it.
+MOCK_FAST = bool(os.environ.get("RIPARR_MOCK_FAST"))
+
+
+def _mock_pause(seconds):
+    if not MOCK_FAST:
+        time.sleep(seconds)
+
+
 def _mock_rip_episode(job, out_dir, cancel_ev, row, progress, first_byte):
     """One mock episode. Smaller and quicker than the film mock -- there are six."""
     path = os.path.join(out_dir, "title_t%02d.mkv" % int(row["title_index"]))
-    time.sleep(0.4)
+    _mock_pause(0.4)
     first_byte()
     total = 8 * 2 ** 20
     chunk = total // 12
@@ -1857,7 +1895,7 @@ def _mock_rip_episode(job, out_dir, cancel_ev, row, progress, first_byte):
             frac = written / total
             progress(written, int(elapsed / frac - elapsed) if frac > 0.1 else None,
                      "Reading %s" % episode_label(row))
-            time.sleep(0.12)
+            _mock_pause(0.12)
     return path
 
 
@@ -2250,7 +2288,7 @@ def _finish(job, s, transport, name, local_path, sent_from_card=False):
                      % transport.describe(name))
 
 
-def _finish_season(job, s, transport, folder, base):
+def _finish_season(job, s, transport, folder, base, sent_from_card=False):
     now = int(time.time())
     plan = job["_plan"]
     rows = [e for e in plan["episodes"] if e.get("include", True)]
@@ -2271,7 +2309,11 @@ def _finish_season(job, s, transport, folder, base):
                   eta_seconds=None, error=None, episode_plan=plan,
                   dest_path=transport.describe(folder))
     LED.announce("done")
-    P.eject()
+    # A resumed season was sent from the card long after the disc came out, and very
+    # likely with the next disc of the box set already loaded -- which an eject that
+    # thinks it is being helpful would spit onto the tray mid-rip.
+    if not sent_from_card:
+        P.eject()
     span = ""
     if rows:
         first, last = rows[0], rows[-1]
@@ -2421,6 +2463,57 @@ def resume_transfer(job_id):
     return True, "Retrying the transfer."
 
 
+def _reverify_season(job, plan, share, mode):
+    """Re-check every episode of a season against the share.
+
+    Reports as one stage covering the lot rather than one per episode: History has one
+    row for this job, and six `verify` entries against it would make the stage timings
+    meaningless for every other job they are averaged with.
+    """
+    rows = [e for e in plan["episodes"]
+            if e.get("state") == "done" and e.get("remote_name")]
+    if not rows:
+        return False, "Riparr doesn't know where the episodes on this one landed."
+    job_id = job["id"]
+
+    def run():
+        transport = SH.Transport(share)
+        db.stage_start(job_id, "verify")
+        failed = []
+        for n, row in enumerate(rows, 1):
+            db.update_job(job_id, state="verifying", error=None, bytes_verified=0,
+                          phase="Checking %s — %d of %d"
+                                % (episode_label(row), n, len(rows)))
+            local = row.get("path")
+            if not local or not os.path.exists(local):
+                failed.append("%s is no longer on the card" % episode_label(row))
+                continue
+            try:
+                r = SH.verify_remote(transport, row["remote_name"], local, mode=mode)
+            except Exception as e:
+                r = {"ok": False, "error": str(e)}
+            if not r.get("ok"):
+                failed.append("%s: %s" % (episode_label(row), r.get("error")))
+            db.update_job(job_id, stage_pct=round(n / float(len(rows)), 4))
+        db.stage_end(job_id)
+        done_at = job.get("finished_at") or int(time.time())
+        if failed:
+            db.update_job(job_id, state="failed", phase=None, stage_pct=None,
+                          finished_at=done_at,
+                          error="Verification failed again: %s" % "; ".join(failed))
+            log.warning("Job %d failed re-verification: %s", job_id, "; ".join(failed))
+            return
+        db.update_job(job_id, state="done", phase=None, error=None, stage_pct=None,
+                      verified_mode=mode, finished_at=done_at)
+        if job.get("fingerprint"):
+            db.record_disc(job["fingerprint"], ripped_at=done_at, job_id=job_id,
+                           title=job.get("title"), label=job.get("disc_label"))
+        log.info("Job %d: %d episodes re-verified (%s).", job_id, len(rows), mode)
+
+    threading.Thread(target=run, name="riparr-reverify", daemon=True).start()
+    return True, ("Checking %d episodes against your library." % len(rows))
+
+
 def reverify(job_id, mode="quick"):
     """Re-check a job's file against the share. No disc, no re-rip.
 
@@ -2439,11 +2532,19 @@ def reverify(job_id, mode="quick"):
     share, _ = db.destination(job.get("kind") or "movie")
     if not share:
         return False, "There's no library share configured."
+    if db.active_job():
+        return False, "Riparr is busy with a disc. Try again when it's finished."
+
+    # A season job has many files and one row in History, so re-checking it means
+    # re-checking all of them. Each episode carries the name it was written under, so
+    # this needs no template rendering and cannot drift from where the files went.
+    plan = db.episode_plan(job)
+    if (job.get("kind") == "tv") and plan.get("episodes"):
+        return _reverify_season(job, plan, share, mode)
+
     name = _remote_name(job)
     if not name:
         return False, "Riparr doesn't know where this one landed."
-    if db.active_job():
-        return False, "Riparr is busy with a disc. Try again when it's finished."
 
     def run():
         transport = SH.Transport(share)
@@ -2553,6 +2654,17 @@ def _send_one(job):
         if not local or not os.path.exists(local):
             raise RipFailed("The rip is no longer on the card, so it has to be "
                             "re-ripped.")
+        # A season job's `local_path` is the directory the episodes are in, not a file.
+        # Handing that to `_transfer` gets the size of a directory entry and uploads it,
+        # which is how a resumed season disc would have "succeeded" with a 96-byte MKV.
+        # `_transfer_season` skips the rows already marked done, so a reboot in the
+        # middle of a season sends only what is left.
+        plan = db.episode_plan(job)
+        if (job.get("kind") == "tv") and plan.get("episodes"):
+            job["_plan"] = plan
+            transport, folder, local = _transfer_season(job, s, local, cancel_ev)
+            _finish_season(job, s, transport, folder, local, sent_from_card=True)
+            return
         job["_year"] = _split_year(job.get("title") or "")[1]
         transport, name, local = _transfer(job, s, local, cancel_ev)
         _verify(job, s, transport, name, local)
