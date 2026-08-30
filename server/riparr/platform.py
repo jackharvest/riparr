@@ -254,6 +254,12 @@ def _mock_drives():
         # is what the hardware does, and pretending otherwise would hide the exact
         # mismatch this knob exists to exercise.
         d.update(_MOCK_DISCS[disc], present=True, tray="loaded")
+        # The volume label is what the identify stage reasons from -- a film name, or a
+        # season and disc number on a box set. Overridable so that behaviour can be
+        # exercised off-hardware without a drawer of real discs.
+        label = os.environ.get("RIPARR_MOCK_LABEL")
+        if label:
+            d["label"] = label
     return [d]
 
 

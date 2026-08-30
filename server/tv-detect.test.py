@@ -50,15 +50,15 @@ def t(index, minutes, gb=3.9, source="", segments="", chapters=6, name=""):
 
 
 def mock(kind):
-    old = os.environ.get("RIPARR_MOCK_DISC")
-    os.environ["RIPARR_MOCK_DISC"] = kind
+    old = os.environ.get("RIPARR_MOCK_CONTENT")
+    os.environ["RIPARR_MOCK_CONTENT"] = kind
     try:
         return _mock_titles()
     finally:
         if old is None:
-            os.environ.pop("RIPARR_MOCK_DISC", None)
+            os.environ.pop("RIPARR_MOCK_CONTENT", None)
         else:
-            os.environ["RIPARR_MOCK_DISC"] = old
+            os.environ["RIPARR_MOCK_CONTENT"] = old
 
 
 # ── the disc the mock drive holds ────────────────────────────────────────────

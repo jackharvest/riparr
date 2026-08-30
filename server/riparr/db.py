@@ -96,6 +96,17 @@ ADDED_COLUMNS = {
         # already stripped out of `title` by then, so the guess comes out wrong.
         ("remote_name", "TEXT"),
         ("disc_bytes", "INTEGER"),     # the whole disc, not the title: see discs.size_bytes
+        # ── television ──
+        # A season disc is one job that produces many files, which is a shape nothing
+        # else here has. `episode_plan` is the whole of it: a JSON list of rows, one per
+        # episode, each carrying its title index, its season and episode numbers, its
+        # name, whether the user wants it, and how far it has got. The pipeline reads
+        # and rewrites that list as it goes, which is what makes a half-finished season
+        # resumable -- a retry re-sends the episodes still marked pending and leaves the
+        # ones already in the library alone.
+        ("episode_plan", "TEXT"),
+        ("season", "INTEGER"),
+        ("series_id", "INTEGER"),      # TVmaze show id, so a re-rip need not search again
     ],
     "discs": [
         ("title_index", "INTEGER"),    # the remembered title choice (R5: fix once, ever)
@@ -106,6 +117,13 @@ ADDED_COLUMNS = {
         # dvd | bluray | uhd. The Discs page is a shelf, and a shelf that cannot tell
         # you which of your two copies of a film this one is has lost the plot.
         ("disc_family", "TEXT"),
+        # What the user told us about this season disc, so disc 2 of a box set does not
+        # ask again and disc 1 never asks twice. R5's rule -- correct it once, ever --
+        # applied to the four things a season disc cannot work out for itself.
+        ("series_id", "INTEGER"),
+        ("season", "INTEGER"),
+        ("first_episode", "INTEGER"),
+        ("series_name", "TEXT"),
     ],
 }
 
@@ -147,6 +165,33 @@ DEFAULTS = {
     # because a settings file full of `false` says nothing about what false meant.
     # See rip.choose_title.
     "title_3d": "2d",
+    # ── television ──
+    # Whether to look at a disc as a possible season at all. Off is a real answer for
+    # somebody who only owns films: every heuristic in tv.py is a chance to see
+    # television in a film disc, and a user who has none can decline the risk outright.
+    "tv_detect": True,
+    # When to stop and show the episode plan before ripping it.
+    #
+    # "unsure" is the shipped answer and it is the interesting one: it asks only when
+    # the episode order came from something less than the disc's own play-all segment
+    # map, which is the difference between a fact and a good guess. On a disc that
+    # states its order, stopping to ask would be theatre -- the box would be presenting
+    # a list it has no doubt about and waiting for a human to press yes at 2am. On a
+    # disc that does not, the order is genuinely a guess, and a wrong guess writes a
+    # whole season into a library under the wrong numbers.
+    #
+    # "ask" stops on every season disc, which is right for somebody working through a
+    # box set at their desk. "auto" never stops, which is right for somebody who would
+    # rather fix six filenames than answer six prompts.
+    "on_season_disc": "unsure",
+    # Look up episode names. Off gives correctly numbered files with no titles, which
+    # Plex and Jellyfin still match perfectly -- the names are for humans reading a
+    # folder. See tv.py for why this is TVmaze and not TMDB.
+    "tv_metadata": True,
+    # Where a special goes. Plex accepts either; Jellyfin documents "Season 00" and
+    # prefers a descriptive name over S00E01 when the metadata does not know the
+    # special. Both read this folder as season zero.
+    "tv_specials_folder": "Season 00",
     "audio_languages": ["eng"],
     "subtitle_languages": ["eng"],
     "keep_forced_subtitles": True,
@@ -628,6 +673,78 @@ FINAL_STATES = ["done", "failed", "cancelled"]
 INTERRUPTIBLE = ["identifying", "ripping", "transferring", "verifying"]
 
 
+# Columns held as JSON text. Encoding them in one place rather than at each call site
+# is what stopped `episode_plan` from being written as a Python repr the first time a
+# caller forgot -- which SQLite accepts happily and json.loads does not.
+_JSON_COLUMNS = ("titles", "episode_plan")
+
+
+def _encode_json(fields):
+    for k in _JSON_COLUMNS:
+        if isinstance(fields.get(k), (list, dict)):
+            fields[k] = json.dumps(fields[k])
+
+
+def episode_plan(job):
+    """A job's episode plan as a dict, whatever shape it is stored or passed in.
+
+    The whole plan is kept, not just the list of episodes -- the series, the season, the
+    order source, the warnings and the candidate series the user can switch to are all
+    part of the answer and all needed again when the interface redraws it.
+    """
+    raw = (job or {}).get("episode_plan")
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        got = json.loads(raw)
+        return got if isinstance(got, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def next_episode(series_id, season, series_name=None):
+    """Where the next disc of this season should start numbering, or None.
+
+    This is what makes disc 2 of a box set need no answer. Disc 1 was corrected once,
+    it recorded that it wrote episodes 1 to 6, and disc 2 of the same series and season
+    starts at 7 without asking anything -- which is exactly the promise the guide has
+    been making about seasons since before any of this was built.
+
+    Matched on the TVmaze id where there is one and on the series name where there is
+    not. The name is the weaker key and it is not optional: with metadata turned off, or
+    with no internet, there is no id at all -- and "continue the season" is *more*
+    valuable in that case, not less, because there are no episode titles to sanity-check
+    the numbering against either.
+
+    Read from the jobs that actually finished, not from the disc record, because what
+    matters is which episode numbers have really been written into the library. A
+    cancelled or failed disc must not advance the count.
+    """
+    if season is None or (not series_id and not series_name):
+        return None
+    if series_id:
+        where, args = "series_id=?", [series_id]
+    else:
+        where, args = "series_id IS NULL AND title=?", [series_name]
+    rows = conn().execute(
+        "SELECT episode_plan FROM jobs WHERE kind='tv' AND season=? AND %s "
+        "AND state='done' AND episode_plan IS NOT NULL" % where,
+        [season] + args).fetchall()
+    highest = 0
+    for row in rows:
+        try:
+            plan = json.loads(row["episode_plan"]) or {}
+        except (ValueError, TypeError):
+            continue
+        for e in plan.get("episodes") or []:
+            if e.get("state") == "skipped":
+                continue
+            highest = max(highest, int(e.get("episode_last") or e.get("episode") or 0))
+    return highest + 1 if highest else None
+
+
 def get_job(job_id):
     row = conn().execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     return dict(row) if row else None
@@ -637,8 +754,7 @@ def create_job(**fields):
     fields.setdefault("state", "queued")
     fields.setdefault("queued_at", int(time.time()))
     fields.setdefault("updated_at", int(time.time()))
-    if isinstance(fields.get("titles"), (list, dict)):
-        fields["titles"] = json.dumps(fields["titles"])
+    _encode_json(fields)
     keys = list(fields)
     c = conn()
     cur = c.execute("INSERT INTO jobs(%s) VALUES(%s)"
@@ -651,8 +767,7 @@ def create_job(**fields):
 def update_job(job_id, **fields):
     if not fields:
         return
-    if isinstance(fields.get("titles"), (list, dict)):
-        fields["titles"] = json.dumps(fields["titles"])
+    _encode_json(fields)
     fields["updated_at"] = int(time.time())
     keys = list(fields)
     c = conn()

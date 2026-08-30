@@ -37,7 +37,7 @@ import subprocess
 import threading
 import time
 
-from . import db, led as LED, notify, platform as P, shares as SH, system as SY
+from . import db, tv, led as LED, notify, platform as P, shares as SH, system as SY
 
 log = SY.component("Rip")
 
@@ -377,11 +377,19 @@ def cancel(job_id):
     return True, "Cancelled."
 
 
-def answer(job_id, title_index=None, name=None, skip=False):
+def answer(job_id, title_index=None, name=None, skip=False, season=None,
+           first_episode=None, series_id=None, include=None, episode_titles=None,
+           order=None):
     """Resolve a `needs_input` job -- the other half of `on_unknown_disc: ask`.
 
     The answer is written to the disc record as well as the job, because the whole
     point of the fingerprint cache is that a disc is corrected at most once, ever (R5).
+
+    A season disc answers with more than a title index, and every part of it is
+    optional: the season, where the numbering starts, which series it is, which episodes
+    to keep, and -- when somebody has watched the first thirty seconds of each and knows
+    better than the disc does -- the order itself. Whatever is supplied is applied to the
+    stored plan and the rest is left as Riparr proposed it.
     """
     job = db.get_job(job_id)
     if not job or job["state"] != "needs_input":
@@ -397,14 +405,126 @@ def answer(job_id, title_index=None, name=None, skip=False):
         fields["title"] = name
     if title_index is not None:
         fields["chosen_title"] = int(title_index)
+
+    plan = db.episode_plan(job)
+    remember = {}
+    if plan.get("episodes"):
+        plan, message = _apply_season_answer(job, plan, season, first_episode,
+                                             series_id, include, episode_titles, order)
+        if message:
+            return False, message
+        fields["episode_plan"] = plan
+        fields["season"] = plan.get("season")
+        fields["series_id"] = plan.get("series_id")
+        if plan.get("series"):
+            fields["title"] = plan["series"]
+        kept = [e for e in plan["episodes"] if e.get("include", True)]
+        if not kept:
+            return False, "Tick at least one episode, or skip the disc."
+        remember = {"series_id": plan.get("series_id"), "season": plan.get("season"),
+                    "series_name": plan.get("series"),
+                    "first_episode": kept[0]["episode"]}
+
     db.update_job(job_id, **fields)
     if job.get("fingerprint"):
-        db.record_disc(job["fingerprint"],
-                       **{k: v for k, v in (("title", name),
-                                            ("title_index", title_index))
-                          if v is not None})
+        remember.update({k: v for k, v in (("title", name),
+                                           ("title_index", title_index))
+                         if v is not None})
+        if remember:
+            db.record_disc(job["fingerprint"],
+                           **{k: v for k, v in remember.items() if v is not None})
     _wake.set()
     return True, "Thanks — starting the rip."
+
+
+def _apply_season_answer(job, plan, season, first_episode, series_id, include,
+                         episode_titles, order):
+    """Fold a human's corrections into a stored season plan. Returns (plan, error).
+
+    Renumbering happens *after* reordering and after the inclusion list is applied, so
+    the numbers always describe the episodes that are actually going to be written. An
+    earlier version numbered first and filtered second, which meant unticking episode
+    one left the rest as E02..E06 with nothing called E01 -- technically consistent, and
+    not at all what somebody who unticked a duplicate meant.
+    """
+    rows = plan.get("episodes") or []
+    by_index = {int(r["title_index"]): r for r in rows}
+
+    if order:
+        try:
+            wanted = [int(i) for i in order]
+        except (TypeError, ValueError):
+            return plan, "That episode order isn't a list of title numbers."
+        if sorted(wanted) != sorted(by_index):
+            return plan, ("That order doesn't list the same episodes the disc has, so "
+                          "Riparr can't apply it.")
+        rows = [by_index[i] for i in wanted]
+
+    if include is not None:
+        keep = {int(i) for i in include}
+        for r in rows:
+            r["include"] = int(r["title_index"]) in keep
+
+    # Titles the user typed by hand. Tracked so the metadata refresh below does not
+    # overwrite them: somebody who corrected an episode name meant it.
+    typed = set()
+    if episode_titles:
+        for k, v in episode_titles.items():
+            row = by_index.get(int(k))
+            if row is not None:
+                row["episode_title"] = (v or "").strip()
+                typed.add(int(k))
+
+    if series_id is not None and int(series_id) != (plan.get("series_id") or -1):
+        # A different series means different episode names. Re-fetch rather than keeping
+        # the old ones, which would be the previous show's titles on this show's files.
+        chosen = next((c for c in plan.get("series_options") or []
+                       if c["id"] == int(series_id)), None)
+        plan["series_id"] = int(series_id)
+        if chosen:
+            plan["series"] = chosen.get("name") or plan.get("series")
+            plan["series_year"] = chosen.get("year")
+        typed = set()
+        for r in rows:
+            r["episode_title"] = ""
+
+    if season is not None:
+        plan["season"] = int(season)
+
+    # Renumber from the start point, over the episodes that survived, preserving the
+    # two-number span of any double-length title.
+    start = int(first_episode) if first_episode is not None else None
+    if start is None:
+        kept = [r for r in rows if r.get("include", True)]
+        start = int(kept[0]["episode"]) if kept else 1
+    n = start
+    for r in rows:
+        if not r.get("include", True):
+            r["state"] = "skipped"
+            continue
+        r["state"] = "pending"
+        span = 2 if int(r.get("episode_last") or r["episode"]) > int(r["episode"]) else 1
+        r["season"] = plan.get("season")
+        r["episode"] = n
+        r["episode_last"] = n + span - 1
+        n += span
+
+    plan["episodes"] = rows
+    # Names are looked up again by the numbers we just assigned. This is the step that
+    # makes "the disc is not in aired order" a one-control fix: shift the start, and
+    # every episode picks up the name that belongs to its new number.
+    if plan.get("series_id") and plan.get("season") is not None:
+        known = {(e["season"], e["number"]): e
+                 for e in tv.episodes(plan["series_id"])}
+        for r in rows:
+            if not r.get("include", True):
+                continue
+            if int(r["title_index"]) in typed:
+                continue
+            meta = known.get((plan["season"], r["episode"]))
+            if meta:
+                r["episode_title"] = meta.get("name") or ""
+    return plan, None
 
 
 # ────────────────────────── what this drive can do with this disc ──────────────────────────
@@ -545,7 +665,7 @@ def _titles_key(disc):
 def _mock_titles():
     """The disc the mock drive is pretending to hold.
 
-    `RIPARR_MOCK_DISC=tv` swaps the film for a television season disc, because every
+    `RIPARR_MOCK_CONTENT=tv` swaps the film for a television season disc, because every
     interesting thing about TV support is a property of the *title list* and none of it
     can be exercised off-hardware otherwise. The fixture is deliberately nasty rather
     than tidy -- it carries the four things that break naive episode detection, all of
@@ -560,10 +680,10 @@ def _mock_titles():
     * a **short special** that is not an episode and must not be numbered as one.
 
     The segment maps are consistent with the play-all, so `tv.py` has a correct answer
-    to find. `RIPARR_MOCK_DISC=tv-noplayall` removes the play-all to exercise the
+    to find. `RIPARR_MOCK_CONTENT=tv-noplayall` removes the play-all to exercise the
     .mpls fallback, and `tv-blob` is the single-giant-title disc we can only warn about.
     """
-    disc = (os.environ.get("RIPARR_MOCK_DISC") or "movie").strip().lower()
+    disc = (os.environ.get("RIPARR_MOCK_CONTENT") or "movie").strip().lower()
     gb = float(os.environ.get("RIPARR_MOCK_DISC_GB", "7.8"))
 
     if disc.startswith("tv"):
@@ -1100,15 +1220,42 @@ def sanitise(name):
 SOURCE_TAG = {"dvd": "DVD", "bluray": "Bluray", "uhd": "UHD"}
 
 
-def _render_template(template, title, year=None, source=None):
+# {Season}, {Season:00}, {Episode:000} and so on. The padding is whatever run of
+# zeroes the user wrote, so a template can ask for S1 or S01 or S001 and get it.
+_PAD_TOKEN = re.compile(r"\{(Season|Episode)(?::(0+))?\}")
+
+
+def _render_template(template, title, year=None, source=None, season=None,
+                     episode=None, episode_last=None, episode_title=None):
     """Fill a Plex/Jellyfin-convention naming template.
 
     Unknown placeholders are left alone rather than blanked: a template with a typo
     should produce a visibly odd name, not a file called ` ().mkv`.
+
+    **A two-episode file expands the episode token into a range.** With `episode_last`
+    set, `E{Episode:00}` renders as `E01-E02` rather than `E01`, which is the form Plex
+    and Jellyfin both read as one file holding two episodes. Doing it inside the token
+    rather than adding a separate `{EpisodeRange}` one is what lets the shipped template
+    -- and any template a user has already written -- handle a double-length premiere
+    without being changed. The cost is that a template using `{Episode:00}` with no `E`
+    in front of it produces `01-E02`, which is odd-looking but still unambiguous.
     """
     values = {"Title": sanitise(title), "Year": str(year) if year else "",
-              "Source": SOURCE_TAG.get(source or "", "")}
-    out = template
+              "Source": SOURCE_TAG.get(source or "", ""),
+              "EpisodeTitle": sanitise(episode_title) if episode_title else ""}
+
+    def pad(m):
+        token, zeroes = m.group(1), m.group(2) or ""
+        width = len(zeroes) or 1
+        value = season if token == "Season" else episode
+        if value is None:
+            return m.group(0)          # not ours to fill; leave it visible
+        out = "%0*d" % (width, int(value))
+        if token == "Episode" and episode_last and int(episode_last) > int(episode):
+            out += "-E%0*d" % (width, int(episode_last))
+        return out
+
+    out = _PAD_TOKEN.sub(pad, template)
     for k, v in values.items():
         out = out.replace("{%s}" % k, v)
     out = re.sub(r"\s*\(\)\s*", " ", out)           # an absent year leaves empty parens
@@ -1151,6 +1298,157 @@ def _split_year(name):
     return cleaned, m.group(1)
 
 
+# ── stage 1a: is this a season disc, and which title is which episode ──
+
+def _identify_season(job, s, d, titles, remembered):
+    """Read the disc as a television season. Returns (handled, job_or_None).
+
+    `handled` False means this is not a season disc and the film path should run. True
+    with a job means go and rip it; True with None means the job is parked waiting for
+    a human, which is the same contract `_identify` already has with its caller.
+    """
+    if not s.get("tv_detect", True):
+        return False, None
+
+    # A remembered or explicit single-title choice settles it. Somebody who answered
+    # the identify prompt by pointing at one title has said this disc is one thing, and
+    # re-deciding that on their behalf every time would make the correction worthless.
+    if job.get("chosen_title") is not None or remembered.get("title_index") is not None:
+        return False, None
+
+    answered = db.episode_plan(job)
+    if answered.get("episodes"):
+        # The user has been asked and has answered. Their plan is the answer; none of it
+        # is re-derived, because re-deriving it is how a correction gets quietly undone.
+        return True, _commit_season(job, s, d, titles, answered)
+
+    found = tv.analyse(titles, s["min_title_seconds"])
+    if not found:
+        # Not a season -- but a disc holding one welded four-hour title is worth a word,
+        # because the rip will succeed and produce something the user has to cut up.
+        if tv.looks_like_blob(titles, s["min_title_seconds"]):
+            db.update_job(job["id"], warning=(
+                "This looks like a whole season welded into one title, which some "
+                "box sets are authored as. Riparr will rip it as a single file — it "
+                "has nothing that can split it into episodes."))
+        return False, None
+
+    label = d.get("label") or job.get("disc_label") or ""
+    season, _disc_no = tv.season_from_label(label)
+    if remembered.get("season") is not None:
+        season = remembered["season"]
+
+    series_name = (remembered.get("series_name") or tv.series_name_from_label(label)
+                   or pretty_label(label) or "")
+
+    series, episode_list, options = None, [], []
+    if s.get("tv_metadata", True) and series_name:
+        options = tv.search_series(series_name)
+        if remembered.get("series_id"):
+            series = (next((c for c in options
+                            if c["id"] == remembered["series_id"]), None)
+                      or {"id": remembered["series_id"], "name": series_name})
+        elif options:
+            series = options[0]
+        if series:
+            episode_list = tv.episodes(series["id"])
+
+    # A series with exactly one season needs no label to tell us which season it is.
+    # Cheap, correct, and it rescues every single-season box set whose disc is labelled
+    # only with a disc number.
+    if season is None and episode_list:
+        seasons = {e["season"] for e in episode_list if not e["special"]}
+        if len(seasons) == 1:
+            season = seasons.pop()
+
+    first = remembered.get("first_episode")
+    if first is None:
+        first = db.next_episode((series or {}).get("id"), season,
+                                series_name=(series or {}).get("name") or series_name)
+    if first is None:
+        first = 1
+
+    plan = tv.build_plan(found, season=season, first_episode=first, series=series,
+                         episode_list=episode_list)
+    # With metadata off, or with no internet, there is no series record -- but there is
+    # still a name, read off the volume label, and it is the one every downstream step
+    # uses: the folder, the filename, and the key that lets the next disc of this season
+    # continue the numbering. Leaving it empty here is what put a raw volume label in
+    # the library and made every disc of a box set start again at episode one.
+    plan["series"] = plan.get("series") or series_name
+    plan["warnings"] = tv.plan_warnings(plan, found, episode_list or None)
+    plan["series_options"] = options
+    plan["extras"] = [{"title_index": t["index"], "seconds": t["seconds"],
+                       "bytes": t.get("bytes") or 0} for t in found["extras"]]
+    for row in plan["episodes"]:
+        row["state"] = "pending"
+        row["include"] = True
+
+    # When to stop and show this. "unsure" -- the shipped answer -- asks only when the
+    # order came from something weaker than the disc's own play-all segment map, which
+    # is the line between a fact and a good guess.
+    #
+    # A missing season number overrides all of that and always asks, including under
+    # "auto". It is not a preference being ignored: there is no answer to proceed with.
+    # Ripping anyway would write `Season {Season:00}` into the library as a literal
+    # folder name, and the setting says how much to trust Riparr's judgement, not
+    # whether to accept an obviously broken one.
+    behaviour = s.get("on_season_disc", "unsure")
+    ask = (season is None
+           or behaviour == "ask"
+           or (behaviour == "unsure" and found["confidence"] != "high"))
+
+    db.update_job(job["id"], kind="tv", titles=titles, episode_plan=plan,
+                  season=season, series_id=(series or {}).get("id"),
+                  title=(series or {}).get("name") or series_name or None,
+                  disc_label=label or None, disc_family=disc_family(d),
+                  disc_bytes=int(d.get("size_bytes") or 0),
+                  bytes_total=sum(e["bytes"] for e in plan["episodes"]))
+
+    if ask:
+        n = len(plan["episodes"])
+        if season is None:
+            question = ("This looks like a season disc — %d episode%s — but nothing "
+                        "says which season. Set it and check the order."
+                        % (n, "" if n == 1 else "s"))
+        else:
+            question = ("This looks like season %d, with %d episode%s. Check the order "
+                        "before Riparr rips it." % (season, n, "" if n == 1 else "s"))
+        db.stage_end(job["id"])
+        db.update_job(job["id"], state="needs_input", question=question,
+                      phase="Waiting for you")
+        log.info("Job %d needs a human: %s", job["id"], question)
+        notify.send("needs_you", title=plan.get("series") or label or "A disc",
+                    body=question)
+        return True, None
+
+    return True, _commit_season(job, s, d, titles, plan)
+
+
+def _commit_season(job, s, d, titles, plan):
+    """Settle a season plan onto the job and hand it to the rip stage."""
+    rows = [e for e in plan.get("episodes") or [] if e.get("include", True)]
+    if not rows:
+        raise RipFailed("Nothing on this disc was ticked, so there is nothing to rip.")
+
+    warning = uhd_warning(d, P.libredrive_status(d, block=True))
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
+    db.stage_end(job["id"])
+    db.update_job(job["id"], kind="tv", titles=titles, episode_plan=plan,
+                  season=plan.get("season"), series_id=plan.get("series_id"),
+                  title=plan.get("series") or job.get("title"),
+                  warning=warning, disc_family=disc_family(d),
+                  disc_bytes=int(d.get("size_bytes") or 0),
+                  bytes_total=sum(e.get("bytes") or 0 for e in rows),
+                  disc_label=d.get("label") or job.get("disc_label"))
+    job = db.get_job(job["id"])
+    job["_device"] = d.get("device")
+    job["_plan"] = plan
+    job["_year"] = plan.get("series_year")
+    return job
+
+
 # ── stage 1: work out what this disc is ──
 
 def _identify(job, s):
@@ -1184,6 +1482,14 @@ def _identify(job, s):
     chosen_index = job.get("chosen_title")
     if chosen_index is None:
         chosen_index = remembered.get("title_index")
+
+    # Television is decided before the film path runs, because the two answers are
+    # different shapes: a film disc resolves to one title and a season disc resolves to
+    # a list of them. Once `_identify_season` has taken the disc, nothing below here
+    # applies to it -- `choose_title` in particular would pick the play-all.
+    handled, season_job = _identify_season(job, s, d, titles, remembered)
+    if handled:
+        return season_job
 
     if chosen_index is not None:
         chosen = next((t for t in titles if t["index"] == int(chosen_index)), None)
@@ -1287,7 +1593,7 @@ def _rip(job, s, cancel_ev):
     # _finish(), so duplicate refusal continues to mean "verified", not "attempted".
     if job.get("fingerprint"):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
-                       title=job.get("title"), kind="movie",
+                       title=job.get("title"), kind=kind,
                        size_bytes=job.get("disc_bytes") or 0,
                        disc_family=job.get("disc_family"),
                        title_index=job.get("chosen_title"))
@@ -1302,16 +1608,40 @@ def _rip(job, s, cancel_ev):
     if P.MOCK:
         return _mock_rip(job, out_dir, cancel_ev)
 
+    total = job.get("bytes_total") or title.get("bytes") or 0
+
+    def progress(done, eta, phase):
+        db.update_job(job["id"], bytes_ripped=done, eta_seconds=eta,
+                      stage_pct=round((done / total) if total else 0, 4),
+                      phase=phase)
+
+    path = _run_makemkv(job, s, title["index"], out_dir, cancel_ev, total,
+                        on_progress=progress,
+                        on_first_byte=lambda: db.stage_start(job["id"], "save"))
+    db.stage_end(job["id"])
+    db.update_job(job["id"], local_path=path, bytes_ripped=os.path.getsize(path),
+                  bytes_total=os.path.getsize(path), eta_seconds=None)
+    return path
+
+
+def _run_makemkv(job, s, title_index, out_dir, cancel_ev, total_bytes,
+                 on_progress=None, on_first_byte=None):
+    """One `makemkvcon` run for one title. Returns the .mkv it wrote.
+
+    Extracted from `_rip` when television arrived and one job started producing more
+    than one file. Everything about driving the process is identical for a film and for
+    an episode -- what differs is only how the numbers are reported, which is why the
+    two progress callbacks are the whole of the interface.
+    """
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     cmd = [binary, "-r", "--progress=-same",
            "--minlength=%d" % s["min_title_seconds"],
-           "mkv", _disc_arg(job.get("_device")), str(title["index"]), out_dir]
+           "mkv", _disc_arg(job.get("_device")), str(title_index), out_dir]
     log.info("Job %d: %s", job["id"], " ".join(cmd))
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1)
     last_msg = ""
-    started = time.time()
     first_byte_at = None
     try:
         for line in proc.stdout:
@@ -1329,34 +1659,31 @@ def _rip(job, s, cancel_ev):
                 # zero bytes and staging was empty -- a bar that is smooth and wrong.
                 #
                 # The output file's size against the title's expected size is what a
-                # person means by "how far along is it", and it is the same number
-                # `bytes_ripped` has always claimed to be. PRGV still drives this
-                # branch because it is MakeMKV's heartbeat; it just no longer supplies
-                # the number. Before the file exists this reports 0, which the
-                # interface already renders as an indeterminate sweep.
-                total = job.get("bytes_total") or title.get("bytes") or 0
+                # person means by "how far along is it". PRGV still drives this branch
+                # because it is MakeMKV's heartbeat; it just no longer supplies the
+                # number. Before the file exists this reports 0, which the interface
+                # already renders as an indeterminate sweep.
                 done = _output_size(out_dir)
                 if done and not first_byte_at:
                     first_byte_at = time.time()
-                    db.stage_start(job["id"], "save")
-                # `total` is MakeMKV's estimate of the title, so the finished file can
+                    if on_first_byte:
+                        on_first_byte()
+                # `total_bytes` is MakeMKV's estimate, so the finished file can
                 # overshoot it. Hold just short of full until the process has actually
                 # exited: a bar that sits at 100% while work continues is the same lie
-                # as one that sits at zero while work happens, and `_finish` sets the
-                # real figure from the file on disk.
-                if total and done > total:
-                    done = int(total * 0.99)
-                frac = (done / total) if total else 0
+                # as one that sits at zero while work happens.
+                if total_bytes and done > total_bytes:
+                    done = int(total_bytes * 0.99)
                 # Rate is measured from the first byte on disk, so the minutes of
                 # decryption before the save do not drag the estimate down.
                 eta = None
+                frac = (done / total_bytes) if total_bytes else 0
                 if first_byte_at and frac > 0.01:
                     writing = time.time() - first_byte_at
                     if writing > 5:
                         eta = int(writing / frac - writing)
-                db.update_job(job["id"], bytes_ripped=done, eta_seconds=eta,
-                              stage_pct=round(frac, 4),
-                              phase=last_msg or "Reading the disc")
+                if on_progress:
+                    on_progress(done, eta, last_msg or "Reading the disc")
                 continue
             m = PRGC.match(line)
             if m:
@@ -1382,11 +1709,95 @@ def _rip(job, s, cancel_ev):
     if rc != 0 or not produced:
         raise RipFailed(last_msg or "MakeMKV couldn't read this disc. If it's dirty "
                                     "or scratched, clean it and try again.")
-    path = os.path.join(out_dir, produced[0])
+    return os.path.join(out_dir, produced[0])
+
+
+def episode_label(row):
+    """`S01E03`, or `S01E03-E04` for a two-episode file. For progress lines and logs."""
+    season = row.get("season")
+    head = "S%02dE%02d" % (int(season), int(row["episode"])) if season is not None \
+        else "E%02d" % int(row["episode"])
+    if row.get("episode_last") and int(row["episode_last"]) > int(row["episode"]):
+        head += "-E%02d" % int(row["episode_last"])
+    return head
+
+
+def _rip_season(job, s, cancel_ev):
+    """Read every ticked episode off the disc, one `makemkvcon` run each.
+
+    One run per episode rather than one run for the whole disc, which MakeMKV would
+    also do. The disc is re-opened each time and that costs a few seconds per episode,
+    and it buys three things worth more than the seconds: a cancel that takes effect
+    within one episode instead of at the end of the disc, a progress bar that can say
+    which episode it is on, and -- the one that matters -- a failure that loses one
+    episode instead of the whole season. A scratch that kills episode four still leaves
+    one, two, three, five and six in the library.
+
+    Each episode writes into its own directory so `_output_size` has exactly one file to
+    look at, and so a retry can tell what is already done from what is not.
+    """
+    plan = job["_plan"]
+    rows = [e for e in plan["episodes"] if e.get("include", True)]
+    kind = "tv"
+    direct = use_direct(s, kind)
+    base = _job_dir(job["id"], direct=direct, kind=kind)
+
+    if job.get("fingerprint"):
+        db.record_disc(job["fingerprint"], label=job.get("disc_label"),
+                       title=job.get("title"), kind="tv",
+                       size_bytes=job.get("disc_bytes") or 0,
+                       disc_family=job.get("disc_family"),
+                       series_id=plan.get("series_id"), season=plan.get("season"),
+                       series_name=plan.get("series"),
+                       first_episode=rows[0]["episode"] if rows else None)
+
+    db.update_job(job["id"], state="ripping", phase="Reading the disc",
+                  local_path=base, bytes_ripped=0, stage_pct=0)
+    db.stage_start(job["id"], "decrypt")
+
+    total = sum(e.get("bytes") or 0 for e in rows) or 1
+    done_before = [0]
+    saved = [False]
+
+    for n, row in enumerate(rows, 1):
+        if cancel_ev.is_set():
+            raise Cancelled()
+        if row.get("state") == "done":
+            done_before[0] += row.get("bytes") or 0
+            continue
+        out_dir = os.path.join(base, "ep-%02d" % int(row["episode"]))
+        os.makedirs(out_dir, exist_ok=True)
+        where = "Episode %d of %d — %s" % (n, len(rows), episode_label(row))
+
+        def progress(done, eta, phase, _where=where):
+            overall = done_before[0] + done
+            db.update_job(job["id"], bytes_ripped=overall, eta_seconds=eta,
+                          stage_pct=round(overall / float(total), 4), phase=_where)
+
+        def first_byte():
+            if not saved[0]:
+                saved[0] = True
+                db.stage_start(job["id"], "save")
+
+        db.update_job(job["id"], phase=where)
+        if P.MOCK:
+            path = _mock_rip_episode(job, out_dir, cancel_ev, row, progress, first_byte)
+        else:
+            path = _run_makemkv(job, s, row["title_index"], out_dir, cancel_ev,
+                                row.get("bytes") or 0, on_progress=progress,
+                                on_first_byte=first_byte)
+        row["state"] = "ripped"
+        row["path"] = path
+        row["bytes"] = os.path.getsize(path)
+        done_before[0] += row["bytes"]
+        db.update_job(job["id"], episode_plan=plan, bytes_ripped=done_before[0])
+        log.info("Job %d: %s read (%s)", job["id"], episode_label(row), path)
+
     db.stage_end(job["id"])
-    db.update_job(job["id"], local_path=path, bytes_ripped=os.path.getsize(path),
-                  bytes_total=os.path.getsize(path), eta_seconds=None)
-    return path
+    db.update_job(job["id"], episode_plan=plan, eta_seconds=None,
+                  bytes_ripped=done_before[0],
+                  bytes_total=sum(e.get("bytes") or 0 for e in rows))
+    return base
 
 
 def _mock_rip(job, out_dir, cancel_ev):
@@ -1422,6 +1833,31 @@ def _mock_rip(job, out_dir, cancel_ev):
     db.stage_end(job["id"])
     db.update_job(job["id"], local_path=path, bytes_ripped=total, bytes_total=total,
                   eta_seconds=None)
+    return path
+
+
+def _mock_rip_episode(job, out_dir, cancel_ev, row, progress, first_byte):
+    """One mock episode. Smaller and quicker than the film mock -- there are six."""
+    path = os.path.join(out_dir, "title_t%02d.mkv" % int(row["title_index"]))
+    time.sleep(0.4)
+    first_byte()
+    total = 8 * 2 ** 20
+    chunk = total // 12
+    written = 0
+    started = time.time()
+    with open(path, "wb") as f:
+        while written < total:
+            if cancel_ev.is_set():
+                raise Cancelled()
+            n = min(chunk, total - written)
+            f.write(b"\0" * n)
+            f.flush()
+            written += n
+            elapsed = time.time() - started
+            frac = written / total
+            progress(written, int(elapsed / frac - elapsed) if frac > 0.1 else None,
+                     "Reading %s" % episode_label(row))
+            time.sleep(0.12)
     return path
 
 
@@ -1608,6 +2044,138 @@ def _place_directly(job, s, local_path, name, transport, kind="movie"):
     return transport, name, dest
 
 
+def _episode_name(job, s, plan, row):
+    """The share-relative path one episode lands at."""
+    _share, folder = db.destination("tv")
+    title = plan.get("series") or job.get("title") or job.get("disc_label") or "Unknown"
+    rel = _render_template(
+        s.get("tv_template") or _TEMPLATES["tv"][1], title,
+        plan.get("series_year"), source=job.get("disc_family"),
+        season=row.get("season"), episode=row.get("episode"),
+        episode_last=row.get("episode_last"), episode_title=row.get("episode_title"))
+    # Season zero is where both Plex and Jellyfin file a special, but the folder they
+    # show it under is a matter of taste and Jellyfin's own documentation uses
+    # "Specials". The template has already rendered "Season 00"; swap that one segment
+    # rather than making the user maintain a second template for the case.
+    want = (s.get("tv_specials_folder") or "Season 00").strip()
+    if row.get("season") == 0 and want and want != "Season 00":
+        rel = rel.replace("/Season 00/", "/%s/" % sanitise(want))
+    return "%s/%s" % (folder, rel) if folder else rel
+
+
+def _transfer_season(job, s, base, cancel_ev):
+    """Put every ripped episode into the library, one at a time.
+
+    Each episode is transferred and verified on its own and its row is marked done
+    before the next one starts. That is what makes a season resumable: a share that
+    disappears after episode three leaves three episodes in the library, three files on
+    the card, and a plan that says exactly which is which -- so a retry sends the
+    remaining three and does not re-send the ones already there.
+    """
+    plan = job["_plan"]
+    rows = [e for e in plan["episodes"] if e.get("include", True)]
+    share, _folder = db.destination("tv")
+    if not share:
+        raise RipFailed("There's no library share configured, so the rip has nowhere "
+                        "to go. It's still on the card.")
+    transport = SH.Transport(share)
+    direct = use_direct(s, "tv")
+    root = _library_root("tv")
+
+    pending = [r for r in rows if r.get("state") != "done"]
+    for n, row in enumerate(pending, 1):
+        if cancel_ev.is_set():
+            raise Cancelled()
+        local = row.get("path")
+        if not local or not os.path.exists(local):
+            raise RipFailed("%s went missing from the card before it could be sent."
+                            % episode_label(row))
+        name = _episode_name(job, s, plan, row)
+        where = "Sending %s — %d of %d" % (episode_label(row), n, len(pending))
+
+        db.stage_start(job["id"], "upload")
+        db.update_job(job["id"], state="transferring", phase=where,
+                      bytes_sent=0, bytes_total=os.path.getsize(local),
+                      dest_path=transport.describe(name), remote_name=name)
+
+        if direct and local.startswith(root):
+            # Already on the share -- MakeMKV wrote it there. A rename inside one
+            # filesystem, not a re-upload. `_place_directly` is not reused here because
+            # it tidies the whole job directory afterwards, which on a season disc
+            # would delete the episodes still waiting to be sent.
+            dest = os.path.join(root, name)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            try:
+                os.replace(local, dest)
+            except OSError:
+                shutil.move(local, dest)
+            row["path"] = dest
+            local = dest
+            log.info("Job %d: %s filed directly (%s)", job["id"],
+                     episode_label(row), dest)
+        else:
+            name, warning = _avoid_clobbering(transport, name, job, s)
+            if warning:
+                log.warning("Job %d: %s", job["id"], warning)
+            total = os.path.getsize(local)
+            started = time.time()
+
+            def progress(sent, of, _where=where, _started=started):
+                frac = (sent / of) if of else 0
+                db.update_job(job["id"], bytes_sent=sent, phase=_where,
+                              stage_pct=round(frac, 4),
+                              eta_seconds=int((time.time() - _started) / frac
+                                              - (time.time() - _started))
+                              if frac > 0.02 else None)
+
+            waited = 0
+            while not transport.reachable():
+                if cancel_ev.is_set():
+                    raise Cancelled()
+                if waited == 0:
+                    log.info("Job %d: the share is unreachable; waiting.", job["id"])
+                    db.update_job(job["id"],
+                                  phase="Waiting for your library to come back")
+                if waited > 6 * 3600:
+                    raise RipFailed("Your library share hasn't answered in six hours. "
+                                    "The episodes are safe on the card — fix the share "
+                                    "and retry this job.")
+                time.sleep(min(60, 5 + waited // 10))
+                waited += 30
+
+            r = transport.put(local, name, progress=progress, cancel=cancel_ev)
+            if cancel_ev.is_set():
+                raise Cancelled()
+            if not r.get("ok"):
+                raise RipFailed("Couldn't write %s to your library: %s"
+                                % (episode_label(row), r.get("error")))
+            db.update_job(job["id"], bytes_sent=total)
+        db.stage_end(job["id"])
+
+        _verify(job, s, transport, name, local)
+
+        row["state"] = "done"
+        row["remote_name"] = name
+        row["dest"] = transport.describe(name)
+        db.update_job(job["id"], episode_plan=plan)
+        log.info("Job %d: %s is in the library (%s)", job["id"],
+                 episode_label(row), name)
+
+    return transport, _season_folder(job, s, plan, rows), base
+
+
+def _season_folder(job, s, plan, rows):
+    """The folder the season landed in, for History and the finished notification.
+
+    A season job has no single destination file, and reporting the last episode's path
+    as though it were the job's answer reads as though only one thing was written.
+    """
+    if not rows:
+        return ""
+    name = rows[0].get("remote_name") or _episode_name(job, s, plan, rows[0])
+    return os.path.dirname(name) or name
+
+
 # ── stage 4: prove it arrived ──
 
 def _verify(job, s, transport, name, local_path):
@@ -1682,6 +2250,40 @@ def _finish(job, s, transport, name, local_path, sent_from_card=False):
                      % transport.describe(name))
 
 
+def _finish_season(job, s, transport, folder, base):
+    now = int(time.time())
+    plan = job["_plan"]
+    rows = [e for e in plan["episodes"] if e.get("include", True)]
+    db.stage_end(job["id"], at=now)
+    if job.get("fingerprint"):
+        db.record_disc(job["fingerprint"], label=job.get("disc_label"),
+                       title=job.get("title"), kind="tv", ripped_at=now,
+                       size_bytes=job.get("disc_bytes") or 0,
+                       disc_family=job.get("disc_family"),
+                       series_id=plan.get("series_id"), season=plan.get("season"),
+                       series_name=plan.get("series"),
+                       first_episode=rows[0]["episode"] if rows else None,
+                       job_id=job["id"])
+    if not s.get("keep_local_copy", True):
+        _cleanup_staging(job)
+
+    db.update_job(job["id"], state="done", phase=None, finished_at=now,
+                  eta_seconds=None, error=None, episode_plan=plan,
+                  dest_path=transport.describe(folder))
+    LED.announce("done")
+    P.eject()
+    span = ""
+    if rows:
+        first, last = rows[0], rows[-1]
+        span = (" (%s)" % episode_label(first) if len(rows) == 1
+                else " (%s to %s)" % (episode_label(first), episode_label(last)))
+    log.info("Job %d finished: %d episodes into %s", job["id"], len(rows), folder)
+    notify.send("done", title=plan.get("series") or job.get("title") or "A disc",
+                body="%d episode%s ripped and verified%s. They're in your library at %s."
+                     % (len(rows), "" if len(rows) == 1 else "s", span,
+                        transport.describe(folder)))
+
+
 class RipFailed(Exception):
     pass
 
@@ -1706,6 +2308,19 @@ def _run_job(job):
             raise RipFailed(refusal)
         db.update_job(job["id"], mode=mode)
         job["mode"] = mode
+
+        # A season disc is one job with many files, which is a different shape all the
+        # way down -- so it gets its own three stages rather than being threaded through
+        # the film's. It also does not take the cache-mode early eject below: every
+        # episode has to come off the disc before anything is sent, so there is no
+        # moment mid-job where the tray is free.
+        if job.get("kind") == "tv" and job.get("_plan"):
+            base = _rip_season(job, s, cancel_ev)
+            LED.announce("done")
+            P.eject()
+            transport, folder, base = _transfer_season(job, s, base, cancel_ev)
+            _finish_season(job, s, transport, folder, base)
+            return
 
         local_path = _rip(job, s, cancel_ev)
 
