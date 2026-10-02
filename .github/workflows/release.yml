@@ -146,7 +146,7 @@ jobs:
         run: |
           export PATH=/usr/bin:$PATH
           cd "$(cygpath -u "$GITHUB_WORKSPACE")"
-          bash packaging/windows/build-debugfs.sh tools/preparer/debugfs "$RUNNER_TEMP/e2fs-tools"
+          bash -o igncr packaging/windows/build-debugfs.sh tools/preparer/debugfs "$RUNNER_TEMP/e2fs-tools"
 
       # Windows Python driving that debugfs is the combination the app ships, and the one
       # where CRLF, backslashes and spaces in paths go wrong. Configure a real ext4 image
