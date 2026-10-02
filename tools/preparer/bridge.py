@@ -154,6 +154,7 @@ class Bridge:
     def __init__(self, assets):
         self.assets = assets
         self.progress_path = os.path.join(RUNDIR, "progress.json")
+        self.last_seen = {}             # "<host>.local" -> the address it last answered on
         self.write_thread = None
         self.write_error = None
         # ── OS image download ──
@@ -679,6 +680,8 @@ class Bridge:
              "user": cfg.get("remote_user", "root"),
              "key": key,
              "known_hosts": os.path.join(self.assets, "known_hosts"),
+             "address_hint": self.last_seen.get(
+                 "%s.local" % cfg.get("hostname", "riparr").strip().lower()),
              "repo": core.payload_root()},
             self.setup_path)
         self.nosleep.hold("setting up the box")
@@ -723,6 +726,8 @@ class Bridge:
             ip = socket.gethostbyname(name)
         except Exception:
             return {"taken": False}
+        # Remembered for setup: see Finisher.step_find.
+        self.last_seen[name] = ip
         return {"taken": True, "address": ip, "name": name}
 
     def cancel_setup(self):

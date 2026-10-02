@@ -302,6 +302,16 @@ class Finisher:
         deadline = time.time() + TIMEOUTS["find"]
         swept = False
 
+        # The handoff screen watched this box come up and saw its address. mDNS answers
+        # come and go while a fresh box is booting, so the name can resolve there and not
+        # here a minute later; that address is the best lead there is, so ask it first.
+        hint = self.cfg.get("address_hint")
+        if hint and _port_open(hint, 22) and self._is_our_box(hint):
+            self.address, self.found_by = hint, "address"
+            self._say("found it at %s, where it was seen coming up" % hint)
+            self._finish_step("find")
+            return
+
         while time.time() < deadline:
             self._check_cancel()
 
@@ -380,15 +390,33 @@ class Finisher:
 
         self._say("%d host%s with SSH open; asking which one is Riparr"
                   % (len(candidates), "" if len(candidates) == 1 else "s"))
-        for ip in candidates:
-            self._check_cancel()
-            self._forget_host_key(ip)
-            p = subprocess.run(
-                self._ssh_base(ip) + ["cat /etc/hostname 2>/dev/null"],
-                capture_output=True, text=True, **_UTF8, timeout=15, **_NOWIN)
-            if p.returncode == 0 and p.stdout.strip() == self.host:
-                return ip
+        # Asked eight at a time, not one after another. One at a time, a network with
+        # 29 SSH hosts -- a homelab, a NAS, a few printers -- took longer than the whole
+        # find step is allowed, and the box at .139 was never asked: "Couldn't find your
+        # Riparr" with the box answering on its address the entire time.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for ip, ok in zip(candidates, pool.map(self._is_our_box, candidates)):
+                if ok:
+                    return ip
         return None
+
+    def _is_our_box(self, ip):
+        """Does `ip` take our key and call itself by our name?"""
+        if self.cancel.is_set():
+            return False
+        # Several of these run at once, so none of them touches the shared known_hosts:
+        # a probe pins nothing, and step_connect clears and pins the box's key itself.
+        ours = "UserKnownHostsFile=%s" % self.known_hosts
+        cmd = [("UserKnownHostsFile=%s" % os.devnull) if a == ours else a
+               for a in self._ssh_base(ip)]
+        try:
+            p = subprocess.run(
+                cmd + ["cat /etc/hostname 2>/dev/null"],
+                capture_output=True, text=True, **_UTF8, timeout=15, **_NOWIN)
+        except subprocess.TimeoutExpired:
+            return False                # an SSH server that never finishes its banner
+        return p.returncode == 0 and p.stdout.strip() == self.host
 
     def step_connect(self):
         self._begin("connect")
