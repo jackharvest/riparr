@@ -24,7 +24,6 @@ Progress is published to a JSON file the window polls, the same contract writer.
 already uses -- see `publish()`. Nothing here writes to stdout unless run as a CLI.
 """
 import argparse
-import json
 import os
 import re
 import shutil
@@ -34,6 +33,8 @@ import sys
 import threading
 import time
 from collections import deque
+
+import statusfile
 
 # ssh, curl and friends are console programs. Started from a windowed app on Windows,
 # each would flash a console up behind the Preparer -- several a second during setup.
@@ -116,13 +117,8 @@ class StepFailed(Exception):
 
 
 def publish(path, **kw):
-    """Atomic write, so a half-written file is never read by the poller."""
-    if not path:
-        return
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(kw, f)
-    os.replace(tmp, path)
+    """See statusfile.publish -- which never lets a busy status file kill setup."""
+    statusfile.publish(path, **kw)
 
 
 def _local_subnet():

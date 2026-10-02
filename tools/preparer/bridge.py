@@ -26,6 +26,7 @@ import traceback
 
 import boards
 import core
+import statusfile
 import finish
 import hostos
 
@@ -141,19 +142,7 @@ def core_publish(status_file, **kw):
     100% and a Continue button insisting the image had not been downloaded, while the
     image sat correctly on disk. Only the failure path worked, because it passes no path.
     """
-    tmp = status_file + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(kw, f)
-    # Windows refuses to replace a file another process has open, and the other side
-    # polls this one several times a second. A moment later it is free.
-    for attempt in range(40):
-        try:
-            os.replace(tmp, status_file)
-            return
-        except PermissionError:
-            if attempt == 39:
-                raise
-            time.sleep(0.025)
+    statusfile.publish(status_file, **kw)
 
 
 # ─────────────────────────── the bridge plumbing ───────────────────────────

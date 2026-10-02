@@ -19,7 +19,6 @@ here.
 import argparse
 import hashlib
 import lzma
-import json
 import os
 import shutil
 import sys
@@ -27,6 +26,7 @@ import tempfile
 import time
 
 import hostos
+import statusfile
 
 
 def _sha256(path):
@@ -38,20 +38,8 @@ def _sha256(path):
 
 
 def publish(path, **kw):
-    """Atomically replace the status file so a reader never sees a half-written line."""
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(kw, f)
-    # Windows refuses to replace a file another process has open, and the other side
-    # polls this one several times a second. A moment later it is free.
-    for attempt in range(40):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if attempt == 39:
-                raise
-            time.sleep(0.025)
+    """Atomically replace the status file; see statusfile for why it is shared."""
+    statusfile.publish(path, **kw)
 
 
 def _read_back(dev, count, st):

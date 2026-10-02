@@ -151,6 +151,11 @@ jobs:
       # Windows Python driving that debugfs is the combination the app ships, and the one
       # where CRLF, backslashes and spaces in paths go wrong. Configure a real ext4 image
       # with it and read every file back before anything is packaged.
+      - name: Status files survive being read while they are replaced
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python packaging/windows/test-statusfile.py
+
       - name: The Windows build can configure an ext4 image
         if: runner.os == 'Windows'
         shell: bash
