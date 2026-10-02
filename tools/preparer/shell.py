@@ -72,6 +72,23 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+# Linux: the system's GTK and WebKit, not copies of the build machine's.
+#
+# The bundle carries PyGObject and nothing below it -- release.yml strips every library
+# PyInstaller copied from the runner's OS. GTK built on one Ubuntu loaded beside WebKit
+# from another fails on missing symbols, and WebKit cannot be carried at all: it starts
+# its helper processes from paths compiled into the system copy. Every desktop that can
+# run this has WebKitGTK already. PyInstaller's runtime hooks have pointed all of these
+# at the bundle by now, where nothing is left to find; unset, GTK searches the system.
+if sys.platform.startswith("linux") and getattr(sys, "frozen", False):
+    for _v in ("GI_TYPELIB_PATH", "GDK_PIXBUF_MODULE_FILE", "GIO_MODULE_DIR",
+               "GTK_DATA_PREFIX", "GTK_EXE_PREFIX", "GTK_PATH", "PANGO_LIBDIR",
+               "PANGO_SYSCONFDIR"):
+        os.environ.pop(_v, None)
+    _xdg = [p for p in os.environ.get("XDG_DATA_DIRS", "").split(os.pathsep)
+            if p and not p.startswith(getattr(sys, "_MEIPASS", "\0"))]
+    os.environ["XDG_DATA_DIRS"] = os.pathsep.join(_xdg or ["/usr/local/share", "/usr/share"])
+
 import webview
 
 import bridge as _bridge

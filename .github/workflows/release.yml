@@ -220,6 +220,39 @@ jobs:
           ONEFILE: ${{ matrix.onefile }}
           EXTRA_DATA: ${{ runner.os == 'Windows' && '--add-data debugfs;debugfs' || '' }}
 
+      # Linux takes GTK and WebKit from the machine it runs on. PyInstaller copies every
+      # library it can see from the build runner, and a GTK from one Ubuntu loaded beside
+      # the user's WebKit from another dies on missing symbols -- while WebKit itself
+      # cannot be carried, because it starts helper processes from paths compiled into
+      # the system copy. So anything whose name the runner's own library cache knows is
+      # an OS library, and comes out; what stays is Python, PyGObject and Riparr.
+      # shell.py points GTK back at the system before pywebview loads.
+      - name: Leave the OS libraries to the OS (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python - <<'PY'
+          import os, shutil, subprocess
+          INT = "tools/preparer/dist/Riparr Preparer/_internal"
+          system = set()
+          for line in subprocess.run(["ldconfig", "-p"], capture_output=True,
+                                     text=True).stdout.splitlines()[1:]:
+              if "=>" in line:
+                  system.add(line.split()[0])
+          gone = []
+          for root, _, files in os.walk(INT):
+              for f in files:
+                  if f in system and not f.startswith("libpython"):
+                      os.remove(os.path.join(root, f)); gone.append(f)
+          for d in ("gi_typelibs", "gio_modules", "lib/gdk-pixbuf-2.0", "share/glib-2.0",
+                    "share/icons", "share/themes", "etc/fonts"):
+              p = os.path.join(INT, d)
+              if os.path.isdir(p):
+                  shutil.rmtree(p); gone.append(d + "/")
+          print("left to the OS (%d):" % len(gone))
+          for g in sorted(gone):
+              print("   ", g)
+          PY
+
       # The build cannot be trusted to have carried the appliance with it. v0.1.2 was
       # packaged, signed, published and downloaded before anyone noticed that stage 2
       # had nothing to install -- so the presence of the payload is now a release gate
@@ -351,9 +384,10 @@ jobs:
           INT="tools/preparer/dist/Riparr Preparer/_internal"
           [ -d "$INT/gi" ] || { echo "::error::PyGObject (gi) is not in the bundle"; exit 1; }
           echo "ok  gi at $INT/gi"
-          hit=$(find "$INT" -name "WebKit2-4.1.typelib" -print -quit)
-          [ -n "$hit" ] || { echo "::error::no WebKit2 4.1 typelib in the bundle"; exit 1; }
-          echo "ok  $hit"
+          # And none of the GTK below it: that has to come from the user's system.
+          hit=$(find "$INT" -name "libgtk-3.so*" -o -name "libwebkit2gtk*" | head -1)
+          [ -z "$hit" ] || { echo "::error::$hit is bundled; GTK must come from the system"; exit 1; }
+          echo "ok  no GTK or WebKit libraries bundled"
 
       # A build with no CA certificates cannot download an operating system, check for
       # an update, or verify a checksum -- it fails every HTTPS call with
