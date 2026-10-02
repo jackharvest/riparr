@@ -49,3 +49,6 @@ tools/preparer/payload/
 packaging/dmg/riparr.icns
 tools/preparer/riparr.icns
 tools/preparer/riparr.ico
+
+# debugfs built for the Windows Preparer by packaging/windows/build-debugfs.sh
+tools/preparer/debugfs/

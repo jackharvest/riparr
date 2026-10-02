@@ -129,6 +129,33 @@ jobs:
           PY
           fi
 
+      # An Armbian card is one ext4 partition, and Windows can neither mount ext4 nor
+      # install e2fsprogs. So the Windows app carries debugfs and configures the image
+      # before writing it (hostos/windows.py, PROVISION_IN_IMAGE). Built here from the
+      # current e2fsprogs release because Cygwin's own package stopped at 1.44.5. Cygwin
+      # is kept off PATH so it cannot shadow Git Bash in the steps that follow.
+      - uses: cygwin/cygwin-install-action@v6
+        if: runner.os == 'Windows'
+        with:
+          packages: gcc-core make curl
+          add-to-path: false
+
+      - name: debugfs for Windows
+        if: runner.os == 'Windows'
+        shell: C:\cygwin\bin\bash.exe --noprofile --norc -eo pipefail -o igncr '{0}'
+        run: |
+          export PATH=/usr/bin:$PATH
+          cd "$(cygpath -u "$GITHUB_WORKSPACE")"
+          bash packaging/windows/build-debugfs.sh tools/preparer/debugfs "$RUNNER_TEMP/e2fs-tools"
+
+      # Windows Python driving that debugfs is the combination the app ships, and the one
+      # where CRLF, backslashes and spaces in paths go wrong. Configure a real ext4 image
+      # with it and read every file back before anything is packaged.
+      - name: The Windows build can configure an ext4 image
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python packaging/windows/test-image-config.py "$RUNNER_TEMP/e2fs-tools/mke2fs.exe"
+
       - name: Build
         shell: bash
         run: |
@@ -155,10 +182,12 @@ jobs:
             --add-data "ui${PATHSEP:-:}ui" \
             --add-data "hostos${PATHSEP:-:}hostos" \
             --add-data "payload${PATHSEP:-:}payload" \
+            ${EXTRA_DATA} \
             shell.py
         env:
           PATHSEP: ${{ runner.os == 'Windows' && ';' || ':' }}
           ONEFILE: ${{ matrix.onefile }}
+          EXTRA_DATA: ${{ runner.os == 'Windows' && '--add-data debugfs;debugfs' || '' }}
 
       # The build cannot be trusted to have carried the appliance with it. v0.1.2 was
       # packaged, signed, published and downloaded before anyone noticed that stage 2
@@ -215,6 +244,13 @@ jobs:
               # In the repr a Windows separator is written as two characters.
               blob = blob.replace("\\\\", "/").replace("\\", "/")
               missing = [f for f in NEED if ("payload/" + f) not in blob]
+              # Without debugfs the Windows app refuses every Orange Pi card.
+              if os.environ.get("RUNNER_OS") == "Windows":
+                  for f in ("debugfs/debugfs.exe", "debugfs/cygwin1.dll"):
+                      ok = f in blob
+                      print(("ok  " if ok else "::error::bundle is missing ") + f)
+                      if not ok:
+                          missing.append(f)
 
           for f in NEED:
               print(("::error::payload is missing " if f in missing else "ok  ") + f)

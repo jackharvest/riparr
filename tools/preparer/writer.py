@@ -21,7 +21,9 @@ import hashlib
 import lzma
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 import hostos
@@ -142,9 +144,84 @@ def _copy_makemkv(destdir, srcdir, st):
         time.sleep(1.5)
 
 
+def _first_partition(f):
+    """(MBR type, byte offset) of the first partition in an image, from an open file."""
+    mbr = f.read(512)
+    if len(mbr) < 512:
+        return 0, 0
+    for i in range(4):
+        e = mbr[0x1BE + 16 * i:0x1BE + 16 * i + 16]
+        if e[4]:
+            return e[4], int.from_bytes(e[8:12], "little") * 512
+    return 0, 0
+
+
+def _ext4_cfg(args):
+    import armbian
+    port = 9797
+    if args.conf and os.path.exists(args.conf):
+        for line in open(args.conf, encoding="utf-8"):
+            if line.startswith("RIPARR_PORT="):
+                port = int(line.split("=", 1)[1].strip())
+    return armbian.cfg_from_custom_toml(args.toml, port)
+
+
+def _configure_image(args, st):
+    """Expand the image to a file and write the settings into it. -> path, or None.
+
+    For platforms that cannot reach the card's ext4 partition after the write (see
+    hostos.PROVISION_IN_IMAGE). Everything here happens before the card is unmounted,
+    so a failure leaves the card exactly as it was.
+    """
+    import armbian
+    publish(st, phase="provision", message="Applying your settings")
+    work_dir = tempfile.gettempdir()
+    need = (args.total or 0) + (256 << 20)
+    free = shutil.disk_usage(work_dir).free
+    if args.total and free < need:
+        publish(st, phase="error",
+                message="Not enough free space to prepare the card. Nothing was written.",
+                detail="The settings are written into a copy of the image first, which "
+                       "needs %.1f GB free in %s; there is %.1f GB."
+                       % (need / 1e9, work_dir, free / 1e9))
+        return None
+    fd, work = tempfile.mkstemp(prefix="riparr-card-", suffix=".img", dir=work_dir)
+    os.close(fd)
+    try:
+        with lzma.open(args.image, "rb") as src, open(work, "wb") as dst:
+            shutil.copyfileobj(src, dst, 4 << 20)
+        with open(work, "rb") as f:
+            ptype, offset = _first_partition(f)
+        if ptype != 0x83:
+            raise RuntimeError("expected one Linux partition, found type 0x%02x" % ptype)
+        target = armbian.image_target(work, offset)
+        cfg = _ext4_cfg(args)
+        armbian.provision(target, cfg)
+        failed = [lbl for lbl, ok, _ in armbian.verify(target, cfg) if not ok]
+        if failed:
+            raise RuntimeError("These did not read back correctly:\n  "
+                               + "\n  ".join(failed))
+        if args.makemkv and os.path.isdir(args.makemkv):
+            publish(st, phase="extras", message="Adding MakeMKV")
+            try:
+                armbian.copy_makemkv(target, args.makemkv)
+            except Exception as e:
+                publish(st, phase="extras",
+                        message="Could not add MakeMKV to the card", detail=str(e))
+                time.sleep(1.5)
+        return work
+    except Exception as e:
+        try:
+            os.remove(work)
+        except OSError:
+            pass
+        publish(st, phase="error",
+                message="Your settings could not be applied. Nothing was written.",
+                detail=str(e))
+        return None
+
+
 def run(args):
-    dev = args.dev
-    node = hostos.raw_device(dev)         # for messages; hostos does the opening
     st = args.progress
 
     if args.sha256:
@@ -155,6 +232,33 @@ def run(args):
                     message="The operating system image is damaged. Nothing was written.",
                     detail="expected %s\ngot      %s" % (args.sha256[:32], actual[:32]))
             return 1
+
+    work = None
+    if hostos.PROVISION_IN_IMAGE:
+        try:
+            with lzma.open(args.image, "rb") as f:
+                ptype, _ = _first_partition(f)
+        except Exception:
+            ptype = 0                   # left for the write to report properly
+        if ptype == 0x83:
+            work = _configure_image(args, st)
+            if work is None:
+                return 1
+    try:
+        return _write(args, st, work)
+    finally:
+        if work:
+            try:
+                os.remove(work)
+            except OSError:
+                pass
+
+
+def _write(args, st, work):
+    """Unmount, write, verify, provision, eject. `work` is an already-configured image
+    file, or None to write the compressed image and configure the card afterwards."""
+    dev = args.dev
+    node = hostos.raw_device(dev)         # for messages; hostos does the opening
 
     publish(st, phase="unmount", message="Unmounting the card")
     ok, why = hostos.unmount_disk(dev)
@@ -173,7 +277,7 @@ def run(args):
                 message="The card could not be opened for writing.", detail=why)
         return 1
 
-    total = args.total
+    total = os.path.getsize(work) if work else args.total
     publish(st, phase="write", written=0, total=total, rate=0, eta=0,
             message="Writing the operating system")
 
@@ -192,7 +296,7 @@ def run(args):
     # gated on the card exactly as before. Worth writing down so the number is not
     # rediscovered as a regression.
     try:
-        src = lzma.open(args.image, "rb")
+        src = open(work, "rb") if work else lzma.open(args.image, "rb")
     except Exception as e:
         publish(st, phase="error",
                 message="The operating system image could not be opened.",
@@ -288,7 +392,8 @@ def run(args):
     layout, partno = _partition_layout(dev)
 
     if layout == "single-ext4":
-        rc = _provision_ext4(args, dev, partno, st)
+        # Already configured, and the read-back above proved the card holds it.
+        rc = 0 if work else _provision_ext4(args, dev, partno, st)
     else:
         rc = _provision_fat(args, dev, partno or 1, st)
     if rc:
@@ -343,12 +448,7 @@ def _provision_ext4(args, dev, partno, st):
 
     try:
         import armbian
-        port = 9797
-        if args.conf and os.path.exists(args.conf):
-            for line in open(args.conf):
-                if line.startswith("RIPARR_PORT="):
-                    port = int(line.split("=", 1)[1].strip())
-        cfg = armbian.cfg_from_custom_toml(args.toml, port)
+        cfg = _ext4_cfg(args)
 
         # Try each candidate in turn -- on macOS the raw node is much faster for the
         # MakeMKV copy but demands aligned IO, and that path has never been exercised on
@@ -403,17 +503,17 @@ def _provision_fat(args, dev, partno, st):
 
     try:
         publish(st, phase="provision", message="Applying your settings")
-        with open(args.toml) as f:
+        with open(args.toml, encoding="utf-8") as f:
             body = f.read()
         dest = os.path.join(boot, "custom.toml")
-        with open(dest, "w") as f:
+        with open(dest, "w", encoding="utf-8", newline="\n") as f:
             f.write(body)
         hostos.flush()
 
         # Read it back. A FAT32 write that returns success is not proof of a good file,
         # and this one file is the difference between a box that joins the network and a
         # box that needs re-flashing.
-        with open(dest) as f:
+        with open(dest, encoding="utf-8", newline="") as f:
             if f.read() != body:
                 publish(st, phase="error",
                         message="Settings did not verify after writing.",
@@ -424,8 +524,9 @@ def _provision_fat(args, dev, partno, st):
             _copy_makemkv(os.path.join(boot, "makemkv"), args.makemkv, st)
 
         if args.conf:
-            with open(os.path.join(boot, "riparr.conf"), "w") as f:
-                f.write(open(args.conf).read())
+            with open(os.path.join(boot, "riparr.conf"), "w", encoding="utf-8",
+                      newline="\n") as f:
+                f.write(open(args.conf, encoding="utf-8").read())
             hostos.flush()
     finally:
         # Whatever happened, give the volume back. On Linux this is our own mount in a

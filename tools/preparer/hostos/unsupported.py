@@ -39,6 +39,7 @@ def keep_awake_command(pid):
 # if it is, it stops before the card is touched instead of after.
 
 CAN_WRITE = False
+PROVISION_IN_IMAGE = False
 
 
 def valid_device_id(dev):

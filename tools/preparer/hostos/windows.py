@@ -803,6 +803,14 @@ def explain_write_error(err, xerr, rc, dev):
 
 CAN_WRITE = True
 
+# Windows has no node for a partition it cannot mount, and will not let a raw handle
+# write sectors that belong to a volume it has claimed. So an ext4 image is configured
+# *before* it is written: expanded to a file, edited with the bundled debugfs at the
+# root partition's offset, then written whole. The read-back digest after the write
+# then covers the settings too. It is the same approach Rufus takes, for the same
+# reason, and it keeps the card itself out of the picture until the image is final.
+PROVISION_IN_IMAGE = True
+
 SEE_MASK_NOCLOSEPROCESS = 0x00000040
 SEE_MASK_NOASYNC = 0x00000100
 SW_HIDE = 0

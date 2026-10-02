@@ -72,7 +72,7 @@ jobs:
           import ast, sys
 
           REQUIRED = [
-              "NAME", "CAN_WRITE", "UPDATE_SUFFIX",
+              "NAME", "CAN_WRITE", "PROVISION_IN_IMAGE", "UPDATE_SUFFIX",
               "list_block_devices", "scan_wifi", "saved_network_password",
               "location_status", "request_location",
               "open_url", "reveal", "keep_awake_command",

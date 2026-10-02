@@ -397,7 +397,7 @@ class Bridge:
 
     def save_toml_only(self, cfg):
         out = os.path.join(self.assets, "custom.toml")
-        with open(out, "w") as f:
+        with open(out, "w", encoding="utf-8", newline="\n") as f:
             f.write(self._toml(cfg))
         return {"path": out}
 
@@ -466,12 +466,13 @@ class Bridge:
             }
 
         toml_path = os.path.join(RUNDIR, "custom.toml")
-        with open(toml_path, "w") as f:
+        # UTF-8 and LF: Linux reads these, and an SSID can be any Unicode at all.
+        with open(toml_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(self._toml(cfg))
         os.chmod(toml_path, 0o600)
 
         conf_path = os.path.join(RUNDIR, "riparr.conf")
-        with open(conf_path, "w") as f:
+        with open(conf_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(core.build_conf(cfg))
 
         total = core.uncompressed_size(image)

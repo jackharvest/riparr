@@ -225,7 +225,7 @@ def test_partition_layout():
 # what makes that promise checkable rather than aspirational.
 
 CONTRACT = [
-    "CAN_WRITE", "valid_device_id", "block_device", "raw_device", "partition_devices",
+    "CAN_WRITE", "PROVISION_IN_IMAGE", "valid_device_id", "block_device", "raw_device", "partition_devices",
     "unmount_disk", "probe_writable", "open_sink", "open_reader", "flush",
     "rescan_partitions", "mount_boot", "eject", "explain_write_error", "elevate",
     "list_block_devices", "scan_wifi", "saved_network_password",

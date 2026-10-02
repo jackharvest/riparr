@@ -44,6 +44,7 @@ the operations that sequence is made of. Every one of them is required, and
 `unsupported.py` implements them by refusing rather than by doing nothing.
 
     CAN_WRITE                       whether this platform can write a card at all
+    PROVISION_IN_IMAGE              configure an ext4 image before writing it, not after
     valid_device_id(dev)            the last check before a raw write. A whitelist
     block_device(dev)               the node the OS names the whole disk by
     raw_device(dev)                 what gets written to; the same thing except on macOS
@@ -102,6 +103,7 @@ reveal = _impl.reveal
 keep_awake_command = _impl.keep_awake_command
 
 CAN_WRITE = _impl.CAN_WRITE
+PROVISION_IN_IMAGE = _impl.PROVISION_IN_IMAGE
 
 valid_device_id = _impl.valid_device_id
 block_device = _impl.block_device

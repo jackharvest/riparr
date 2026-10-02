@@ -20,13 +20,15 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 # Homebrew keeps e2fsprogs keg-only, so it is not on PATH by default. On Linux it is in
 # every distribution and lives in an sbin that an unprivileged PATH often omits -- which
 # is the same problem from the other direction, so both are listed rather than trusting
-# `which`. There is no entry for Windows because there is no debugfs for Windows; see
-# `core.missing_tools`, which refuses that combination before the card is touched.
+# `which`. Windows has no e2fsprogs at all, so the Windows build carries its own: debugfs
+# 1.47 compiled under Cygwin by the release workflow, unpacked next to everything else
+# the bundle carries. See `_bundled`.
 DEBUGFS_CANDIDATES = [
     "/opt/homebrew/opt/e2fsprogs/sbin/debugfs",     # macOS, Apple silicon
     "/usr/local/opt/e2fsprogs/sbin/debugfs",        # macOS, Intel
@@ -36,15 +38,80 @@ DEBUGFS_CANDIDATES = [
 ]
 
 
+def _bundled():
+    """Where the Windows build keeps debugfs.exe and cygwin1.dll, frozen or not."""
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, "debugfs", "debugfs.exe")
+
+
 def find_debugfs():
+    if sys.platform == "win32":
+        p = _bundled()
+        return p if os.path.exists(p) else None
     for p in DEBUGFS_CANDIDATES:
         if os.path.exists(p) and os.access(p, os.X_OK):
             return p
     return shutil.which("debugfs")
 
 
+def missing_debugfs_message():
+    if sys.platform == "win32":
+        return ("This copy of the Preparer is missing its debugfs, so the card cannot be "
+                "configured. Download the Preparer again from the latest release.")
+    if sys.platform == "darwin":
+        return ("debugfs is not installed, so the card cannot be configured.\n\n"
+                "    brew install e2fsprogs")
+    return ("debugfs is not installed, so the card cannot be configured. Install "
+            "e2fsprogs.")
+
+
 class DebugfsError(RuntimeError):
     pass
+
+
+def host_path(path):
+    """A local path as a debugfs command line wants it: quoted, forward slashes.
+
+    Unquoted, a space in a temp directory -- "C:\\Users\\Jane Doe\\AppData" -- splits
+    one argument into two. Backslashes are fine to Cygwin but not to every reader of the
+    script, and C:/Users/... means the same thing to it.
+    """
+    if sys.platform == "win32":
+        path = path.replace("\\", "/")
+    return '"%s"' % path
+
+
+def image_target(path, offset):
+    """What debugfs opens to reach a filesystem `offset` bytes into an image file.
+
+    libext2fs splits the name at "?" and hands the rest to its I/O layer as options, so
+    no loop device, mount or partition node is involved -- which is the point on Windows.
+    """
+    if sys.platform == "win32":
+        path = path.replace("\\", "/")
+    return "%s?offset=%d" % (path, offset)
+
+
+def debugfs_run(argv, script=None, stdout_only=False):
+    """Run debugfs and return its output as text -- stdout and stderr together, or
+    stdout alone for `cat`, whose stderr carries the version banner.
+
+    Bytes in, bytes out, decoded here. A text-mode pipe on Windows turns every "\\n" into
+    "\\r\\n" on the way in, and debugfs would then read a carriage return as the last
+    character of every file name in the script -- writing "/etc/hostname\\r" and
+    reporting success. The console window is suppressed because the writer is a GUI
+    process and each call would otherwise flash one up. CYGWIN=nodosfilewarning keeps
+    Cygwin from printing a warning about C:/ paths that the error scan would have to
+    know to ignore.
+    """
+    kw = {}
+    if sys.platform == "win32":
+        kw["creationflags"] = 0x08000000                 # CREATE_NO_WINDOW
+        kw["env"] = dict(os.environ, CYGWIN="nodosfilewarning")
+    p = subprocess.run(argv, input=script.encode("utf-8") if script is not None else None,
+                       capture_output=True, **kw)
+    out = (p.stdout or b"") if stdout_only else (p.stdout or b"") + (p.stderr or b"")
+    return out.decode("utf-8", "replace")
 
 
 def _run(debugfs, target, script):
@@ -53,9 +120,7 @@ def _run(debugfs, target, script):
     debugfs exits 0 even when individual commands fail, so the output has to be read.
     Silent partial provisioning is the exact failure this whole module exists to avoid.
     """
-    cmd = [debugfs, "-w", "-f", "/dev/stdin", target]
-    p = subprocess.run(cmd, input=script, capture_output=True, text=True)
-    out = (p.stdout or "") + (p.stderr or "")
+    out = debugfs_run([debugfs, "-w", "-f", "/dev/stdin", target], script)
     bad = [ln for ln in out.splitlines()
            if any(k in ln for k in ("File not found", "File exists", "Filesystem not open",
                                     "Could not", "error", "Error", "Permission denied",
@@ -69,13 +134,14 @@ def _run(debugfs, target, script):
 
 def _run_lenient(debugfs, target, script):
     """Run commands whose failure is expected and fine -- deleting what may not exist."""
-    subprocess.run([debugfs, "-w", "-f", "/dev/stdin", target],
-                   input=script, capture_output=True, text=True)
+    debugfs_run([debugfs, "-w", "-f", "/dev/stdin", target], script)
 
 
 def _put(tmpdir, name, content):
+    # newline="\\n": these are Linux config files. Text mode on Windows would write CRLF,
+    # and "riparr\\r" is not a hostname.
     path = os.path.join(tmpdir, name)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(content)
     return path
 
@@ -190,7 +256,7 @@ def cfg_from_custom_toml(toml_path, port=9797):
     PBKDF2 PSK, the public key -- and writes it into custom.toml. Parsing it back is
     better than a second input path that could drift out of step with the first.
     """
-    src = open(toml_path).read()
+    src = open(toml_path, encoding="utf-8").read()
 
     def val(section, key, default=None):
         m = re.search(r"\[%s\](.*?)(?=\n\[|\Z)" % section, src, re.S)
@@ -230,7 +296,7 @@ def copy_makemkv(target, srcdir, debugfs=None):
     lines = ["sif /root/makemkv mode 040755",
              "sif /root/makemkv uid 0", "sif /root/makemkv gid 0"]
     for n in names:
-        lines += ["write %s /root/makemkv/%s" % (os.path.join(srcdir, n), n),
+        lines += ["write %s /root/makemkv/%s" % (host_path(os.path.join(srcdir, n)), n),
                   "sif /root/makemkv/%s mode 0100644" % n,
                   "sif /root/makemkv/%s uid 0" % n,
                   "sif /root/makemkv/%s gid 0" % n]
@@ -246,11 +312,7 @@ def provision(target, cfg, debugfs=None):
     """
     debugfs = debugfs or find_debugfs()
     if not debugfs:
-        raise DebugfsError(
-            "debugfs is not installed, so the card cannot be provisioned.\n\n"
-            "    brew install e2fsprogs\n\n"
-            "It reads and writes ext4 without mounting it, which is the only way to "
-            "configure an Allwinner image from macOS.")
+        raise DebugfsError(missing_debugfs_message())
 
     tmp = tempfile.mkdtemp(prefix="riparr-armbian-")
     try:
@@ -355,8 +417,9 @@ write {conf} /boot/riparr.conf
 sif /boot/riparr.conf mode 0100644
 sif /boot/riparr.conf uid 0
 sif /boot/riparr.conf gid 0
-""".format(host=f_host, hosts=f_hosts, wpa=f_wpa, net=f_net, keys=f_keys,
-           conf=f_conf, mdns=f_mdns, drop=f_drop, ram=f_ram, jrnl=f_jrnl)
+""".format(**{k: host_path(v) for k, v in dict(
+            host=f_host, hosts=f_hosts, wpa=f_wpa, net=f_net, keys=f_keys, conf=f_conf,
+            mdns=f_mdns, drop=f_drop, ram=f_ram, jrnl=f_jrnl).items()})
         return _run(debugfs, target, script)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -368,14 +431,10 @@ def verify(target, cfg, debugfs=None):
     checks = []
 
     def cat(path):
-        p = subprocess.run([debugfs, "-R", "cat %s" % path, target],
-                           capture_output=True, text=True)
-        return p.stdout
+        return debugfs_run([debugfs, "-R", "cat %s" % path, target], stdout_only=True)
 
     def stat(path):
-        p = subprocess.run([debugfs, "-R", "stat %s" % path, target],
-                           capture_output=True, text=True)
-        return p.stdout
+        return debugfs_run([debugfs, "-R", "stat %s" % path, target])
 
     checks.append(("hostname", cat("/etc/hostname").strip() == cfg["hostname"],
                    cat("/etc/hostname").strip()))

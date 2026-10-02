@@ -515,6 +515,8 @@ def explain_write_error(err, xerr, rc, node):
 # ───────────────────────────────── Elevation ─────────────────────────────────
 
 CAN_WRITE = True
+# The card's own partition nodes are reachable, so ext4 is configured on the card.
+PROVISION_IN_IMAGE = False
 
 
 def elevate(argv, rundir, progress_path=""):

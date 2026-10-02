@@ -1085,37 +1085,30 @@ def missing_tools(image=None):
     # Only ask for debugfs when the image actually needs it. Warning about a tool this
     # particular write will never run is its own kind of wrong.
     if image and image_layout(image) in ("ext4-root", "unknown"):
-        if sys.platform in ("win32", "cygwin"):
-            # Not a missing tool -- a missing possibility. There is no debugfs for
-            # Windows and no way to mount ext4 from it, so this image cannot be
-            # configured here however long anyone spends installing things. Saying so
-            # now costs nothing; saying so after the write costs a card that boots,
-            # joins no network, and cannot be reached because the board has no Ethernet.
+        try:
+            import armbian
+            have = armbian.find_debugfs()
+        except Exception:
+            have = None
+        if not have and sys.platform in ("win32", "cygwin"):
+            # Windows has no e2fsprogs to install; the release build carries debugfs
+            # inside the app. If it is not there, this copy was built without it.
             out.append({
-                "tool": "a way to write into the card's Linux partition",
-                "why": "this image keeps its settings in an ext4 filesystem, which "
-                       "Windows cannot mount or write",
-                "fix": "Use a Riparr image with a FAT boot partition. Writing the "
-                       "plain image and configuring it later is not an option — the "
-                       "board has no Ethernet, so a card without Wi-Fi credentials "
-                       "produces a box that never appears.",
+                "tool": "debugfs",
+                "why": "needed to write settings into the card's Linux partition",
+                "fix": "This copy of the Preparer was built without it. Download it "
+                       "again from the latest release.",
             })
-        else:
-            try:
-                import armbian
-                have = armbian.find_debugfs()
-            except Exception:
-                have = None
-            if not have:
-                out.append({
-                    "tool": "debugfs",
-                    "why": "needed to write settings into the card's Linux partition, "
-                           "which %s cannot mount" % hostos.NAME,
-                    "fix": ("brew install e2fsprogs" if sys.platform == "darwin"
-                            else "Install e2fsprogs — on Debian and Ubuntu that is "
-                                 "`sudo apt install e2fsprogs`, on Fedora "
-                                 "`sudo dnf install e2fsprogs`."),
-                })
+        elif not have:
+            out.append({
+                "tool": "debugfs",
+                "why": "needed to write settings into the card's Linux partition, "
+                       "which %s cannot mount" % hostos.NAME,
+                "fix": ("brew install e2fsprogs" if sys.platform == "darwin"
+                        else "Install e2fsprogs — on Debian and Ubuntu that is "
+                             "`sudo apt install e2fsprogs`, on Fedora "
+                             "`sudo dnf install e2fsprogs`."),
+            })
 
     # The elevation prompt itself. macOS always has sudo and Windows always has UAC;
     # Linux is the one that can genuinely be without either, on a bare window manager or
