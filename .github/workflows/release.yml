@@ -49,6 +49,15 @@ jobs:
           - os: ubuntu-latest
             label: Linux (x64)
             artifact: riparr-preparer-linux-beta
+            package: riparr-preparer-linux-beta.tar.gz
+          # .tgz, not .tar.gz, on purpose: a Linux Preparer finds its own update by suffix,
+          # and every x64 copy already installed takes the first asset ending in .tar.gz.
+          # A different extension is the one thing those copies can never mistake for
+          # theirs. hostos/linux.py picks the suffix by CPU from here on.
+          - os: ubuntu-24.04-arm
+            label: Linux (ARM64)
+            artifact: riparr-preparer-linux-arm64-beta
+            package: riparr-preparer-linux-arm64-beta.tgz
 
     steps:
       - uses: actions/checkout@v7
@@ -482,7 +491,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cd tools/preparer/dist
-          tar czf ../../../riparr-preparer-linux-beta.tar.gz "Riparr Preparer"
+          tar czf "../../../${{ matrix.package }}" "Riparr Preparer"
 
       - name: Smoke test
         shell: bash
@@ -509,6 +518,7 @@ jobs:
             riparr-preparer-*.dmg
             riparr-preparer-*.exe
             riparr-preparer-*.tar.gz
+            riparr-preparer-*.tgz
           if-no-files-found: error
 
   # The appliance payload. The box updates itself by downloading this, verifying it
@@ -634,6 +644,7 @@ jobs:
           | **macOS** | [riparr-preparer-macos.dmg](../../releases/download/TAGNAME/riparr-preparer-macos.dmg) | Open it, drag Riparr Preparer into Applications |
           | **Windows** | [riparr-preparer-windows-beta.exe](../../releases/download/TAGNAME/riparr-preparer-windows-beta.exe) | Double-click it |
           | **Linux** | [riparr-preparer-linux-beta.tar.gz](../../releases/download/TAGNAME/riparr-preparer-linux-beta.tar.gz) | Unpack it, run `Riparr Preparer` |
+          | **Linux on ARM** | [riparr-preparer-linux-arm64-beta.tgz](../../releases/download/TAGNAME/riparr-preparer-linux-arm64-beta.tgz) | Unpack it, run `Riparr Preparer` |
 
           Nothing is code-signed yet, so your computer will block it the first time. On **macOS**,
           double-click it, let it get refused, then go to **System Settings → Privacy &

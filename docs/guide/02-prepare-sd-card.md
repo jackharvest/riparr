@@ -23,6 +23,7 @@ configure. Pick the file for your computer:
 | macOS | `riparr-preparer-macos.dmg` | Open it, drag **Riparr Preparer** to Applications |
 | Windows | `riparr-preparer-windows-beta.exe` | Double-click it |
 | Linux | `riparr-preparer-linux-beta.tar.gz` | Unpack it and run **Riparr Preparer** |
+| Linux on ARM | `riparr-preparer-linux-arm64-beta.tgz` | Unpack it and run **Riparr Preparer** |
 
 > **It isn't code-signed, so your computer will warn you the first time.** Riparr is a
 > one-person project and a signing certificate is a yearly fee from Apple and from

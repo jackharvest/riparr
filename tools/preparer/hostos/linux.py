@@ -590,7 +590,11 @@ def probe_writable(dev):
 
 # ───────────────────────────── Updating itself ─────────────────────────────
 
-UPDATE_SUFFIX = ".tar.gz"
+# Two Linux builds ship, and each must only ever find itself. The ARM one is a .tgz so
+# that x64 copies released before it existed -- which match ".tar.gz" -- cannot take it.
+import platform as _platform
+UPDATE_SUFFIX = (".tgz" if _platform.machine().lower() in ("aarch64", "arm64")
+                 else ".tar.gz")
 
 
 def update_target(executable):

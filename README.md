@@ -52,6 +52,7 @@ Download the Preparer for whatever you're sitting at. Everything else happens fr
 | **macOS** | [riparr-preparer-macos.dmg](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-macos.dmg) | Open it, drag Riparr Preparer into Applications |
 | **Windows** | [riparr-preparer-windows-beta.exe](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-windows-beta.exe) | Double-click it |
 | **Linux** | [riparr-preparer-linux-beta.tar.gz](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-linux-beta.tar.gz) | Unpack it, run `Riparr Preparer` |
+| **Linux on ARM** | [riparr-preparer-linux-arm64-beta.tgz](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-linux-arm64-beta.tgz) | Unpack it, run `Riparr Preparer` |
 
 **[→ Latest release](../../releases/latest)**
 
