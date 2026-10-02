@@ -8,6 +8,25 @@ bother updating.
 
 ---
 
+## 0.4.4
+
+**The Preparer works on Windows, start to finish.** It writes the Orange Pi card, finds
+the box on your network and installs Riparr on it, the same as on a Mac. Windows will
+warn you that the app isn't commonly downloaded and that its publisher is unknown. It's
+unsigned; choose Keep, then Yes.
+
+**No more hanging at 100%.** After checking a freshly written card, the Preparer could
+sit on "Checking the card" forever even though the card was done. That happened on Macs
+too. It now moves straight on to the next step.
+
+**Fresh installs start properly.** A new box could fail its first start with a
+"readonly database" error. It doesn't any more.
+
+**The window fits the screen on Windows**, at any display scaling, and the wording talks
+about your PC rather than a Mac.
+
+---
+
 ## 0.4.3
 
 **The Windows Preparer can put MakeMKV on the card.** With the MakeMKV download in your
