@@ -533,14 +533,12 @@ class Finisher:
         while time.time() < deadline:
             self._check_cancel()
             for candidate in (by_name, url):
-                p = subprocess.run(["curl", "-fsS", "--max-time", "4", candidate],
-                                   capture_output=True, text=True, **_UTF8, **_NOWIN)
-                if p.returncode == 0:
+                ok, last = _http_ok(candidate)
+                if ok:
                     self._say("%s answered" % candidate)
                     self.reachable_by_name = candidate == by_name
                     self._finish_step("verify")
                     return
-                last = (p.stderr or "").strip()
             time.sleep(3)
         raise StepFailed("verify",
                          "Riparr installed, but isn't answering yet.",
@@ -584,6 +582,23 @@ ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 def _strip_ansi(s):
     """install.sh prints colour. A log pane is not a terminal."""
     return ANSI.sub("", s)
+
+
+def _http_ok(url, timeout=4):
+    """(answered with 2xx, error text). The standard library, not curl.
+
+    This shelled out to curl, which a stock Ubuntu desktop does not have: setup
+    installed Riparr completely and then failed its last step for want of a program
+    the box never needed. No proxy either -- this is a LAN address, and a desktop
+    proxy setting would send the question somewhere that cannot answer it.
+    """
+    import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=timeout) as r:
+            return 200 <= r.status < 300, ""
+    except Exception as e:
+        return False, "%s: %s" % (type(e).__name__, e)
 
 
 def _resolve(name):
