@@ -19,6 +19,11 @@ VER=1.47.4
 SHA256=fd5bf388cbdbe006a3d3b318d983b2948382440acc85a87f1e7d108653e8db0b
 URL=https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v$VER/e2fsprogs-$VER.tar.xz
 
+# Cygwin's tools only. The runner's Windows PATH carries Strawberry Perl's pkg-config,
+# among others, and configure will find and run the wrong one.
+export PATH=/usr/bin:/bin
+unset PKG_CONFIG_PATH
+
 OUT=$(cygpath -u "$1")
 TOOLS=${2:+$(cygpath -u "$2")}
 WORK=$(mktemp -d)
@@ -28,6 +33,14 @@ curl -fsSLO "$URL"
 echo "$SHA256  e2fsprogs-$VER.tar.xz" | sha256sum -c -
 tar xf "e2fsprogs-$VER.tar.xz"
 cd "e2fsprogs-$VER"
+
+# getsize.c takes its native-Windows branch under Cygwin too, and that branch calls the
+# MSVC runtime's _get_osfhandle, which Cygwin does not have. Cygwin's own package carries
+# this same one-line patch (1.42.6-cygwin-getsize.patch); its POSIX branch is the right
+# one here, and it only matters for block devices anyway -- the Preparer hands debugfs a
+# file.
+sed -i 's/^#if defined(__CYGWIN__) || defined (WIN32)$/#if defined (WIN32)/' lib/ext2fs/getsize.c
+grep -q '^#if defined (WIN32)$' lib/ext2fs/getsize.c || { echo "getsize.c patch did not apply"; exit 1; }
 
 # Static e2fsprogs libraries (the default), so the only DLLs are Cygwin's own. Its own
 # libuuid and libblkid, so nothing else has to be installed to build or to run.
