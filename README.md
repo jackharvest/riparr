@@ -121,7 +121,8 @@ with your OS version and card reader is genuinely useful.
 Deliberate limits, so they don't surprise you:
 
 - **The MakeMKV beta key expires monthly.** That's GuinpinSoft's call, not mine. Riparr
-  fetches the current one, tells you when yours lapses, and makes replacing it one click.
+  puts in the new one itself when it's published, and tells you it did. Buying a
+  licence, when GuinpinSoft is selling them, makes the question go away.
 - **No transcoding.** A board this size would take days and it'd look bad. Write to a
   watch folder and let Tdarr or Unmanic do it properly.
 - **Rips transfer when they finish**, not while they're being written. Writing *straight*

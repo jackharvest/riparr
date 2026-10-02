@@ -1,0 +1,78 @@
+# Watches for a new MakeMKV and gets the pin ready, so a new version is a merge and a
+# release rather than an afternoon.
+#
+# A box installs only the MakeMKV pinned in packaging/makemkv-manifest.json, so a new
+# version has to arrive in a Riparr release. tools/makemkv-watch.py does the checking:
+# both tarballs from makemkv.com and from Launchpad, accepted only if they agree, with the
+# licence, the EULA and the disc attribute IDs compared against the pinned version.
+#
+# What this does with a verified new version: pushes the rewritten pin to a branch named
+# makemkv-<version> and opens an issue with the report and a link to open the pull
+# request. An issue rather than a pull request because GITHUB_TOKEN cannot open pull
+# requests in this repository (Settings → Actions → "Allow GitHub Actions to create and
+# approve pull requests" is off), and turning that on is not this workflow's call.
+#
+# It never merges and never releases. Building on an arm64 board is the one check it
+# cannot make; the issue says so.
+name: MakeMKV watch
+
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: makemkv-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Look for a newer MakeMKV
+        id: watch
+        run: |
+          set +e
+          python tools/makemkv-watch.py --report "$RUNNER_TEMP/report.md"
+          code=$?
+          set -e
+          # 3 is "newer, but not verifiable yet" -- Launchpad usually lags makemkv.com
+          # by a day or two. Not a failure; tomorrow's run tries again.
+          if [ "$code" = 3 ]; then echo "::notice::$(head -1 "$RUNNER_TEMP/report.md")"; exit 0; fi
+          exit $code
+
+      - name: Push the branch and open an issue
+        if: steps.watch.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.watch.outputs.version }}
+        run: |
+          branch="makemkv-$V"
+          title="MakeMKV $V is out"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898341+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add packaging/makemkv-manifest.json server/riparr/makemkv.py
+          git commit -q -m "Pin MakeMKV $V" -m "Verified by tools/makemkv-watch.py; see the issue for the report."
+          git push --force origin "$branch"
+
+          if gh issue list --state open --search "\"$title\" in:title" --json number -q '.[].number' | grep -q .; then
+            echo "An issue for $V is already open; the branch was refreshed."
+            exit 0
+          fi
+          {
+            cat "$RUNNER_TEMP/report.md"
+            echo
+            echo "**Open the pull request:** https://github.com/${GITHUB_REPOSITORY}/compare/main...${branch}?expand=1"
+          } > "$RUNNER_TEMP/issue.md"
+          gh issue create --title "$title" --body-file "$RUNNER_TEMP/issue.md"

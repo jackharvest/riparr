@@ -51,8 +51,12 @@ WANT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("vers
        /usr/local/lib/riparr/makemkv-manifest.json 2>/dev/null || true)
 SRC=""
 for d in /root/makemkv /boot/makemkv /boot/firmware/makemkv /var/lib/riparr/makemkv; do
-  oss=$(ls "$d"/makemkv-oss-"${WANT:-*}".tar.gz 2>/dev/null | head -1)
-  bin=$(ls "$d"/makemkv-bin-"${WANT:-*}".tar.gz 2>/dev/null | head -1)
+  # `|| true`: under pipefail a directory without the file fails the pipeline, the ERR
+  # trap above fires, and the page is told "the install stopped unexpectedly" for the
+  # moment before the next `say` overwrites it -- long enough for a poll to see it and
+  # give up watching a build that is in fact running.
+  oss=$(ls "$d"/makemkv-oss-"${WANT:-*}".tar.gz 2>/dev/null | head -1 || true)
+  bin=$(ls "$d"/makemkv-bin-"${WANT:-*}".tar.gz 2>/dev/null | head -1 || true)
   if [ -n "$oss" ] && [ -n "$bin" ]; then
     SRC="$d"; break
   fi

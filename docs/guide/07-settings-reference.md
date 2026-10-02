@@ -15,12 +15,16 @@ your problem.**
 MakeMKV does the actual disc reading. Its free beta key **expires on a month boundary** —
 not a fixed number of days after you enter one, so a key issued mid-month may last a day
 or five weeks. Riparr says which month yours is good for rather than counting down to a
-date it cannot know, and fetches the current key from GuinpinSoft's forum so replacing it
-is one click.
+date it cannot know, and **puts in the new key itself** when GuinpinSoft publishes it.
+It checks makemkv.com every six hours, and only ever swaps a beta key for a beta key: a
+bought key is never touched, and if makemkv.com, its forum and the backup key service
+disagree about the new key, nothing changes. The next time you open the web page, Riparr
+tells you it renewed the key.
 
 | Setting | Notes |
 |---|---|
 | **Key** | Paste a free beta key or a purchased permanent key |
+| **Renew the beta key automatically** | Default: on. Turn it off to replace the key yourself |
 | **Expires** | The month this key is good for, and the date it stops. Never a countdown to a date GuinpinSoft has not published |
 | **Warn me before expiry** | Default: 7 days |
 | **Notify via** | Web banner, plus any [notification channel](#notifications) you've set up |
@@ -28,8 +32,10 @@ is one click.
 **Riparr warns you before it breaks, never after.** It will not let a key silently expire
 mid-rip on a box with no screen.
 
-**Buy the permanent key** if you rip regularly. It's a one-time purchase and it removes
-the only recurring chore in the entire product.
+**Buy the permanent key** if you rip regularly. It's a one-time purchase, it never
+expires, and it pays the people who make MakeMKV. When makemkv.com isn't selling licences,
+as happens, its own site asks everyone to use the free beta key, and Riparr says so
+rather than showing a Buy button that leads nowhere.
 
 > MakeMKV is made by GuinpinSoft, not by Riparr, and its licence agreement is between
 > you and them. Riparr asks you to read and accept it during setup, then downloads and
@@ -42,9 +48,14 @@ Every download is checked against a checksum pinned in Riparr's source, so a mir
 only give Riparr the right file or none at all.
 
 **Settings → General** also tracks makemkv.com and its forum separately, because they are
-different machines and fail independently. The forum is where the free key lives, and it
-is usually up when the site is not — which is the difference between "you are stuck" and
-"go here and copy the key".
+different machines and fail independently. Both publish the free key, and one is usually
+up when the other is not.
+
+**A new version of MakeMKV** shows under **System → Updates** once a Riparr release
+carries it. Riparr only installs a version whose checksums are pinned in its own source,
+so a new MakeMKV always arrives in a Riparr update first. Then one button builds it on
+the box, which takes about half an hour, and the version you have keeps working until
+the new one is ready.
 
 ## Library
 

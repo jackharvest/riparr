@@ -342,6 +342,7 @@ def info():
         "upgrade": upgrade_available(st),
         "auto_renew": bool(_db_get("auto_renew_beta_key", True)),
         "buy_url": BUY_URL,
+        "shop_open": _db_get("makemkv_shop_open", None),
         "sites": sites,
         "sites_checking": checking,
         "key_advice": key_advice(),
@@ -599,7 +600,7 @@ def _run():
 # exactly as good as the situation before this existed.
 _key_cache = {"at": 0, "ttl": 0, "value": None}
 _EMPTY_KEY = {"key": None, "expires": None, "expires_text": None,
-              "source": FORUM_KEY_TOPIC, "sources_agree": None,
+              "source": FORUM_KEY_TOPIC, "sources_agree": None, "shop_open": None,
               "fetched_at": 0, "error": None}
 KEY_TTL = 6 * 3600
 # A failure is cached too, briefly. Without this, a forum having a bad hour cost a
@@ -689,43 +690,97 @@ def beta_key(force=False, allow_fetch=True):
               "source": FORUM_KEY_TOPIC, "sources_agree": None,
               "fetched_at": int(now), "error": None, "cached": False}
 
-    forum = _key_from_forum()
-    api = None
-    if not forum.get("key") or not forum.get("expires"):
-        api = _key_from_api()
+    # makemkv.com's own purchase page first. While sales are closed it publishes the
+    # current beta key itself, on GuinpinSoft's main site, in a page that answers in a
+    # second -- so it is both the most official source and the fastest. It carries no
+    # expiry, so the backup service (also fast) is asked alongside it for the date and
+    # as a second opinion. The forum, which can take minutes, is asked only when those
+    # two do not settle it between them.
+    buy = _key_from_buy_page()
+    api = _key_from_api()
+    forum = None
+    if not (buy.get("key") and api.get("key") == buy["key"] and api.get("expires")):
+        forum = _key_from_forum()
+    result["shop_open"] = buy.get("shop_open")
+    _record_shop(buy.get("shop_open"))
 
-    chosen = forum if forum.get("key") else (api or {})
-    if not chosen.get("key"):
+    answered = [x for x in (buy, forum, api) if x and x.get("key")]
+    if not answered:
         # Nothing answered. Cache the *failure* briefly so a forum having a bad hour
         # costs one wait per quarter-hour rather than one per visit to Settings.
-        result["error"] = (forum.get("error") or (api or {}).get("error")
+        result["error"] = (buy.get("error") or (forum or {}).get("error")
+                           or api.get("error")
                            or "Couldn't reach any source for the current beta key.")
         _remember(result, FAIL_TTL)
         return result
 
+    # GuinpinSoft's own word wins, the site over the forum; the backup service only
+    # when neither of theirs answered.
+    chosen = answered[0]
     result["key"] = chosen["key"]
     result["source"] = chosen.get("source", FORUM_KEY_TOPIC)
-    result["expires"] = chosen.get("expires")
-    result["expires_text"] = chosen.get("expires_text")
 
-    # If the forum gave a key but no readable date, the API's timestamp fills it in
-    # without changing whose key we are quoting.
-    if result["key"] and not result["expires"] and api and api.get("key") == result["key"]:
-        result["expires"] = api.get("expires")
+    # The date from whichever source states it *for this key*.
+    for x in (forum, api):
+        if x and x.get("key") == result["key"] and x.get("expires"):
+            result["expires"] = x["expires"]
+            result["expires_text"] = x.get("expires_text")
+            break
 
-    # Corroboration, when both answered. Disagreement is reported, not silently resolved:
-    # two sources differing about a registration key is a fact the user should see.
-    if forum.get("key") and api and api.get("key"):
-        result["sources_agree"] = forum["key"] == api["key"]
+    # Corroboration, when more than one answered. Disagreement is reported, not
+    # silently resolved -- and it stops the automatic renewal -- because sources
+    # differing about a registration key is a fact the user should see.
+    if len(answered) > 1:
+        result["sources_agree"] = all(x["key"] == result["key"] for x in answered)
         if not result["sources_agree"]:
-            result["error"] = ("The forum and the backup key service disagree about the "
-                               "current key. The forum's is shown, being GuinpinSoft's "
-                               "own; check the forum post before relying on it.")
+            result["error"] = ("MakeMKV's sources disagree about the current key. "
+                               "GuinpinSoft's own is shown; check makemkv.com before "
+                               "relying on it.")
 
     _remember(result, KEY_TTL)
     _record_expiry(result)
     _maybe_renew(result)
     return result
+
+
+def _key_from_buy_page():
+    """makemkv.com/buy/. Publishes the beta key while sales are closed.
+
+    Also the only place that says whether a licence can be bought at all, which is what
+    decides whether Riparr shows a Buy button. `shop_open` is None when the page could
+    not be read: unknown is not the same as closed.
+    """
+    out = {"source": BUY_URL, "shop_open": None}
+    try:
+        req = urllib.request.Request(
+            BUY_URL, headers={"User-Agent": "Mozilla/5.0 (compatible; riparr)"})
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT) as r:
+            html = r.read(200000).decode("utf-8", "replace")
+    except Exception as e:
+        out["error"] = "Couldn't reach makemkv.com (%s)." % e
+        return out
+    text = _strip_tags(html)
+    m = KEY_RE.search(text)
+    closed = bool(m) or bool(SHOP_CLOSED_RE.search(text))
+    out["shop_open"] = not closed
+    if m:
+        out["key"] = m.group(0)
+    return out
+
+
+# The wording on makemkv.com/buy/ while sales are closed (2026-10): "one cannot purchase
+# MakeMKV for a moment. You have to use it for free". A key on the page means the same.
+SHOP_CLOSED_RE = re.compile(r"cannot\s+purchase|use\s+it\s+for\s+free", re.I)
+
+
+def _record_shop(shop_open):
+    if shop_open is None:
+        return                            # unreachable says nothing about the shop
+    try:
+        from . import db
+        db.set("makemkv_shop_open", bool(shop_open))
+    except Exception:
+        pass
 
 
 def _key_from_forum():
@@ -878,6 +933,10 @@ def _maybe_renew_inner(result):
         return
     if result.get("sources_agree") is False:
         return
+    if result.get("source") not in (BUY_URL, FORUM_KEY_TOPIC):
+        # The backup service alone is a third party's say-so. Good enough to show, not
+        # to act on without GuinpinSoft's own page or forum behind it.
+        return
     expires = result.get("expires") or ""
     if expires and expires < datetime.date.today().isoformat():
         return                            # never swap one dead key for another
@@ -907,7 +966,7 @@ def renewal_notice():
     if not isinstance(r, dict) or r.get("seen"):
         return None
     return {"at": r.get("at"), "expires": r.get("expires") or None,
-            "buy_url": BUY_URL}
+            "buy_url": BUY_URL, "shop_open": db.get("makemkv_shop_open", None)}
 
 
 def dismiss_renewal_notice():

@@ -301,6 +301,9 @@ DEFAULTS = {
     "auto_renew_beta_key": True,
     # The last automatic renewal, and whether the web page has mentioned it yet.
     "makemkv_key_renewal": None,
+    # Whether makemkv.com is selling licences, as last read off its purchase page. None
+    # until it has been read. Decides whether the interface offers a Buy button.
+    "makemkv_shop_open": None,
     "warn_key_days": 7,
     "update_channel": "stable",
     "auto_check_updates": True,

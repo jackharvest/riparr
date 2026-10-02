@@ -720,14 +720,22 @@ async function showRenewalNotice() {
     <p>Your MakeMKV beta key ran out, so Riparr put in the new free one that
       GuinpinSoft publishes each month${until ? `. It works until <b>${esc(until)}</b>` : ""}.
       Your discs keep ripping without you having to do anything.</p>
+    ${r.shop_open === false ? `
+    <p>Riparr can only read your discs because of MakeMKV. GuinpinSoft isn't selling
+      licences right now, and their own site asks everyone to use the free beta key
+      until they are. When sales reopen, buying one pays the people who make MakeMKV,
+      and a bought key never runs out.</p>
+    <div class="btn-row">
+      <button class="btn primary" id="renewal-dismiss">OK</button>
+    </div>` : `
     <p>Riparr can only read your discs because of MakeMKV. If it's worth it to you,
       please buy a licence. It pays the people who make MakeMKV, and a bought key never
-      runs out. If their shop is down, try again another day.</p>
+      runs out.</p>
     <div class="btn-row">
       <a class="btn primary" href="${esc(r.buy_url)}" target="_blank" rel="noopener"
          id="renewal-buy">Buy MakeMKV</a>
       <button class="btn" id="renewal-dismiss">Dismiss</button>
-    </div>`;
+    </div>`}`;
   document.body.appendChild(d);
   paintIcons(d);
   const close = async () => {
@@ -736,7 +744,8 @@ async function showRenewalNotice() {
     d.remove();
   };
   d.querySelector("#renewal-dismiss").onclick = close;
-  d.querySelector("#renewal-buy").addEventListener("click", close);
+  const buy = d.querySelector("#renewal-buy");
+  if (buy) buy.addEventListener("click", close);
   d.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
   d.showModal();
 }
@@ -2717,8 +2726,11 @@ settingsPages.general = async (s) => {
         <input data-set="makemkv_key" id="mk-key-input" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key">
         <span class="help">MakeMKV is free while it is in beta, behind a key GuinpinSoft
           publishes on the forum. ${esc((mk.key_advice || {}).note || "")}
-          <a href="${esc(mk.buy_url)}" target="_blank" rel="noopener">Buying a licence</a>
-          supports the people who make it, and a bought key never runs out.</span></label>
+          ${mk.shop_open === false
+            ? `GuinpinSoft isn't selling licences at the moment and asks everyone to use
+               the beta key until they are.`
+            : `<a href="${esc(mk.buy_url)}" target="_blank" rel="noopener">Buying a licence</a>
+               supports the people who make it, and a bought key never runs out.`}</span></label>
       <div class="f"><span></span><div class="grow" id="mk-key-offer"></div></div>
       ${sw("auto_renew_beta_key", "Renew the beta key automatically", s.auto_renew_beta_key !== false,
           "When the free beta key runs out, put in the new one GuinpinSoft publishes. "

@@ -8,6 +8,25 @@ bother updating.
 
 ---
 
+## 0.4.2
+
+**Riparr reads the key from makemkv.com itself.** While GuinpinSoft isn't selling
+licences, its purchase page publishes the current beta key, and that is now the first
+place Riparr looks. It is their own site and it answers in about a second. The backup
+key service is asked alongside it for the expiry date and as a second opinion, and the
+forum, which can take minutes, only when those two don't settle it. Riparr renews a key
+by itself only when makemkv.com or its forum stands behind it.
+
+**No Buy button when there's nothing to buy.** When makemkv.com isn't selling licences,
+the renewal message says so, and that their site asks everyone to use the free key for
+now. When sales reopen, the Buy button comes back.
+
+**No more false "The install stopped unexpectedly".** Installing or upgrading MakeMKV
+could show that for a moment while it was working fine, and the page stopped following
+the build. It no longer does.
+
+---
+
 ## 0.4.1
 
 **The MakeMKV key renews itself.** The free beta key runs out at the end of every month,
