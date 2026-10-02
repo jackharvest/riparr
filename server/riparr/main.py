@@ -905,18 +905,21 @@ def system_components_repair(user=Depends(require_user)):
                    "cannot write a system file. Re-run setup from the Riparr Preparer "
                    "on your computer: it finds the box, offers 'Update it in place', "
                    "and keeps your settings, shares and history.")
-    P.request_provision()
-
     # Poll rather than return "asked": the whole point is to answer "is it fixed now".
-    deadline = time.time() + 45
+    # Two passes when one is not enough: a box whose apply-system.sh predates it
+    # refreshing itself needs one provision to install the unit that refreshes it, and
+    # a second to run the refreshed script.
     after = before
-    while time.time() < deadline:
-        time.sleep(1)
-        after = P.system_components()
-        if after.get("ok"):
-            return {"ok": True,
-                    "message": "Installed. Everything on this box is up to date.",
-                    "components": after}
+    for _ in range(2):
+        P.request_provision()
+        deadline = time.time() + 25
+        while time.time() < deadline:
+            time.sleep(1)
+            after = P.system_components()
+            if after.get("ok"):
+                return {"ok": True,
+                        "message": "Installed. Everything on this box is up to date.",
+                        "components": after}
     return {"ok": False,
             "message": "Riparr asked, but %d part(s) are still missing. The system log "
                        "on the Events page will say why."
@@ -1511,6 +1514,18 @@ def makemkv_install(body: MakeMKVInstall, user=Depends(require_user)):
 @app.get("/api/makemkv/install")
 def makemkv_install_status(user=Depends(require_user)):
     return MK.install_status()
+
+
+@app.get("/api/makemkv/renewal")
+def makemkv_renewal(user=Depends(require_user)):
+    """A key renewal the page has not mentioned yet. Asked once, when the page loads."""
+    return {"renewal": MK.renewal_notice()}
+
+
+@app.post("/api/makemkv/renewal/dismiss")
+def makemkv_renewal_dismiss(user=Depends(require_user)):
+    MK.dismiss_renewal_notice()
+    return {"ok": True}
 
 
 class PowerAction(BaseModel):

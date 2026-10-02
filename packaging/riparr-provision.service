@@ -5,6 +5,13 @@ Documentation=https://github.com/jackharvest/riparr
 [Service]
 Type=oneshot
 ExecStartPre=/bin/rm -f /run/riparr/provision.request
+# Refresh the script before running it. Nothing else ever did: apply-system.sh installs
+# every other system part but not itself, so it stayed at whatever version first set
+# the box up, and anything a later release added to it never ran. This unit is one of
+# the parts it does install, so a box picks this line up on its first provision after
+# an update and is current from the next one. The "-" keeps a checkout without
+# /opt/riparr from failing the unit.
+ExecStartPre=-/usr/bin/install -o root -g root -m 0755 /opt/riparr/packaging/apply-system.sh /usr/local/lib/riparr/apply-system.sh
 ExecStart=/usr/local/lib/riparr/apply-system.sh
 TimeoutStartSec=120
 

@@ -296,6 +296,11 @@ DEFAULTS = {
     "makemkv_key_expires": "",
     "makemkv_key_stale": False,
     "makemkv_eula_accepted_at": 0,
+    # Replace a lapsed beta key with the newly published one, without asking. Only ever
+    # a beta key for a beta key -- see makemkv._maybe_renew_inner.
+    "auto_renew_beta_key": True,
+    # The last automatic renewal, and whether the web page has mentioned it yet.
+    "makemkv_key_renewal": None,
     "warn_key_days": 7,
     "update_channel": "stable",
     "auto_check_updates": True,

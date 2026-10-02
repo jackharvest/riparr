@@ -1837,3 +1837,19 @@ li.warn .cl-detail, li.fail .cl-detail { color: var(--fg-strong); }
   .cl-detail, .cl-why { grid-column: 2; }
   .cl-why { padding-bottom: 0; padding-top: 3px; }
 }
+
+/* One-off notices that need an answer before the page carries on -- the beta key
+   renewal is the only one. A native <dialog>, so focus, Escape and the backdrop come
+   from the browser rather than from code here. */
+.notice-dialog {
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line-2);
+  border-radius: var(--radius); padding: 22px 24px 18px; margin: auto;
+  width: min(480px, calc(100vw - 32px)); box-shadow: 0 18px 50px rgba(0,0,0,.5);
+}
+.notice-dialog::backdrop { background: rgba(0,0,0,.55); }
+.notice-dialog h2 {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 12px;
+  font-size: 19px; color: var(--fg-strong);
+}
+.notice-dialog p { margin: 0 0 12px; line-height: 1.55; }
+.notice-dialog .btn-row { margin-top: 18px; justify-content: flex-end; }

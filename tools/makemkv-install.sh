@@ -61,7 +61,21 @@ mkdir -p "$SRC" || { echo "Could not create $SRC"; exit 2; }
 # first whose bytes match the pinned sha256 wins; a mirror serving the wrong file is
 # rejected by the hash rather than trusted because it answered.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST="${RIPARR_MAKEMKV_MANIFEST:-$HERE/../packaging/makemkv-manifest.json}"
+# Beside this script on a box (/usr/local/lib/riparr, root's copy -- see
+# apply-system.sh); ../packaging in a checkout.
+MANIFEST="${RIPARR_MAKEMKV_MANIFEST:-}"
+if [ -z "$MANIFEST" ]; then
+  for m in "$HERE/makemkv-manifest.json" "$HERE/../packaging/makemkv-manifest.json"; do
+    [ -f "$m" ] && { MANIFEST="$m"; break; }
+  done
+fi
+MANIFEST="${MANIFEST:-$HERE/makemkv-manifest.json}"
+
+# The version to build. Everything below looks for this version only: a source
+# directory that once held an older MakeMKV -- the Preparer's copy from the day the
+# card was written -- otherwise wins, and "upgrade" rebuilds what is already installed.
+WANT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' \
+       "$MANIFEST" 2>/dev/null || true)
 
 manifest_rows() {
   # name<TAB>sha256<TAB>where<TAB>url, one line per source.
@@ -127,16 +141,16 @@ fetch_missing() {
 
 # find, not globbing: an unmatched glob here previously left `ls -d` with no argument,
 # which lists "." and set OSS/BIN to a directory that is not MakeMKV at all.
-find_pkg() { find "$SRC" -maxdepth 1 -mindepth 1 -type d -name "makemkv-$1-*" | head -1; }
+find_pkg() { find "$SRC" -maxdepth 1 -mindepth 1 -type d -name "makemkv-$1-${WANT:-*}" | head -1; }
 
 OSS=$(find_pkg oss)
 BIN=$(find_pkg bin)
 if [ -z "$OSS" ] || [ -z "$BIN" ]; then
-  archives=$(find "$SRC" -maxdepth 1 -type f -name 'makemkv-*.tar.gz' | sort)
-  if [ -z "$archives" ]; then
-    fetch_missing
-    archives=$(find "$SRC" -maxdepth 1 -type f -name 'makemkv-*.tar.gz' | sort)
-  fi
+  # Always through fetch_missing, which keeps a tarball already here only when its
+  # checksum matches and downloads it otherwise. A copy on the card is a shortcut, not
+  # a reason to skip the check.
+  fetch_missing
+  archives=$(find "$SRC" -maxdepth 1 -type f -name "makemkv-*-${WANT:-*}.tar.gz" | sort)
   [ -n "$archives" ] || { echo "No makemkv-*.tar.gz found in $SRC"; exit 2; }
   echo "Extracting tarballs in $SRC"
   while IFS= read -r f; do

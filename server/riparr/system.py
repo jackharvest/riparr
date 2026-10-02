@@ -393,20 +393,27 @@ def _task_key_check():
     """The MakeMKV beta key expires roughly monthly and a lapsed key stops every rip.
 
     This is the single most likely way for a working box to quietly stop working, so it
-    gets its own daily task rather than being folded into the health check.
+    gets its own task rather than being folded into the health check. A beta key is
+    renewed by the lookup itself (makemkv._maybe_renew_inner); what is left here is
+    saying so when that could not happen.
     """
     # Ask the sources first, so the countdown does not depend on somebody having opened
-    # the Settings page recently. This is a daily task and can afford the wait; the
-    # lookup is cached and falls back to the backup service when the forum is unusable,
-    # which it frequently is.
+    # the Settings page recently. A scheduled task can afford the wait, and forces a
+    # fresh lookup -- the cache lives as long as the interval, so it would otherwise
+    # answer with the lookup from last time. The backup service covers the forum when
+    # it is unusable, which it frequently is.
     from . import makemkv as MK
+    renewal_before = db.get("makemkv_key_renewal")
     try:
-        MK.beta_key()
+        MK.beta_key(force=True)
     except Exception:
         pass                              # a stale date still counts down correctly
 
     st = P.makemkv_status()
     days = st.get("days_left")
+    if db.get("makemkv_key_renewal") != renewal_before:
+        return "Renewed the beta key%s" % (
+            ", good until %s" % st["key_expires"] if st.get("key_expires") else "")
     if st.get("key_stale"):
         component("MakeMKV").warning("A newer beta key has been published")
         from . import notify
@@ -427,8 +434,11 @@ def _task_key_check():
         notify.send(
             "key_expiring",
             title="MakeMKV key expires in %d day%s" % (days, "" if days == 1 else "s"),
-            body=("Every rip fails the day it lapses. Settings \u2192 General fetches "
-                  "the current beta key in one click.") if days > 0 else
+            body=(("Riparr renews the beta key itself once the next one is published."
+                   if db.get("auto_renew_beta_key", True) and st.get("key_type") == "beta"
+                   else "Every rip fails the day it lapses. Settings \u2192 General "
+                        "fetches the current beta key in one click."))
+                 if days > 0 else
                  "The key has expired. Rips will fail until it's replaced.")
     return "MakeMKV key: %s day(s) left" % days
 
@@ -473,7 +483,9 @@ def _task_cleanup():
 TASKS = [
     ("health",  "Check Health",             6 * 3600,  _task_check_health, "Health"),
     ("update",  "Application Update Check", 6 * 3600,  _task_update_check, "Update"),
-    ("key",     "MakeMKV Key Check",        24 * 3600, _task_key_check,    "MakeMKV"),
+    # Six-hourly, not daily: the old key lapses at month-end and the new one appears
+    # some hours later, and every hour between the two is an hour no disc can be read.
+    ("key",     "MakeMKV Key Check",        6 * 3600,  _task_key_check,    "MakeMKV"),
     ("share",   "Share Check",              3600,      _task_share_check,  "Share"),
     ("backup",  "Backup",                   7 * 86400, _task_backup,       "Backup"),
     ("cleanup", "Clean Up Events",          24 * 3600, _task_cleanup,      "Housekeeping"),

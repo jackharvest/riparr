@@ -8,6 +8,37 @@ bother updating.
 
 ---
 
+## 0.4.1
+
+**The MakeMKV key renews itself.** The free beta key runs out at the end of every month,
+and until now a box stopped reading discs until somebody pasted in the new one. Riparr
+now checks every six hours and, when GuinpinSoft publishes the next key, puts it in for
+you. It only ever swaps a beta key for a beta key: a bought key is never touched, and if
+the forum and the backup source disagree about the new key, nothing changes. You can
+turn this off in **Settings → General**.
+
+The next time you open the web page after a renewal, Riparr tells you once, along with a
+link to buy MakeMKV. Riparr reads discs because of MakeMKV, and buying a licence is how
+the people who make it get paid. A bought key also never runs out. Dismiss the message
+and it stays away until the next renewal.
+
+**MakeMKV 2.0.0, and a way to upgrade to it.** New boxes install 2.0.0. A box that
+already has an older MakeMKV shows **MakeMKV 2.0.0 is available** under
+**System → Updates** and **Settings → General**, with one button to upgrade. The build
+runs on the box and takes about half an hour. The version you have keeps working until
+the new one has finished building, and a disc going in while it builds is asked to wait.
+
+**Installing MakeMKV from the web page works on every box.** It used to work only if the
+Preparer had put the MakeMKV download on the card. Without it, the box had nothing to
+download and gave up.
+
+**The Preparer only copies the MakeMKV version the box will install.** An older download
+in your build folder is left off the card instead of being copied and ignored. When it
+finds a box that is already running, it also says if that box's MakeMKV or key is out of
+date.
+
+---
+
 ## 0.4.0
 
 **TV box sets work.** Put a season disc in and Riparr rips every episode on it, in

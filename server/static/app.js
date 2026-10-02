@@ -680,6 +680,67 @@ const wizard = {
   },
 };
 
+/* A newer MakeMKV than the one built on this box. Installing it is agreeing to its
+   licence again -- the same terms, but the agreement is per version and between the
+   user and GuinpinSoft, so the button says so rather than carrying the old consent
+   over silently. */
+function mkUpgradeBlock(mk) {
+  if (!mk.upgrade) return "";
+  return `
+    <div class="alert warn" style="margin-bottom:14px">
+      <b>MakeMKV ${esc(mk.upgrade)} is available</b> — this box has
+      ${esc(mk.status.version || "an older version")}. The new version is built on this
+      device, which takes around half an hour. The one you have keeps working until the
+      new one has finished building, and discs wait while it does.
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn primary" id="mk-upgrade">Accept licence and upgrade</button>
+        <a class="btn" href="${esc(mk.eula_url)}" target="_blank" rel="noopener">Read the licence</a>
+      </div>
+      <div id="mk-upgrade-progress" style="margin-top:10px"></div>
+    </div>`;
+}
+
+/* Said once, on the first visit after the box renewed the beta key on its own. The
+   renewal keeps a box working while makemkv.com's shop is down, which it often is; it
+   is not a substitute for buying MakeMKV, and the dialog says so. Dismissing it is
+   remembered on the box, so it comes back only with the next renewal. */
+async function showRenewalNotice() {
+  let r;
+  try { r = (await api.get("/api/makemkv/renewal")).renewal; } catch (e) { return; }
+  if (!r || document.getElementById("renewal-dialog")) return;
+  const until = r.expires
+    ? new Date(r.expires + "T12:00:00").toLocaleDateString(undefined,
+        { day: "numeric", month: "long", year: "numeric" })
+    : "";
+  const d = document.createElement("dialog");
+  d.id = "renewal-dialog";
+  d.className = "notice-dialog";
+  d.innerHTML = `
+    <h2>${icon("circle-check", "ok")} MakeMKV key renewed</h2>
+    <p>Your MakeMKV beta key ran out, so Riparr put in the new free one that
+      GuinpinSoft publishes each month${until ? `. It works until <b>${esc(until)}</b>` : ""}.
+      Your discs keep ripping without you having to do anything.</p>
+    <p>Riparr can only read your discs because of MakeMKV. If it's worth it to you,
+      please buy a licence. It pays the people who make MakeMKV, and a bought key never
+      runs out. If their shop is down, try again another day.</p>
+    <div class="btn-row">
+      <a class="btn primary" href="${esc(r.buy_url)}" target="_blank" rel="noopener"
+         id="renewal-buy">Buy MakeMKV</a>
+      <button class="btn" id="renewal-dismiss">Dismiss</button>
+    </div>`;
+  document.body.appendChild(d);
+  paintIcons(d);
+  const close = async () => {
+    try { await api.post("/api/makemkv/renewal/dismiss", {}); } catch (e) { /* asked again next visit */ }
+    d.close();
+    d.remove();
+  };
+  d.querySelector("#renewal-dismiss").onclick = close;
+  d.querySelector("#renewal-buy").addEventListener("click", close);
+  d.addEventListener("cancel", (e) => { e.preventDefault(); close(); });
+  d.showModal();
+}
+
 function pollMakeMKV(into = "#mk-progress") {
   const box = $(into);
   if (!box) return;
@@ -696,7 +757,7 @@ function pollMakeMKV(into = "#mk-progress") {
       clearInterval(timer);
       box.innerHTML = `<div class="result bad"><b>${esc(st.message)}</b>
         ${st.detail ? `<div class="why">${esc(st.detail)}</div>` : ""}</div>`;
-      const btn = $("#mk-install");
+      const btn = $("#mk-install") || $("#mk-upgrade");
       if (btn) btn.disabled = false;
       return;
     }
@@ -2629,6 +2690,7 @@ settingsPages.general = async (s) => {
         !st.installed ? "Not installed"
         : st.days_left != null ? `${st.days_left} days left` : "Installed"}</span></h2>
       <div>
+      ${mkUpgradeBlock(mk)}
       ${st.installed ? "" : `
         <p class="muted" style="margin-bottom:10px">MakeMKV is made by GuinpinSoft. Its
           licence is between you and them.
@@ -2654,8 +2716,13 @@ settingsPages.general = async (s) => {
       <label class="f" style="margin-top:${st.installed ? 0 : 16}px"><span>Key</span>
         <input data-set="makemkv_key" id="mk-key-input" value="${esc(s.makemkv_key)}" placeholder="Beta or purchased key">
         <span class="help">MakeMKV is free while it is in beta, behind a key GuinpinSoft
-          publishes on the forum. ${esc((mk.key_advice || {}).note || "")}</span></label>
+          publishes on the forum. ${esc((mk.key_advice || {}).note || "")}
+          <a href="${esc(mk.buy_url)}" target="_blank" rel="noopener">Buying a licence</a>
+          supports the people who make it, and a bought key never runs out.</span></label>
       <div class="f"><span></span><div class="grow" id="mk-key-offer"></div></div>
+      ${sw("auto_renew_beta_key", "Renew the beta key automatically", s.auto_renew_beta_key !== false,
+          "When the free beta key runs out, put in the new one GuinpinSoft publishes. "
+          + "A bought key is never changed.")}
     </div></div>
 
     ${sitesPanel(mk)}
@@ -3051,7 +3118,8 @@ systemPages.backup = async () => {
 
 /* ── Updates ── */
 systemPages.updates = async () => {
-  const u = await api.get("/api/update");
+  const [u, mk] = await Promise.all([api.get("/api/update"),
+                                      api.get("/api/makemkv").catch(() => null)]);
   const kind = u.status === "update" ? "warn" : u.status === "current" ? "ok" : "";
   return `
     <div class="toolbar">
@@ -3075,6 +3143,18 @@ systemPages.updates = async () => {
         ? `<p class="muted" style="font-size:13px">Updates install on the appliance
            itself. This process is running in development mode.</p>` : ""}
     </div>
+    ${mk && mk.status.installed ? `<div class="section"><h2>MakeMKV<span class="grow"></span>
+      <span class="badge ${mk.upgrade ? "warn" : "ok"}">${mk.upgrade ? "update" : "current"}</span></h2>
+      ${mkUpgradeBlock(mk)}
+      <div class="kv">
+        <div class="k">Installed</div><div class="v">${esc(mk.status.version || "—")}</div>
+        <div class="k">Latest</div><div class="v">${esc(mk.manifest.version)}</div>
+        <div class="k">Key</div><div class="v">${esc(
+          mk.status.key_type === "purchased" ? "Bought — never runs out"
+          : mk.status.key_stale ? "Older than the published key"
+          : mk.status.key_expires ? `Beta, works until ${mk.status.key_expires}`
+          : mk.status.key_type ? "Beta" : "None entered")}</div>
+      </div></div>` : ""}
     ${u.notes ? `<div class="section"><h2>Release notes</h2>
       <pre class="notes">${esc(u.notes)}</pre></div>` : ""}`;
 };
@@ -3936,6 +4016,21 @@ function wireContent(section, sub) {
     recheck.disabled = false;
   };
 
+  const mkUp = $("#mk-upgrade");
+  if (mkUp) mkUp.onclick = async () => {
+    mkUp.disabled = true;
+    const out = $("#mk-upgrade-progress");
+    out.innerHTML = `<div class="result busy"><span class="spin"></span>Starting</div>`;
+    try { await api.post("/api/makemkv/install", { accept_eula: true }); }
+    catch (e) {
+      out.innerHTML = `<div class="result bad">${esc(e.message)}</div>`;
+      mkUp.disabled = false;
+      return;
+    }
+    pollMakeMKV("#mk-upgrade-progress");
+    watchMakeMKV();
+  };
+
   const mkAccept = $("#mk-accept");
   if (mkAccept) {
     mkAccept.onchange = () => { $("#mk-install").disabled = !mkAccept.checked; };
@@ -4456,6 +4551,7 @@ async function boot() {
   if (state.status.makemkv && !state.status.makemkv.installed) watchMakeMKV();
   if (!location.hash) location.hash = "#/queue";
   route();
+  showRenewalNotice();
 }
 
 boot();

@@ -543,12 +543,12 @@ async function buildReview() {
     ["SSH", state.boot.has_key ? "enabled · key + password" : "enabled · password"],
     // Say where it came from. "Copied onto the card" on its own reads as though Riparr
     // ships MakeMKV, and it does not: nothing is redistributed and no release asset
-    // contains it. The app downloads the official tarballs from makemkv.com into your
-    // build folder, checked against the pinned hashes in packaging/makemkv-manifest.json,
-    // and the write copies them across so the box does not have to fetch them itself.
-    ["MakeMKV", state.boot.makemkv
-      ? 'copied from your build folder <span class="tag">your own download from makemkv.com</span>'
-      : '<span class="tag warn">not downloaded yet — nothing will be copied</span>'],
+    // contains it. Tarballs you have put in the build folder's makemkv/ are copied
+    // across only when they are the version the box will build and match the hashes
+    // pinned in packaging/makemkv-manifest.json. Otherwise the box downloads MakeMKV
+    // itself, after you accept GuinpinSoft's licence in its web page -- which is fine,
+    // and is said as the normal case rather than as a warning.
+    ["MakeMKV", mkvSummary()],
     ["Region", `${esc(c.country)} · ${esc(c.timezone)}`],
   ];
   $("#summary").innerHTML = rows
@@ -689,7 +689,7 @@ async function enterHandoff() {
     ["Reachable at", `${esc(host)}.local:${state.port}`],
     ["Wi-Fi", state.net ? esc(state.net.ssid) : "—"],
     ["MakeMKV", state.boot && state.boot.makemkv
-      ? "copied on" : `<span class="tag warn">not included</span>`],
+      ? "copied on" : "downloaded by the box when you accept its licence"],
   ];
   $("#handoff-recap").innerHTML = rows
     .map(([k, v]) => `<div class="r"><div class="k">${k}</div><div class="v">${v}</div></div>`)
@@ -987,6 +987,21 @@ async function connectProbe() {
         + `back. Update this app first — <b>Check for updates → now</b>, at the bottom of `
         + `this window — unless going back is what you meant.`;
     }
+  }
+  // MakeMKV is the box's to upgrade, not this app's: it is built on the box, under a
+  // licence accepted on the box. Say what is behind and where it gets fixed.
+  const mk = p.makemkv || {};
+  const mkTo = p.makemkv_installs || "";
+  const notes = [];
+  if (mk.version && mkTo && verCmp(mkTo, mk.version) > 0) {
+    notes.push(`Its MakeMKV is ${esc(mk.version)}. Once Riparr is updated, `
+      + `<b>System → Updates</b> on the box upgrades it to ${esc(mkTo)}.`);
+  }
+  if (mk.key_stale) {
+    notes.push(`Its MakeMKV key has run out. An updated box puts in the new free key by itself.`);
+  }
+  if (box && notes.length && cmp >= 0) {
+    $("#connect-existing-b").innerHTML += `<br><br>${notes.join(" ")}`;
   }
   if (btn) {
     btn.textContent = cmp > 0 ? `Update to ${to}`
@@ -1405,3 +1420,16 @@ init().then(bootDone).catch((e) => {
     "happening, that is a bug worth reporting.</div></div>";
   document.body.appendChild(box);
 });
+
+function mkvSummary() {
+  const m = (state.boot && state.boot.makemkv_info) || {};
+  if (state.boot && state.boot.makemkv) {
+    return `${esc(m.version)} copied from your build folder `
+      + `<span class="tag">your own download from makemkv.com</span>`;
+  }
+  const other = (m.other || []).length
+    ? ` <span class="tag">your build folder has a different version, so it is left off</span>`
+    : "";
+  return `the box downloads ${m.version ? esc(m.version) : "it"} when you accept `
+    + `MakeMKV's licence on its web page${other}`;
+}

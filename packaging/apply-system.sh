@@ -45,6 +45,24 @@ if [ -f "$PKG/netwatch-settings.py" ]; then
             "$LIB/netwatch-settings.py"
 fi
 
+# The MakeMKV installer and the manifest it reads go together, and both are root's.
+# The installer used to be placed only by install.sh, so a web update never refreshed
+# it; and it looked for the manifest at ../packaging beside itself -- which, run from
+# here, is a directory that does not exist. With no manifest it had nothing to fetch,
+# so installing MakeMKV from the web page worked only when the Preparer had already
+# put the tarballs on the card.
+#
+# Copied rather than read out of /opt/riparr at install time, like every other part
+# here: what root runs between provisions is root's own copy.
+if [ -f "$INSTALL_DIR/tools/makemkv-install.sh" ]; then
+    install -o root -g root -m 0755 "$INSTALL_DIR/tools/makemkv-install.sh" \
+            "$LIB/makemkv-install.sh"
+fi
+if [ -f "$PKG/makemkv-manifest.json" ]; then
+    install -o root -g root -m 0644 "$PKG/makemkv-manifest.json" \
+            "$LIB/makemkv-manifest.json"
+fi
+
 # mount-library.sh lives in tools/ rather than packaging/, but it is a root-side helper
 # like the rest and belongs under /usr/local/lib for the same reason: riparr-library
 # used to execute it straight out of /opt/riparr, which the riparr account owns.

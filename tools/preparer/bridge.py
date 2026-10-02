@@ -14,6 +14,7 @@ docs/design/cross-platform.md and have not been ported yet. `start_write` says s
 than failing obscurely.
 """
 import json
+import shutil
 import os
 import socket
 import subprocess
@@ -32,7 +33,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -147,7 +148,8 @@ class Bridge:
             "password": pw,
             "password_generated": generated,
             "has_key": pubkey is not None,
-            "makemkv": os.path.isdir(os.path.join(self.assets, "makemkv")),
+            "makemkv": bool(self._makemkv()["ready"]),
+            "makemkv_info": self._makemkv(),
             "ssh_config": (os.path.join(self.assets, "ssh_config")
                            if os.path.exists(os.path.join(self.assets, "ssh_config"))
                            else None),
@@ -475,8 +477,7 @@ class Bridge:
         total = core.uncompressed_size(image)
         sha = core.expected_sha256(image) or ""
         verify = bool(cfg.get("verify", True))
-        mkv = os.path.join(self.assets, "makemkv")
-        mkv = mkv if os.path.isdir(mkv) else ""
+        mkv = self._makemkv_staging()
         self.nosleep.hold("writing a card")
         core_publish(self.progress_path, phase="auth",
                      message="Waiting for your administrator password")
@@ -489,6 +490,26 @@ class Bridge:
         self.write_thread.start()
         return {"ok": True, "total": total, "verify": verify,
                 "kind": core.image_kind(image)}
+
+    def _makemkv(self):
+        return core.makemkv_bundle(os.path.join(self.assets, "makemkv"))
+
+    def _makemkv_staging(self):
+        """A directory holding only the pinned tarballs, for the writer to copy.
+
+        The writer copies every .tar.gz in the directory it is given. Handing it the
+        build folder itself put whatever else was in there onto the card as well.
+        """
+        info = self._makemkv()
+        if not info["ready"]:
+            return ""
+        src = os.path.join(self.assets, "makemkv")
+        stage = os.path.join(RUNDIR, "makemkv")
+        shutil.rmtree(stage, ignore_errors=True)
+        os.makedirs(stage)
+        for n in info["ready"]:
+            os.symlink(os.path.join(src, n), os.path.join(stage, n))
+        return stage
 
     def _run_privileged(self, image, dev, toml_path, total, sha="", verify=True, mkv="",
                         conf=""):
@@ -595,6 +616,8 @@ class Bridge:
         """
         r = core.probe_appliance(hostname, port or core.DEFAULT_PORT)
         r["installs"] = core.payload_version()
+        r["makemkv_installs"] = core.makemkv_bundle(
+            os.path.join(self.assets, "makemkv"))["version"]
         return r
 
     def name_taken(self, hostname):

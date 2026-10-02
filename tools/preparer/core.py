@@ -1001,6 +1001,59 @@ def payload_version(root=None):
     return m.group(1) if m else ""
 
 
+_MKV_HASHES = {}
+
+
+def makemkv_bundle(srcdir, root=None):
+    """Which MakeMKV tarballs in the build folder are the version the box will install.
+
+    Only those are worth putting on a card. The box builds the version pinned in
+    packaging/makemkv-manifest.json and checks every tarball against its hash, so a copy
+    of anything else -- last month's download, a version since replaced -- is 25 MB the
+    box ignores while the summary says "copied on".
+    """
+    out = {"version": "", "ready": [], "other": []}
+    try:
+        with open(os.path.join(root or payload_root(), "packaging",
+                               "makemkv-manifest.json")) as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return out
+    out["version"] = m.get("version", "")
+    pinned = {p["name"]: p["sha256"] for p in m.get("packages", [])}
+    try:
+        names = sorted(n for n in os.listdir(srcdir) if n.endswith(".tar.gz"))
+    except OSError:
+        return out
+    for n in names:
+        path = os.path.join(srcdir, n)
+        want = pinned.get(n)
+        if want and _sha256_cached(path) == want:
+            out["ready"].append(n)
+        else:
+            out["other"].append(n)
+    if len(out["ready"]) != len(pinned):
+        # Half a pair cannot be built; the box downloads both.
+        out["other"] += out["ready"]
+        out["ready"] = []
+    return out
+
+
+def _sha256_cached(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    key = (path, st.st_size, st.st_mtime)
+    if key not in _MKV_HASHES:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        _MKV_HASHES[key] = h.hexdigest()
+    return _MKV_HASHES[key]
+
+
 def payload_ok(root=None):
     """Whether the tree that would be sent can actually install. (ok, what is missing).
 
@@ -1223,9 +1276,12 @@ def probe_appliance(host, port=DEFAULT_PORT, timeout=4):
         except Exception:
             continue
         if isinstance(d, dict) and d.get("version"):
+            mk = d.get("makemkv") if isinstance(d.get("makemkv"), dict) else {}
             return {"running": True, "version": d.get("version") or "",
                     "complete": bool(d.get("complete")),
                     "has_users": bool(d.get("has_users")),
+                    "makemkv": {"version": mk.get("version") or "",
+                                "key_stale": bool(mk.get("key_stale"))},
                     "address": name}
     return {"running": False}
 

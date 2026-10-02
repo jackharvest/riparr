@@ -30,6 +30,7 @@ from . import platform as P
 EULA_URL = "https://www.makemkv.com/eula/"
 HOMEPAGE = "https://www.makemkv.com/"
 FORUM_KEY_TOPIC = "https://forum.makemkv.com/forum/viewtopic.php?f=5&t=1053"
+BUY_URL = "https://www.makemkv.com/buy/"
 
 # A second place to ask, for the same reason there are mirrors for the binary below:
 # forum.makemkv.com is regularly slow to the point of unusable -- four minutes to a first
@@ -241,8 +242,11 @@ def key_advice(entered_at=None):
         "soon": days <= 5,
         "note": ("Free beta keys expire at the end of the month rather than a fixed "
                  "number of days after you enter one, so this one stops working on or "
-                 "around %s. Getting the next one is a copy and paste."
-                 % time.strftime("%d %B", time.localtime(end))),
+                 "around %s. %s"
+                 % (time.strftime("%d %B", time.localtime(end)),
+                    "Riparr puts in the next one itself."
+                    if _db_get("auto_renew_beta_key", True)
+                    else "Getting the next one is a copy and paste.")),
     }
 
 
@@ -292,6 +296,28 @@ _state = {"phase": "idle", "message": "", "detail": "", "progress": 0.0}
 _lock = threading.Lock()
 
 
+def _vtuple(v):
+    try:
+        return tuple(int(x) for x in str(v).strip().lstrip("v").split("."))
+    except (TypeError, ValueError):
+        return None
+
+
+def upgrade_available(st=None):
+    """The version Riparr would install, when it is newer than the one installed."""
+    st = st or P.makemkv_status()
+    if not st.get("installed"):
+        return None
+    have, want = _vtuple(st.get("version")), _vtuple(MANIFEST.get("version"))
+    if have and want and want > have:
+        return MANIFEST["version"]
+    return None
+
+
+def installing():
+    return install_status().get("phase") in ("downloading", "verifying", "building")
+
+
 def info():
     st = P.makemkv_status()
     local = find_local_source()
@@ -313,10 +339,21 @@ def info():
         "key_topic": FORUM_KEY_TOPIC,
         "install": dict(_state),
         "installable": can_install()[0],
+        "upgrade": upgrade_available(st),
+        "auto_renew": bool(_db_get("auto_renew_beta_key", True)),
+        "buy_url": BUY_URL,
         "sites": sites,
         "sites_checking": checking,
         "key_advice": key_advice(),
     }
+
+
+def _db_get(key, default=None):
+    try:
+        from . import db
+        return db.get(key, default)
+    except Exception:
+        return default
 
 
 def _set(**kw):
@@ -395,6 +432,35 @@ def can_install():
         "Then come back to this page.")
 
 
+# What the root side runs to install MakeMKV. These live outside /opt/riparr, so an
+# update of Riparr does not bring them along by itself -- and an old installer builds
+# the old version, or, before the manifest was installed beside it, nothing at all.
+_ROOT_PARTS = ("makemkv-run.sh", "makemkv-install.sh", "makemkv-manifest.json")
+
+
+def _root_installer_current():
+    comps = P.system_components().get("components", [])
+    return all(c.get("state") == "ok" for c in comps if c.get("name") in _ROOT_PARTS)
+
+
+def _refresh_root_installer(timeout=30):
+    """Ask the root side to reinstall the system parts, and wait until it has.
+
+    Twice, if once is not enough. A box whose apply-system.sh predates it refreshing
+    itself takes two passes: the first installs the provision unit that refreshes the
+    script, the second runs the refreshed script.
+    """
+    for _ in range(2):
+        if not P.request_provision():
+            return False
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(1)
+            if _root_installer_current():
+                return True
+    return False
+
+
 def start_install(accepted_eula):
     """Begin an install. Refuses without explicit consent — this is the whole point.
 
@@ -409,11 +475,22 @@ def start_install(accepted_eula):
     ok, why = can_install()
     if not ok:
         return {"ok": False, "error": why}
-    with _lock:
-        if _state["phase"] in ("downloading", "verifying", "building"):
-            return {"ok": False, "error": "An install is already running."}
+    from . import db
+    if db.drive_busy():
+        # The build replaces the libraries a running makemkvcon has loaded. Waiting for
+        # the disc to finish costs minutes; interrupting it costs the disc.
+        return {"ok": False,
+                "error": "A disc is being read. Start the MakeMKV install once it has "
+                         "finished."}
+    if installing():
+        return {"ok": False, "error": "An install is already running."}
 
     if os.geteuid() != 0 and bridge_available():
+        if not _root_installer_current() and not _refresh_root_installer():
+            return {"ok": False,
+                    "error": "The part of Riparr that installs MakeMKV is out of date "
+                             "and could not be refreshed. System \u2192 Tasks lists "
+                             "the system parts and can install them."}
         try:
             # Touching the file is the whole request. systemd does the rest.
             with open(REQUEST, "w") as f:
@@ -647,6 +724,7 @@ def beta_key(force=False, allow_fetch=True):
 
     _remember(result, KEY_TTL)
     _record_expiry(result)
+    _maybe_renew(result)
     return result
 
 
@@ -769,6 +847,75 @@ def _record_expiry_inner(result):
         # left" about somebody else's key is worse than admitting the date is unknown.
         db.set("makemkv_key_stale", True)
         db.set("makemkv_key_expires", "")
+
+
+# ── renewing the beta key ──
+# The beta key lapses at the end of every month and every rip fails the next morning.
+# Noticing that and pasting the new key in was left to the owner, and the box sat on a
+# dead key until somebody opened Settings -- so the box does it itself now.
+#
+# Narrowly. Only a beta key is ever replaced, and only by the key GuinpinSoft has
+# published: a purchased key is never touched, a box with no key is not given one, and
+# two sources disagreeing about the current key stops it. What it does is said once, on
+# the next visit to the web page, together with the case for buying MakeMKV -- the
+# point is to keep a box working while the shop is down, not to stand in for buying.
+
+def _maybe_renew(result):
+    try:
+        _maybe_renew_inner(result)
+    except Exception:
+        # A renewal is a convenience. It must never break the key lookup itself.
+        pass
+
+
+def _maybe_renew_inner(result):
+    from . import db
+    if not db.get("auto_renew_beta_key", True):
+        return
+    mine = (db.get("makemkv_key") or "").strip()
+    new = (result.get("key") or "").strip()
+    if not mine.startswith("T-") or not new.startswith("T-") or new == mine:
+        return
+    if result.get("sources_agree") is False:
+        return
+    expires = result.get("expires") or ""
+    if expires and expires < datetime.date.today().isoformat():
+        return                            # never swap one dead key for another
+
+    ok, _ = apply_key(new)
+    if not ok:
+        # Leave the database on the key MakeMKV actually has; the stale warning stays
+        # up and says what to do.
+        return
+    db.set("makemkv_key", new)
+    db.set("makemkv_key_expires", expires)
+    db.set("makemkv_key_stale", False)
+    db.set("makemkv_key_renewal", {"at": int(time.time()), "expires": expires,
+                                   "seen": False})
+    try:
+        from .system import component
+        component("MakeMKV").info(
+            "Renewed the beta key%s", " (good until %s)" % expires if expires else "")
+    except Exception:
+        pass
+
+
+def renewal_notice():
+    """The renewal the web page has not mentioned yet, or None."""
+    from . import db
+    r = db.get("makemkv_key_renewal") or None
+    if not isinstance(r, dict) or r.get("seen"):
+        return None
+    return {"at": r.get("at"), "expires": r.get("expires") or None,
+            "buy_url": BUY_URL}
+
+
+def dismiss_renewal_notice():
+    from . import db
+    r = db.get("makemkv_key_renewal") or None
+    if isinstance(r, dict):
+        r["seen"] = True
+        db.set("makemkv_key_renewal", r)
 
 
 SETTINGS_CONF = "~/.MakeMKV/settings.conf"

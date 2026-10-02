@@ -143,6 +143,9 @@ def _autorip_ready():
         return False
     if not P.makemkv_status().get("installed"):
         return False
+    from . import makemkv as MK
+    if MK.installing():
+        return False
     if not db.default_share():
         return False
     return True
@@ -168,6 +171,10 @@ def enqueue(force=False, expect=None):
     # would waste the very minutes early eject exists to reclaim.
     if db.drive_busy():
         return None, "Riparr is already working on a disc."
+    from . import makemkv as MK
+    if MK.installing():
+        return None, ("MakeMKV is being installed. The disc can go in again once "
+                      "that has finished.")
 
     # Before anything expensive: can this drive read this disc at all? Refused here
     # rather than three minutes later inside MakeMKV, and the disc comes back out --

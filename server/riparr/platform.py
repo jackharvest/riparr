@@ -1147,6 +1147,8 @@ SYSTEM_COMPONENTS = [
     ("wifi-apply.sh",           "script", "Changing Wi-Fi networks",            True),
     ("usbhost-fix.sh",          "script", "The USB-C socket fix",               True),
     ("makemkv-run.sh",          "script", "Installing MakeMKV",                 True),
+    ("makemkv-install.sh",      "script", "Installing MakeMKV",                 True),
+    ("makemkv-manifest.json",   "script", "Which MakeMKV to install, and its checksums", True),
     ("netwatch.sh",             "script", "Recovers Wi-Fi that dies silently",  True),
     ("netwatch-settings.py",    "script", "Your Wi-Fi recovery settings",       True),
     ("mount-library.sh",        "script", "Mounts your library share",          True),
@@ -1409,10 +1411,15 @@ def makemkv_status():
         # RIPARR_MOCK_MAKEMKV lets the first-run and expiry paths be exercised off-Pi:
         #   missing  — not installed, so the licence + install flow shows
         #   expiring — installed, key nearly dead, so the warning paths show
+        #   old      — installed, but older than the pinned version, so upgrade shows
         mode = os.environ.get("RIPARR_MOCK_MAKEMKV", "ready")
         if mode == "missing":
             return {"installed": False, "version": None, "eula_accepted": False,
                     "key_type": None, "key_expires": None, "days_left": None}
+        if mode == "old":
+            return {"installed": True, "version": "1.18.4", "eula_accepted": True,
+                    "key_type": "beta", "key_expires": "2026-10-31", "days_left": 30,
+                    "key_stale": False}
         if mode == "expiring":
             return {"installed": True, "version": "2.0.0", "eula_accepted": True,
                     "key_type": "beta", "key_expires": "2026-08-23", "days_left": 4}

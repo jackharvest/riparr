@@ -44,10 +44,15 @@ chmod 0644 "$LOG"
 # (makemkv-install.sh) already globs makemkv-{oss,bin}-* rather than a fixed version, so a
 # hardcoded 1.18.4 here was the one place a newer MakeMKV on the card would be missed and
 # silently re-downloaded. Both tarballs must be present for a directory to count.
+# But only the version being installed: a card written for an older MakeMKV still has
+# those tarballs, and treating them as "a copy already here" made an upgrade announce
+# that it was using the local copy of the version it was meant to replace.
+WANT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' \
+       /usr/local/lib/riparr/makemkv-manifest.json 2>/dev/null || true)
 SRC=""
 for d in /root/makemkv /boot/makemkv /boot/firmware/makemkv /var/lib/riparr/makemkv; do
-  oss=$(ls "$d"/makemkv-oss-*.tar.gz 2>/dev/null | head -1)
-  bin=$(ls "$d"/makemkv-bin-*.tar.gz 2>/dev/null | head -1)
+  oss=$(ls "$d"/makemkv-oss-"${WANT:-*}".tar.gz 2>/dev/null | head -1)
+  bin=$(ls "$d"/makemkv-bin-"${WANT:-*}".tar.gz 2>/dev/null | head -1)
   if [ -n "$oss" ] && [ -n "$bin" ]; then
     SRC="$d"; break
   fi
