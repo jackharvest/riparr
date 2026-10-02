@@ -30,6 +30,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import deque
@@ -407,8 +408,12 @@ class Finisher:
             return False
         # Several of these run at once, so none of them touches the shared known_hosts:
         # a probe pins nothing, and step_connect clears and pins the box's key itself.
+        # A file of its own rather than os.devnull, which is NUL on Windows and not
+        # something to bet OpenSSH's known_hosts writer on.
+        fd, scratch = tempfile.mkstemp(prefix="riparr-probe-")
+        os.close(fd)
         ours = "UserKnownHostsFile=%s" % self.known_hosts
-        cmd = [("UserKnownHostsFile=%s" % os.devnull) if a == ours else a
+        cmd = [("UserKnownHostsFile=%s" % scratch) if a == ours else a
                for a in self._ssh_base(ip)]
         try:
             p = subprocess.run(
@@ -416,6 +421,11 @@ class Finisher:
                 capture_output=True, text=True, **_UTF8, timeout=15, **_NOWIN)
         except subprocess.TimeoutExpired:
             return False                # an SSH server that never finishes its banner
+        finally:
+            try:
+                os.remove(scratch)
+            except OSError:
+                pass
         return p.returncode == 0 and p.stdout.strip() == self.host
 
     def step_connect(self):

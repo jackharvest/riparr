@@ -8,6 +8,28 @@ bother updating.
 
 ---
 
+## 0.4.5
+
+**The Linux Preparer works.** Before this, it closed the moment you opened it. It now
+writes the card, finds the box and installs Riparr, the same as on a Mac or PC. It uses
+the GTK and WebKit your desktop already has.
+
+**Linux on ARM gets its own download**, for Raspberry Pi desktops and ARM laptops.
+
+**Cards written on newer Ubuntu boot.** Ubuntu 25.10 and later ship a `dd` that can
+write a damaged card while reporting success. The Preparer writes the card itself now,
+and its read-back check reads the card rather than a copy in memory.
+
+**Setup finds the box faster on busy networks.** If your box doesn't answer to its
+name, setup goes looking for it by address. On a network with lots of devices that
+search could run out of time before reaching the box. It's quicker now, and it tries
+the address the box was last seen at first.
+
+**Your SD card reader shows up on Linux** even when Linux doesn't report it as
+removable hardware.
+
+---
+
 ## 0.4.4
 
 **The Preparer works on Windows, start to finish.** It writes the Orange Pi card, finds
