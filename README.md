@@ -66,6 +66,10 @@ Riparr Preparer. One more dialog, click Open, and that's it — it won't ask aga
 **Keep anyway**. When Windows asks about the publisher, click **Run** — or, if it shows
 "Windows protected your PC", **More info → Run anyway**.
 
+**Linux:** it uses the web view your desktop already has (WebKitGTK). Ubuntu, Fedora and
+Mint desktops have it. If it opens nothing at all, install `gir1.2-webkit2-4.1`
+(Debian/Ubuntu) or `webkit2gtk4.1` (Fedora) and try again.
+
 ---
 
 ## How it goes
@@ -116,10 +120,27 @@ Everything below is stuff you probably don't need. It's here if you do.
 
 This is pre-1.0. It rips discs end to end on real hardware, and both halves update
 themselves. It has also run on one board, with one drive, against one NAS — so the parts
-most likely to bite you are the ones fewest people have tried: other boards, other
-drives, and **writing a card from Windows or Linux**, which is written and tested but
-hasn't yet produced a card that went on to boot a board. If you're first, [an issue](../../issues)
-with your OS version and card reader is genuinely useful.
+most likely to bite you are the ones fewest people have tried: other boards and other
+drives.
+
+The Preparer has gone from a blank card to a running box on all three systems. Windows
+and Linux were tested in virtual machines with a USB card reader, though, so a few
+things a real PC has were never tried:
+
+- **Picking your Wi-Fi from the list.** The test machines had no Wi-Fi, so the network
+  was typed in by hand. If the list comes up empty or wrong, **Enter a name manually**
+  does the same job.
+- **"Use the password saved on this PC"** was only seen saying it had nothing saved. If
+  it can't find yours, type the password in.
+- **A laptop's built-in SD slot** (Windows and Linux). Some report themselves as a fixed
+  disk, and the Preparer won't offer those. If your card doesn't show up, a USB card
+  reader will.
+- **Display scaling above 100%** on Windows. The window should fit; if it doesn't, tell me.
+- **Linux on a normal Intel/AMD PC.** The ARM build was tested; the x64 one is built
+  the same way from the same code, but nobody has run it yet.
+
+If you're first on any of these, [an issue](../../issues) with your OS version and card
+reader is genuinely useful.
 
 Deliberate limits, so they don't surprise you:
 
