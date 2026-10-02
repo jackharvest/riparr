@@ -40,9 +40,18 @@ def _sha256(path):
 def publish(path, **kw):
     """Atomically replace the status file so a reader never sees a half-written line."""
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(kw, f)
-    os.replace(tmp, path)
+    # Windows refuses to replace a file another process has open, and the other side
+    # polls this one several times a second. A moment later it is free.
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.025)
 
 
 def _read_back(dev, count, st):

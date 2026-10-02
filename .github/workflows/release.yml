@@ -154,7 +154,24 @@ jobs:
       - name: The Windows build can configure an ext4 image
         if: runner.os == 'Windows'
         shell: bash
-        run: python packaging/windows/test-image-config.py "$RUNNER_TEMP/e2fs-tools/mke2fs.exe"
+        run: python packaging/windows/test-image-config.py "$RUNNER_TEMP/e2fs-tools/mke2fs.exe" "$RUNNER_TEMP/fixtures.json"
+
+      # The write itself, onto a real disk. An attached VHD is a \\.\PHYSICALDRIVEn like
+      # any card reader, and the runner is an administrator, so this is the writer
+      # exactly as the app runs it: locks, raw unbuffered write, read-back hash. v0.4.3
+      # shipped a Windows writer that could not open any disk at all, and nothing before
+      # this step would have noticed.
+      - name: The Windows writer writes a real disk
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP "card.vhdx"
+          "create vdisk file=`"$vhd`" maximum=128 type=fixed`nattach vdisk" | Set-Content dp.txt
+          diskpart /s dp.txt | Out-Host
+          $n = (Get-DiskImage -ImagePath $vhd | Get-Disk).Number
+          Write-Host "VHD is disk $n"
+          python packaging/windows/test-write-disk.py "$env:RUNNER_TEMP\fixtures.json" $n
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
         shell: bash

@@ -5,7 +5,7 @@ that was just built -- the combination the app ships. It exercises the parts tha
 go wrong on Windows: CRLF creeping into config files or into the debugfs script, paths
 with backslashes and spaces, and Cygwin's handling of `image?offset=N`.
 
-    python test-image-config.py <mke2fs.exe>
+    python test-image-config.py <mke2fs.exe> [<fixtures.json>]
 """
 import lzma
 import os
@@ -117,3 +117,10 @@ if bad:
     sys.exit("image configuration is wrong on Windows:\n  " + "\n  ".join(bad))
 print("ok  configured an ext4 image from Windows Python: hostname, Wi-Fi, mDNS, SSH key, "
       "riparr.conf and MakeMKV all read back, no CRLF")
+
+# Hand the fixtures to test-write-disk.py, which writes them to a real disk.
+if len(sys.argv) > 2:
+    import json
+    with open(sys.argv[2], "w", encoding="utf-8") as f:
+        json.dump({"image": xz, "toml": toml, "conf": conf, "makemkv": mkv,
+                   "size": SIZE}, f)

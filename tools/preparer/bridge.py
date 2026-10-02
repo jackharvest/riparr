@@ -40,8 +40,28 @@ UI = os.path.join(HERE, "ui")
 
 # Sensitive scratch: holds the generated custom.toml between the GUI and the root
 # writer. 0700, and removed on exit.
-RUNDIR = tempfile.mkdtemp(prefix="riparr-prep-")
-os.chmod(RUNDIR, 0o700)
+#
+# Not mkdtemp on Windows. Since Python 3.12.4 it gives the directory an owner-only ACL
+# (the CVE-2024-4030 fix), and a file the elevated writer creates is owned by
+# Administrators -- so the unelevated GUI could not read a single progress update. The
+# write showed "Working" until it ended, and its error never arrived. A plain mkdir
+# inherits %TEMP%'s ACL, which grants this user, and %TEMP% is inside their profile.
+def _rundir():
+    if sys.platform != "win32":
+        d = tempfile.mkdtemp(prefix="riparr-prep-")
+        os.chmod(d, 0o700)
+        return d
+    import secrets
+    while True:
+        d = os.path.join(tempfile.gettempdir(), "riparr-prep-" + secrets.token_hex(6))
+        try:
+            os.mkdir(d)
+            return d
+        except FileExistsError:
+            continue
+
+
+RUNDIR = _rundir()
 
 
 class NoSleep:
@@ -94,9 +114,18 @@ def core_publish(status_file, **kw):
     image sat correctly on disk. Only the failure path worked, because it passes no path.
     """
     tmp = status_file + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(kw, f)
-    os.replace(tmp, status_file)
+    # Windows refuses to replace a file another process has open, and the other side
+    # polls this one several times a second. A moment later it is free.
+    for attempt in range(40):
+        try:
+            os.replace(tmp, status_file)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.025)
 
 
 # ─────────────────────────── the bridge plumbing ───────────────────────────

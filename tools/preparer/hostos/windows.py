@@ -294,7 +294,7 @@ def keep_awake_command(pid):
 #   2. FSCTL_LOCK_VOLUME each one                             (fails if anything has a file open)
 #   3. FSCTL_DISMOUNT_VOLUME each one                         (the filesystem lets go)
 #   4. hold those handles open for the whole write            (closing one remounts it)
-#   5. FSCTL_ALLOW_EXTENDED_DASD_IO on the disk handle        (or writes stop at the partition)
+#   5. FSCTL_ALLOW_EXTENDED_DASD_IO on the disk handle        (best effort; see _WinSink)
 #   6. write whole sectors, out of page-aligned memory
 #   7. IOCTL_DISK_UPDATE_PROPERTIES                           (re-read the partition table)
 #
@@ -582,7 +582,15 @@ class _WinSink:
         try:
             self.handle = _open(dev, GENERIC_READ | GENERIC_WRITE,
                                 flags=FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH)
-            _ioctl(self.handle, FSCTL_ALLOW_EXTENDED_DASD_IO)
+            # Best effort, as Rufus does. It is a file-system control: some disk stacks
+            # honour it on a physical-drive handle and others answer "The parameter is
+            # incorrect" -- and a disk handle is not clipped at a partition the way a
+            # volume handle is, which is the case it exists for. Raising here meant the
+            # Windows writer had never once opened a card.
+            try:
+                _ioctl(self.handle, FSCTL_ALLOW_EXTENDED_DASD_IO)
+            except OSError:
+                pass
             self.scratch = _Aligned(CHUNK)
         except BaseException:
             self._teardown()
