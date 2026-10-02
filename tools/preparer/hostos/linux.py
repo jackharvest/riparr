@@ -421,8 +421,31 @@ def open_sink(dev, total=0):
     return DDSink(block_device(dev), ibs="1M", obs="4M", conv="fsync")
 
 
+BLKFLSBUF = 0x1261      # <linux/fs.h>: write back, then drop this device's buffer cache
+
+
 def open_reader(dev):
-    return open(block_device(dev), "rb")
+    """The card, not the page cache.
+
+    dd writes through the page cache, so straight after a write every block is still
+    in memory, and an ordinary read is answered from there: the verify read back what
+    this machine had just written, at 150 MB/s from a reader that cannot do 100, and
+    could not have caught a failing or counterfeit card. macOS reads the uncached raw
+    node and never had this. Drop the device's cache first; the reader is root here.
+    """
+    import fcntl
+    path = block_device(dev)
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+        try:
+            fcntl.ioctl(fd, BLKFLSBUF, 0)
+        except OSError:
+            pass
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    finally:
+        os.close(fd)
+    return open(path, "rb")
 
 
 def flush():
