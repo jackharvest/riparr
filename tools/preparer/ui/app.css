@@ -449,6 +449,9 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   user-select: text; text-align: left; overflow-x: auto; white-space: nowrap;
 }
 
+/* A fix is a sentence there, not a command, so it wraps rather than scrolling sideways. */
+#review-warn .ssh-line { white-space: normal; }
+
 .hidden { display: none !important; }
 
 /* ── the second half: setting the box up ─────────────────── */
@@ -770,6 +773,9 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .hw-ready.ok { display: flex; align-items: flex-start; gap: 10px; }
 .hw-ready.ok .tick {
   flex: 0 0 auto;
+  /* The big .tick centres itself with auto margins; in this row they soak up the free
+     space and strand the tick in the middle, away from the text it belongs to. */
+  margin: 0;
   width: 20px; height: 20px; line-height: 20px;
   border-radius: 50%;
   text-align: center;

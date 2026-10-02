@@ -163,7 +163,7 @@
       can't reach (6&nbsp;GHz) is listed but greyed out.</p>
     <p class="lede dim">Get the password right here. Nothing downstream can check it:
       the card writes, the box boots, and it simply never appears on your network.
-      If this Mac already knows the network, take the password from it.</p>
+      If <span data-host="machine">this Mac</span> already knows the network, take the password from it.</p>
     <div class="screen-body">
     <!-- Offered, not forced. A live scan needs Location Services or macOS returns every
          network name as nil; plenty of people know which network they want and do not
@@ -176,9 +176,12 @@
     <div class="notice" id="wifi-detail-offer" hidden>
       <div class="grow">
         <b>Band and signal are hidden</b>
-        <span class="micro">macOS only reveals nearby network names, bands and signal
-          strength to apps allowed to use Location Services. Without it this list is the
-          networks this Mac remembers, and the band is unknown.</span>
+        <span class="micro" data-only="darwin">macOS only reveals nearby network names,
+          bands and signal strength to apps allowed to use Location Services. Without it
+          this list is the networks this Mac remembers, and the band is unknown.</span>
+        <span class="micro" data-only="win32">Windows only lists nearby networks, with
+          their bands and signal, once location is allowed. Without it this list is the
+          networks this PC remembers, and the band is unknown.</span>
       </div>
       <button class="ghost" id="wifi-detail-btn">Enable band detection</button>
     </div>
@@ -193,7 +196,7 @@
          scan named nothing at all, in which case remembered networks are the only list
          there is and hiding them would leave an empty screen. -->
     <details class="reveal" id="wifi-remembered" hidden>
-      <summary>Networks this Mac remembers (<span id="wifi-remembered-count">0</span>)
+      <summary>Networks <span data-host="machine">this Mac</span> remembers (<span id="wifi-remembered-count">0</span>)
         — not necessarily in range</summary>
       <div id="wifi-remembered-list" class="list"></div>
     </details>
@@ -223,7 +226,7 @@
         <input type="password" id="wifi-pw" autocomplete="off" spellcheck="false">
       </label>
       <div class="row-actions" id="wifi-keychain-row">
-        <button class="ghost" id="wifi-keychain">Use the password saved on this Mac</button>
+        <button class="ghost" id="wifi-keychain">Use the password saved on <span data-host="machine">this Mac</span></button>
         <span class="micro" id="wifi-keychain-note"></span>
       </div>
       <p class="micro">Converted to a PBKDF2 key before it is written. The passphrase
@@ -323,10 +326,15 @@
            dialog without disabling Disk Arbitration for the whole machine, which is not
            a trade worth making -- so the next best thing is that nobody meets it cold
            and clicks the wrong button on a card that is mid-write. -->
-      <p class="micro warn" id="write-osnote">macOS will interrupt with
+      <p class="micro warn" id="write-osnote" data-only="darwin win32">
+        <span data-only="darwin">macOS will interrupt with
         <b>“The disk you inserted was not readable”</b>. That means it is working — the
         box runs Linux and macOS cannot read its filesystem. Click <b>Ignore</b>.
-        Never <b>Initialise</b>.</p>
+        Never <b>Initialise</b>.</span>
+        <span data-only="win32">Windows may interrupt with <b>“You need to format the
+        disk before you can use it”</b>. That means it is working — the box runs Linux
+        and Windows cannot read its filesystem. Click <b>Cancel</b>.
+        Never <b>Format disk</b>.</span></p>
     </div>
   </section>
 
@@ -347,17 +355,22 @@
         <h2 class="handoff-h">Card written</h2>
         <p class="lede">Checked, and safe to remove.</p>
         <div class="summary compact" id="handoff-recap"></div>
-        <p class="micro" id="handoff-eject">macOS may say the card is unreadable and
-          offer to initialise it. That is expected — the box runs Linux, and macOS
-          cannot read its filesystem. Choose <b>Ignore</b>. Never <b>Initialise</b>:
-          that would erase the card you just made.</p>
+        <p class="micro" id="handoff-eject" data-only="darwin win32">
+          <span data-only="darwin">macOS may say the card is unreadable and offer to
+          initialise it. That is expected — the box runs Linux, and macOS cannot read
+          its filesystem. Choose <b>Ignore</b>. Never <b>Initialise</b>: that would
+          erase the card you just made.</span>
+          <span data-only="win32">Windows may offer to format the card. That is
+          expected — the box runs Linux, and Windows cannot read its filesystem. Choose
+          <b>Cancel</b>. Never <b>Format disk</b>: that would erase the card you just
+          made.</span></p>
       </div>
 
       <div class="handoff-col next-col">
         <div class="step-badge">Your turn</div>
         <h2 class="handoff-h">Move it to the box</h2>
         <ol class="next big" id="handoff-steps">
-          <li>Take the card out of this Mac</li>
+          <li>Take the card out of <span data-host="machine">this Mac</span></li>
           <li>Slide it into the box</li>
           <li>Plug in the single USB-C cable</li>
         </ol>
@@ -444,9 +457,10 @@
   <section class="screen" data-screen="setup">
     <h1 id="setup-title">Setting up your Riparr</h1>
     <p class="lede" id="setup-lede">This takes about ten minutes. You can leave it —
-      it doesn't need you, and this Mac won't fall asleep partway.</p>
-    <p class="lede dim">Leave the lid open, though. Closing it sleeps the Mac whatever
-      any app asks for, and that drops the connection to the box.</p>
+      it doesn't need you, and <span data-host="machine">this Mac</span> won't fall asleep partway.</p>
+    <p class="lede dim">If it's a laptop, leave the lid open. Closing it sleeps
+      <span data-host="the_machine">the Mac</span> whatever any app asks for, and that
+      drops the connection to the box.</p>
 
     <!-- Scrolls on its own so the bar, the percentage and Stop can never be pushed
          off the bottom of the window by a long task list or an open log. -->

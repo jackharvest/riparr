@@ -256,7 +256,42 @@ class Bridge:
         just did.
         """
         pw, err = core.keychain_wifi_password(ssid)
+        if not pw and sys.platform == "win32":
+            pw, err = self._elevated_wifi_key(ssid, err)
         return {"ok": bool(pw), "password": pw, "error": err}
+
+    def _elevated_wifi_key(self, ssid, why):
+        """Windows: ask again as administrator, behind a UAC prompt the user just caused.
+
+        See shell.WIFI_KEY_FLAG. The answer comes back through a file because an elevated
+        child has no pipe to this process; it is deleted as soon as it is read.
+        """
+        if getattr(sys, "frozen", False):
+            argv = [sys.executable]
+        else:
+            argv = [sys.executable, os.path.join(HERE, "shell.py")]
+        out = os.path.join(RUNDIR, "wifi-key.txt")
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        rc, err, cancelled = hostos.elevate(argv + ["--wifi-key", ssid, out], RUNDIR)
+        try:
+            with open(out, encoding="utf-8") as f:
+                pw = f.read().strip()
+        except OSError:
+            pw = ""
+        finally:
+            try:
+                os.remove(out)
+            except OSError:
+                pass
+        if pw:
+            return pw, ""
+        if cancelled:
+            return "", "Windows didn't get permission, so it couldn't share the password."
+        return "", ("Windows has no saved password for %s. It may be saved under a "
+                    "different name, or joined through a company login." % ssid)
 
     def refresh_disks(self):
         return {"disks": core.list_disks()}

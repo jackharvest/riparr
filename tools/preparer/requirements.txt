@@ -37,3 +37,8 @@ pyobjc-framework-CoreLocation>=10.0 ; sys_platform == "darwin"
 # from a checkout worked -- the system Python has certificates and the bundle does not.
 # core.ssl_context() names this explicitly rather than trusting what it inherits.
 certifi>=2024.2.2
+
+# The box's timezone, on Windows. There is no /etc/localtime to read, and Windows names
+# its zones differently ("Pacific Standard Time"); tzlocal maps the registry's answer to
+# an IANA name through CLDR's table. Without it every card written on Windows said UTC.
+tzlocal>=5.0 ; sys_platform == "win32"

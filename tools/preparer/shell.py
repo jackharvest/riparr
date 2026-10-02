@@ -44,6 +44,17 @@ if len(sys.argv) > 1 and sys.argv[1] == WRITE_FLAG:
     import writer
     sys.exit(writer.main(sys.argv[2:]))
 
+# The same trick for one Windows question: a saved Wi-Fi key is only handed to an
+# administrator. `--wifi-key <ssid> <out-file>` runs elevated, asks, and writes the answer
+# to a file the unelevated app reads and deletes -- UAC is Windows' keychain dialog.
+WIFI_KEY_FLAG = "--wifi-key"
+if len(sys.argv) > 3 and sys.argv[1] == WIFI_KEY_FLAG:
+    import hostos
+    _pw, _ = hostos.saved_network_password(sys.argv[2])
+    with open(sys.argv[3], "w", encoding="utf-8") as _f:
+        _f.write(_pw or "")
+    sys.exit(0 if _pw else 1)
+
 import webview
 
 import bridge as _bridge
@@ -57,6 +68,22 @@ UI = os.path.join(HERE, "ui")
 # resize the window to reach the buttons.
 WIDTH, HEIGHT = 940, 740
 MIN_SIZE = (860, 660)
+
+
+def _fit(size, minimum):
+    """The window size, shrunk to fit the screen it opens on.
+
+    940x740 is fine on a laptop at 100%. A 1366x768 panel, or 1080p at 150% scaling --
+    common Windows defaults -- has less room than that, and the window opened with its
+    footer, and the Continue button in it, below the taskbar.
+    """
+    try:
+        scr = webview.screens() if callable(webview.screens) else webview.screens
+        w, h = scr[0].width, scr[0].height
+    except Exception:
+        return size, minimum
+    fit = (min(size[0], int(w * 0.94)), min(size[1], int(h * 0.88)))
+    return fit, (min(minimum[0], fit[0]), min(minimum[1], fit[1]))
 
 
 class Shell:
@@ -103,12 +130,13 @@ def build(assets, shot="", evaluate=""):
     shell = Shell(assets)
     index = os.path.join(UI, "index.html")
 
+    (width, height), min_size = _fit((WIDTH, HEIGHT), MIN_SIZE)
     window = webview.create_window(
         "Riparr Preparer",
         url=index,
         js_api=shell.bridge,
-        width=WIDTH, height=HEIGHT,
-        min_size=MIN_SIZE,
+        width=width, height=height,
+        min_size=min_size,
         background_color="#1c1c1e",
         # The interface draws its own selection rules; letting the platform add text
         # selection on top makes a native window feel like a page again.

@@ -97,7 +97,7 @@ function diskRow(d, i, other) {
   return `<div class="item" data-i="${i}" data-other="${other ? 1 : 0}">
       <div class="grow">
         <div class="title">${esc(d.name || "SD card")}${tag}</div>
-        <div class="sub">/dev/${esc(d.id)}${d.protocol ? " · " + esc(d.protocol) : ""}
+        <div class="sub">${esc(diskPath(d.id))}${d.protocol ? " · " + esc(d.protocol) : ""}
           · ${esc(d.why)}</div>
       </div>
       <div class="right">
@@ -126,7 +126,7 @@ function renderDisks(disks) {
            ${other.length === 1 ? "a card" : "cards"} — open
            <b>Show other removable disks</b> below and check.`
         : `Some readers report themselves as fixed disks rather than card readers. Try a
-           different reader, or a direct slot if your Mac has one.`}</div></div>`;
+           different reader, or a direct slot if ${hw("machine")} has one.`}</div></div>`;
   } else {
     el.innerHTML = cards.map((d, i) => diskRow(d, i, false)).join("");
   }
@@ -143,9 +143,9 @@ function renderDisks(disks) {
     updateCardNext();
     const adv = d.advice || {};
     $("#card-hint").innerHTML = isOther
-      ? `<b class="warn">/dev/${esc(d.id)} is not a card.</b> Everything on it will be
+      ? `<b class="warn">${esc(diskPath(d.id))} is not a card.</b> Everything on it will be
          erased. Make sure this is not a drive with your files on it.`
-      : `Everything on /dev/${esc(d.id)} will be erased.` +
+      : `Everything on ${esc(diskPath(d.id))} will be erased.` +
         (adv.detail ? ` <span class="dim">${esc(adv.detail)}</span>` : "");
   };
 
@@ -481,7 +481,11 @@ async function enableWifiDetail() {
   const note = $("#wifi-detail-note");
   if (!note || d.granted) return;
   note.hidden = false;
-  note.innerHTML = d.status === "unavailable"
+  note.innerHTML = hostKey() === "win32"
+    ? `Settings is open at <b>Privacy &amp; security → Location</b>. Turn on ` +
+      `<b>Location services</b> and <b>Let desktop apps access your location</b>, then ` +
+      `press Rescan.`
+    : d.status === "unavailable"
     ? `This build could not load CoreLocation, so it cannot ask. Bands are unavailable; ` +
       `pick or type your network as normal.`
     : `macOS did not grant it (<b>${esc(d.status || d.why || "no answer")}</b>). ` +
@@ -523,7 +527,7 @@ async function buildReview() {
   const img = state.boardImage;
   const rows = [
     [state.allowOther ? "Disk" : "Card", state.disk
-      ? `${esc(state.disk.name)} · /dev/${esc(state.disk.id)} · ${capLabel(state.disk.size_gb)}`
+      ? `${esc(state.disk.name)} · ${esc(diskPath(state.disk.id))} · ${capLabel(state.disk.size_gb)}`
         + (state.allowOther
             ? ' <span class="tag warn">not identified as a card</span>'
             : (state.disk.advice && state.disk.advice.headline
@@ -572,11 +576,8 @@ async function buildReview() {
     if (tools.missing && tools.missing.length) {
       $("#do-write").disabled = true;
       $("#review-warn").innerHTML =
-        "This Mac is missing " + tools.missing.map(m => `<b>${esc(m.tool)}</b>`).join(" and ")
-        + ", which " + (tools.missing.length === 1 ? "is" : "are") + " needed to write a "
-        + "card — neither ships with macOS. Install "
-        + (tools.missing.length === 1 ? "it" : "them") + ", then choose Rescan on the "
-        + "SD card step:<br>"
+        "This card can't be written yet: " + tools.missing.map(m => `<b>${esc(m.tool)}</b>`)
+        .join(" and ") + (tools.missing.length === 1 ? " is" : " are") + " missing.<br>"
         + tools.missing.map(m => `<span class="ssh-line">${esc(m.fix)}</span>`).join(" ");
     }
   }
@@ -1132,9 +1133,39 @@ async function runUpdate(u) {
   slot.querySelector(".update-pill").onclick = () => riparr.open_url(u.url);
 }
 
+/* ── the machine this is running on ─────────────────────── */
+/* The copy was written on a Mac and said "this Mac" and "macOS" to everybody. Words that
+   name the host come from here; markup asks for them with data-host="machine", and text
+   that only makes sense on one system sits in data-only="darwin win32 linux". */
+const HOST_WORDS = {
+  darwin: { machine: "this Mac", Machine: "This Mac", the_machine: "the Mac", os: "macOS" },
+  win32:  { machine: "this PC", Machine: "This PC", the_machine: "the PC", os: "Windows" },
+  linux:  { machine: "this computer", Machine: "This computer",
+            the_machine: "the computer", os: "Linux" },
+};
+function hostKey() {
+  const p = (state.boot && state.boot.host && state.boot.host.platform) || "";
+  return HOST_WORDS[p] ? p : "linux";
+}
+function hw(word) { return HOST_WORDS[hostKey()][word]; }
+/* A disk as its own system names it: /dev/disk4, /dev/sdb -- and on Windows "Disk 2",
+   as Disk Management shows it, rather than "/dev/\\.\PHYSICALDRIVE2", which named
+   no system at all. */
+function diskPath(id) {
+  const m = /PHYSICALDRIVE(\d+)$/i.exec(id || "");
+  return m ? "Disk " + m[1] : "/dev/" + id;
+}
+function applyHost() {
+  document.querySelectorAll("[data-host]").forEach(el => { el.textContent = hw(el.dataset.host); });
+  document.querySelectorAll("[data-only]").forEach(el => {
+    el.hidden = !el.dataset.only.split(/\s+/).includes(hostKey());
+  });
+}
+
 /* ── wiring ─────────────────────────────────────────────── */
 async function init() {
   state.boot = await riparr.boot();
+  applyHost();
   $("#ver").textContent = state.boot.version;
   $("#acct-pw").textContent = state.boot.password;
   $("#acct-note").textContent = state.boot.password_generated
@@ -1257,7 +1288,7 @@ $("#wifi-keychain").onclick = async () => {
   if (!state.net) return;
   btn.disabled = true;
   note.className = "micro";
-  note.textContent = "Asking your keychain…";
+  note.textContent = hostKey() === "win32" ? "Asking Windows…" : "Asking your keychain…";
   let r;
   try { r = await riparr.keychain_password(state.net.ssid); }
   catch (e) { r = { ok: false, error: String(e) }; }
@@ -1270,7 +1301,9 @@ $("#wifi-keychain").onclick = async () => {
   $("#wifi-pw").value = r.password;
   state.wifiPw = r.password;
   note.className = "micro good";
-  note.textContent = "Filled in from this Mac's keychain.";
+  note.textContent = hostKey() === "win32"
+    ? "Filled in from the network Windows saved."
+    : "Filled in from " + hw("machine") + "'s keychain.";
   updateWifiNext();
 };
 $("#wifi-pw").oninput = (e) => { state.wifiPw = e.target.value; updateWifiNext(); };
@@ -1338,7 +1371,10 @@ $("#do-write").onclick = async () => {
   show("write");
   $("#fill").classList.add("indet");
   $("#write-title").textContent = "Waiting for permission";
-  $("#write-msg").textContent = "macOS will ask for your password.";
+  $("#write-msg").textContent = {
+    darwin: "macOS will ask for your password.",
+    win32: "Windows will ask for permission to change the card.",
+  }[hostKey()] || "You'll be asked for your password.";
   const r = await riparr.start_write(cfg());
   if (!r.ok) {
     $("#fail-title").textContent = "Can't start";

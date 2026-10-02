@@ -643,6 +643,19 @@ def host_capabilities():
 
 
 def host_timezone():
+    """The IANA zone the box should run in -- the one this computer is set to.
+
+    Windows has no /etc/localtime and names its zones its own way ("Pacific Standard
+    Time"), so every card written there said UTC. tzlocal reads the registry and maps it
+    through CLDR's table, which is the mapping everything else uses.
+    """
+    import sys
+    if sys.platform == "win32":
+        try:
+            import tzlocal
+            return tzlocal.get_localzone_name() or "UTC"
+        except Exception:
+            return "UTC"
     if os.path.islink("/etc/localtime"):
         return os.readlink("/etc/localtime").split("zoneinfo/")[-1]
     return "UTC"

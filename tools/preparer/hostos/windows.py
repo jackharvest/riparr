@@ -990,19 +990,43 @@ def _ps_quote(s):
     return "'" + str(s).replace("'", "''") + "'"
 
 
-# ─────────────────────── Location, and why there is none ───────────────────────
+# ─────────────────────────────── Location ───────────────────────────────
 #
-# Part of the hostos contract because macOS needs it, not because this platform does.
-# A scan here names networks and reports bands without asking anyone's permission, so
-# the honest answer is "the question does not arise" -- which is a different answer from
-# "we tried and could not find out", and the Wi-Fi screen shows a different thing for
-# each. Returning the same shape from every backend is what stops core.py guessing.
+# Windows 11 24H2 gated Wi-Fi scanning on location, the way macOS already did: with
+# Location services off, or with "Let desktop apps access your location" off, `netsh
+# wlan show networks` prints a refusal instead of networks. This file used to say the
+# question did not arise here, so the Preparer fell back to saved networks with every
+# band unknown and nothing to click -- the same failure macOS had, on the platform that
+# was assumed not to have it.
+#
+# Detected by the Settings URI in the refusal rather than its wording. The sentence is
+# translated; "ms-settings:privacy-location" is the same in every language.
+_LOCATION_URI = "ms-settings:privacy-location"
+
 
 def location_status():
-    """(None, "not-required"). Scans here are not gated on a location permission."""
-    return None, "not-required"
+    """(status_int, name), in macOS's numbering so core.py reads one shape.
+
+    3 when scanning works, 2 when Windows refuses it for want of location. A machine with
+    no Wi-Fi at all -- the WLAN service is not running -- is "not-required": there is no
+    permission that would change anything.
+    """
+    out = _run(["netsh", "wlan", "show", "networks"], timeout=15)
+    if _LOCATION_URI in out:
+        return 2, "denied"
+    if "wlansvc" in out.lower() or not out.strip():
+        return None, "not-required"
+    return 3, "authorizedAlways"
 
 
 def request_location(timeout=12):
-    """Nothing to ask for. See location_status."""
-    return False
+    """Open Settings at Privacy & security > Location. Windows has no prompt to raise.
+
+    Returns whether scanning is allowed now, which it will not be until the user has
+    flipped both switches -- the UI says which, and Rescan picks the change up.
+    """
+    try:
+        open_url(_LOCATION_URI)
+    except Exception:
+        pass
+    return location_status()[0] == 3
