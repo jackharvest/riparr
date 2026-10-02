@@ -1138,10 +1138,12 @@ async function runUpdate(u) {
    name the host come from here; markup asks for them with data-host="machine", and text
    that only makes sense on one system sits in data-only="darwin win32 linux". */
 const HOST_WORDS = {
-  darwin: { machine: "this Mac", Machine: "This Mac", the_machine: "the Mac", os: "macOS" },
-  win32:  { machine: "this PC", Machine: "This PC", the_machine: "the PC", os: "Windows" },
+  darwin: { machine: "this Mac", Machine: "This Mac", the_machine: "the Mac", os: "macOS",
+            System_disk: "Your startup disk" },
+  win32:  { machine: "this PC", Machine: "This PC", the_machine: "the PC", os: "Windows",
+            System_disk: "The drive Windows runs from" },
   linux:  { machine: "this computer", Machine: "This computer",
-            the_machine: "the computer", os: "Linux" },
+            the_machine: "the computer", os: "Linux", System_disk: "Your system disk" },
 };
 function hostKey() {
   const p = (state.boot && state.boot.host && state.boot.host.platform) || "";
@@ -1172,7 +1174,9 @@ async function init() {
     ? "Generated just now — 20 random characters — and saved to your build folder."
     : "Read back from your build folder, so it is the same one this box already has.";
   const file = $("#acct-file");
-  if (file && state.boot.assets) file.textContent = state.boot.assets + "/user_password.txt";
+  // Joined with the separator the folder already uses: "C:\\Users\\Me\\riparr-build/…" on Windows.
+  const sep = /\\/.test(state.boot.assets || "") ? "\\" : "/";
+  if (file && state.boot.assets) file.textContent = state.boot.assets + sep + "user_password.txt";
 
   state.port = state.boot.default_port || 9797;
   $("#port").value = state.port;

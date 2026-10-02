@@ -561,8 +561,12 @@ class Bridge:
         verify = bool(cfg.get("verify", True))
         mkv = self._makemkv_staging()
         self.nosleep.hold("writing a card")
+        # Windows asks for a Yes, not a password; saying otherwise sends people looking
+        # for a password box that never appears.
         core_publish(self.progress_path, phase="auth",
-                     message="Waiting for your administrator password")
+                     message="Waiting for Windows to ask for permission"
+                     if sys.platform == "win32" else
+                     "Waiting for your administrator password")
 
         self.write_error = None
         self.write_thread = threading.Thread(
@@ -726,12 +730,15 @@ class Bridge:
             self.finisher.cancel.set()
         return {"ok": True}
 
-    def write_status(self):
+    def _read_progress(self):
         try:
             with open(self.progress_path) as f:
-                st = json.load(f)
+                return json.load(f)
         except Exception:
             return {"phase": "idle"}
+
+    def write_status(self):
+        st = self._read_progress()
         if st.get("phase") in ("done", "error", "cancelled"):
             self._release_if_idle()
         return st
@@ -745,7 +752,12 @@ class Bridge:
 
         Called from the app delegate, not from JavaScript.
         """
-        phase = (self.write_status() or {}).get("phase")
+        # Read the file, not write_status(): that calls back into here once the write
+        # has finished, and the recursion ran ~1000 deep on every poll until Python's
+        # limit stopped it. Where the limit landed decided whether "done" reached the
+        # window or a RecursionError did -- and on Windows it left the write screen
+        # sitting at 100% for good, with the card finished underneath it.
+        phase = self._read_progress().get("phase")
         if phase in ("write", "verify-card", "provision", "auth", "eject"):
             return {
                 "title": "Your card is still being written.",
