@@ -382,7 +382,9 @@ def _write(args, st, work):
         if got != expect:
             publish(st, phase="error",
                     message="The card did not read back what was written to it.",
-                    detail="This card is failing or counterfeit. Do not use it.\n"
+                    detail="Most often the card is failing or counterfeit. A loose or "
+                           "faulty card reader can do this too, so try once more in a "
+                           "different reader or port before giving up on the card.\n"
                            "wrote %s\nread  %s" % (expect[:32], got[:32]))
             return 1
 

@@ -19,7 +19,6 @@ import subprocess
 import tempfile
 import time
 
-from ._dd import DDSink
 
 NAME = "Linux"
 
@@ -411,20 +410,56 @@ def unmount_disk(dev):
                    % (node, last))
 
 
-def open_sink(dev, total=0):
-    """dd, same as macOS. `conv=fsync` makes the exit code mean the data landed.
+class _BlockSink:
+    """Python writing the card itself: `write(chunk)` and `close() -> (rc, stderr)`.
 
-    Without it dd returns success once the writes are in the page cache, and a card
-    pulled seconds later is silently incomplete -- the write reports done and the box
-    never boots.
+    This was dd, and dd is no longer one program. Ubuntu 25.10 replaced GNU coreutils
+    with uutils, and its dd 0.8.0, fed from a pipe with ibs=1M obs=4M, wrote 768 of every
+    1024 64 KiB blocks wrong -- exit 0, every byte counted, a card that cannot boot. The
+    read-back caught it; with checking turned off nothing would have. The writer already
+    runs as root, so there is nothing dd was doing that this cannot: whole writes, then
+    fsync, which is what makes "done" mean the data is on the card.
     """
-    return DDSink(block_device(dev), ibs="1M", obs="4M", conv="fsync")
+
+    def __init__(self, path):
+        self.path = path
+        self.fd = os.open(path, os.O_WRONLY | getattr(os, "O_CLOEXEC", 0))
+        self.err = ""
+
+    def write(self, chunk):
+        view = memoryview(chunk)
+        while view:
+            n = os.write(self.fd, view)
+            if n <= 0:
+                raise OSError(errno.EIO, "short write to %s" % self.path)
+            view = view[n:]
+
+    def close(self):
+        rc = 0
+        try:
+            os.fsync(self.fd)
+        except OSError as e:
+            rc, self.err = 1, "%s: %s" % (self.path, e.strerror or e)
+        finally:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+        return rc, self.err
+
+
+def open_sink(dev, total=0):
+    return _BlockSink(block_device(dev))
+
+
+def open_reader(dev):
+    return _uncached_reader(dev)
 
 
 BLKFLSBUF = 0x1261      # <linux/fs.h>: write back, then drop this device's buffer cache
 
 
-def open_reader(dev):
+def _uncached_reader(dev):
     """The card, not the page cache.
 
     dd writes through the page cache, so straight after a write every block is still
