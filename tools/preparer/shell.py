@@ -87,6 +87,9 @@ WIDTH, HEIGHT = 940, 740
 MIN_SIZE = (860, 660)
 
 
+_ORIGIN = None          # where _fit wants the window, when it knows; else the OS decides
+
+
 def _fit(size, minimum):
     """The window size, shrunk to fit the screen it opens on.
 
@@ -111,6 +114,12 @@ def _fit(size, minimum):
                 scale = 1.0
             w, h = (r.right - r.left) / scale, (r.bottom - r.top) / scale
             fit = (min(size[0], int(w * 0.96)), min(size[1], int(h * 0.94)))
+            # Centred in the work area. Left to Windows, the window lands at the cascade
+            # offset -- fine for its size, but far enough down that the footer, and the
+            # Continue button in it, sat under the taskbar.
+            global _ORIGIN
+            _ORIGIN = (int(r.left / scale + (w - fit[0]) / 2),
+                       int(r.top / scale + (h - fit[1]) / 2))
         else:
             scr = webview.screens() if callable(webview.screens) else webview.screens
             w, h = scr[0].width, scr[0].height
@@ -170,6 +179,7 @@ def build(assets, shot="", evaluate=""):
         url=index,
         js_api=shell.bridge,
         width=width, height=height,
+        x=_ORIGIN[0] if _ORIGIN else None, y=_ORIGIN[1] if _ORIGIN else None,
         min_size=min_size,
         background_color="#1c1c1e",
         # The interface draws its own selection rules; letting the platform add text
