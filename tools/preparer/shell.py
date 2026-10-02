@@ -55,6 +55,23 @@ if len(sys.argv) > 3 and sys.argv[1] == WIFI_KEY_FLAG:
         _f.write(_pw or "")
     sys.exit(0 if _pw else 1)
 
+# DPI awareness, declared before anything makes a window.
+#
+# Without it Windows treats the app as a 96-DPI program and bitmap-stretches it, so the
+# text is soft -- and pywebview, which sizes its window in physical pixels on the
+# assumption that the process *is* aware, gets stretched a second time on top. At 150%
+# the window opened 1.5x too big in every direction, Continue below the taskbar.
+# Per-monitor (2) where shcore exists, the system-wide call before that.
+if sys.platform == "win32":
+    try:
+        import ctypes as _ct
+        try:
+            _ct.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            _ct.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
 import webview
 
 import bridge as _bridge
@@ -79,16 +96,20 @@ def _fit(size, minimum):
     """
     try:
         if sys.platform == "win32":
-            # The work area -- the screen minus the taskbar. Asked before pywebview makes
-            # the process DPI-aware, so it is in the same logical pixels as the size it
-            # takes. webview.screens is not available until the GUI has started, so the
-            # first version of this quietly fell back to 940x740 every time.
+            # The work area -- the screen minus the taskbar -- in physical pixels, since
+            # the process is DPI-aware by now, turned back into the logical pixels
+            # pywebview takes. webview.screens is not available until the GUI has
+            # started, so the first version of this fell back to 940x740 every time.
             import ctypes
             from ctypes import wintypes
             r = wintypes.RECT()
             if not ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(r), 0):
                 return size, minimum
-            w, h = r.right - r.left, r.bottom - r.top
+            try:
+                scale = ctypes.windll.user32.GetDpiForSystem() / 96.0
+            except Exception:
+                scale = 1.0
+            w, h = (r.right - r.left) / scale, (r.bottom - r.top) / scale
             fit = (min(size[0], int(w * 0.96)), min(size[1], int(h * 0.94)))
         else:
             scr = webview.screens() if callable(webview.screens) else webview.screens
