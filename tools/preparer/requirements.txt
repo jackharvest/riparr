@@ -37,7 +37,9 @@ pyobjc-framework-CoreLocation>=10.0 ; sys_platform == "darwin"
 # apt, which the Python that builds the bundle cannot see -- so nothing was collected,
 # and every Linux Preparer released exited at launch with "No module named 'gi'". From
 # a file manager that is a double-click that does nothing at all.
-PyGObject>=3.42 ; sys_platform == "linux"
+# Below 3.52, which moved to girepository-2.0: PyInstaller's GI hooks then need the
+# GIRepository 3.0 typelib, which the Ubuntu 24.04 build runner does not carry.
+PyGObject>=3.42,<3.52 ; sys_platform == "linux"
 
 # CA certificates. PyInstaller bundles its own libssl and no trust store, so a frozen
 # build failed every HTTPS request with CERTIFICATE_VERIFY_FAILED while the same code
