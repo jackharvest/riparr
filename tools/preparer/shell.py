@@ -78,11 +78,24 @@ def _fit(size, minimum):
     footer, and the Continue button in it, below the taskbar.
     """
     try:
-        scr = webview.screens() if callable(webview.screens) else webview.screens
-        w, h = scr[0].width, scr[0].height
+        if sys.platform == "win32":
+            # The work area -- the screen minus the taskbar. Asked before pywebview makes
+            # the process DPI-aware, so it is in the same logical pixels as the size it
+            # takes. webview.screens is not available until the GUI has started, so the
+            # first version of this quietly fell back to 940x740 every time.
+            import ctypes
+            from ctypes import wintypes
+            r = wintypes.RECT()
+            if not ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(r), 0):
+                return size, minimum
+            w, h = r.right - r.left, r.bottom - r.top
+            fit = (min(size[0], int(w * 0.96)), min(size[1], int(h * 0.94)))
+        else:
+            scr = webview.screens() if callable(webview.screens) else webview.screens
+            w, h = scr[0].width, scr[0].height
+            fit = (min(size[0], int(w * 0.94)), min(size[1], int(h * 0.88)))
     except Exception:
         return size, minimum
-    fit = (min(size[0], int(w * 0.94)), min(size[1], int(h * 0.88)))
     return fit, (min(minimum[0], fit[0]), min(minimum[1], fit[1]))
 
 
