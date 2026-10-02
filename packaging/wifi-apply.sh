@@ -72,7 +72,10 @@ import json, os, re, sqlite3, sys
 
 db, country, conf, importfile = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 try:
-    c = sqlite3.connect(db)
+    # Read-only: this runs as root, and a plain connect() would create a missing
+    # database owned by root, which the service can then never write. See
+    # tools/mount-library.sh, where exactly that broke every fresh install.
+    c = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
     row = c.execute("SELECT value FROM settings WHERE key='wifi_networks'").fetchone()
     nets = json.loads(row[0]) if row else []
 except Exception:

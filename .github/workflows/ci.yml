@@ -176,6 +176,21 @@ jobs:
         run: |
           python server/choose-title.test.py
 
+      # Root helpers run before riparr.service ever has, on a fresh box. One opened the
+      # database with a plain sqlite3.connect(), created it empty and root-owned, and the
+      # service died on its first write -- every fresh install, on every platform.
+      - name: Root helpers never create the database
+        run: |
+          d=$(mktemp -d)
+          RIPARR_DB="$d/riparr.db" bash tools/mount-library.sh
+          if [ -e "$d/riparr.db" ]; then
+            echo "::error::mount-library.sh created the database"; exit 1
+          fi
+          if grep -n "sqlite3.connect(" tools/*.sh packaging/*.sh | grep -v "mode=ro" | grep -v "^[^:]*:[0-9]*:#"; then
+            echo "::error::a root script opens the database writable"; exit 1
+          fi
+          echo "ok  no root helper can create riparr.db"
+
       - name: Shell parses
         run: |
           for f in $(git ls-files '*.sh'); do

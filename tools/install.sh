@@ -264,6 +264,12 @@ fi
 ok "MakeMKV, restart, shut down, Wi-Fi and the USB-C fix all work from the web interface"
 ok "the Wi-Fi watchdog is running — a radio that dies silently gets recovered"
 systemctl enable --quiet "$SERVICE"
+# The data directory belongs to the service account, all of it. A root helper that
+# opened the database before the service first ran used to leave an empty root-owned
+# riparr.db behind, and the service died on its first write ("attempt to write a
+# readonly database"). Those helpers open it read-only now; this repairs a box that was
+# already caught, and costs nothing on one that was not.
+chown -R "$RIPARR_USER":"$RIPARR_USER" "$DATA_DIR"
 systemctl restart "$SERVICE"
 ok "riparr.service enabled and started"
 

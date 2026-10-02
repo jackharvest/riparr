@@ -38,6 +38,13 @@ command -v mount.cifs >/dev/null || { log "cifs-utils is not installed; skipping
 # Only shares something is actually configured to write to -- mounting a share nothing
 # points at is pointless, and every mount is a socket to a NAS we would rather let
 # sleep.
+# Read-only, and not at all if the database is not there yet. This runs as root, and a
+# plain sqlite3.connect() *creates* a missing file: on a fresh box apply-system.sh starts
+# this unit before riparr.service has ever run, so the database came into existence
+# empty and owned by root, and the service -- which runs as riparr -- died on its first
+# write with "attempt to write a readonly database". Every fresh install since this unit
+# was started at install time, on every platform.
+[ -f "$DB" ] || { echo "riparr-mount: no database yet; skipping"; exit 0; }
 ROWS=$("$PY" - "$DB" <<'PYEOF'
 import json, sqlite3, sys
 
@@ -49,7 +56,8 @@ def setting(c, key, default=None):
         return default
 
 try:
-    c = sqlite3.connect(sys.argv[1]); c.row_factory = sqlite3.Row
+    c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+    c.row_factory = sqlite3.Row
     shares = {r["id"]: r for r in c.execute("SELECT * FROM shares")}
     default = c.execute(
         "SELECT id FROM shares ORDER BY is_default DESC, id LIMIT 1").fetchone()
@@ -101,7 +109,7 @@ while IFS=$'\t' read -r SID ISDEF HOST SHARE USER DOMAIN; do
   chmod 600 "$CRED"
   "$PY" - "$DB" "$SID" >> "$CRED" <<'PYEOF'
 import sqlite3, sys
-c = sqlite3.connect(sys.argv[1]); c.row_factory = sqlite3.Row
+c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True); c.row_factory = sqlite3.Row
 r = c.execute("SELECT * FROM shares WHERE id=?", (int(sys.argv[2]),)).fetchone()
 user = (r["username"] or "") if r else ""
 for sep in ("\\", "/"):
