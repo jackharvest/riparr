@@ -64,17 +64,17 @@ MANIFEST_PATH = os.path.join(
 # packaging mistake -- refusing to know the checksum would be worse than knowing it,
 # because the checksum is the safety property and the URL list is only convenience.
 _FALLBACK_MANIFEST = {
-    "version": "1.18.4",
+    "version": "2.0.0",
     "verified_against_official": True,
     "packages": [
-        {"name": "makemkv-oss-1.18.4.tar.gz",
-         "sha256": "8590063648d42ec2a958b74573d7022f0f4c334e4e4fe7dd53b70c6e748ba453",
+        {"name": "makemkv-oss-2.0.0.tar.gz",
+         "sha256": "435316b2d219eb48c880526557addd076b5f5e6de5171424c7651f9cac95b161",
          "urls": [{"where": "makemkv.com",
-                   "url": "https://www.makemkv.com/download/makemkv-oss-1.18.4.tar.gz"}]},
-        {"name": "makemkv-bin-1.18.4.tar.gz",
-         "sha256": "cee56de0baa5531abed16bd862742d308d772b4ab4dae16ee865bf74f04a1608",
+                   "url": "https://www.makemkv.com/download/makemkv-oss-2.0.0.tar.gz"}]},
+        {"name": "makemkv-bin-2.0.0.tar.gz",
+         "sha256": "f1265e74875a186efdfbbbec7459a64e969033515e53cbc4d805f0a374f0a124",
          "urls": [{"where": "makemkv.com",
-                   "url": "https://www.makemkv.com/download/makemkv-bin-1.18.4.tar.gz"}]},
+                   "url": "https://www.makemkv.com/download/makemkv-bin-2.0.0.tar.gz"}]},
     ],
 }
 
@@ -246,7 +246,7 @@ def key_advice(entered_at=None):
     }
 
 
-# Shown before consent. Paraphrased from makemkv-oss-1.18.4/License.txt; the full text is
+# Shown before consent. Paraphrased from makemkv-oss-2.0.0/License.txt; the full text is
 # always one click away, and the wizard links to it rather than relying on this summary.
 EULA_POINTS = [
     "MakeMKV is made by GuinpinSoft inc. This agreement is between you and them.",

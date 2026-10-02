@@ -1414,9 +1414,9 @@ def makemkv_status():
             return {"installed": False, "version": None, "eula_accepted": False,
                     "key_type": None, "key_expires": None, "days_left": None}
         if mode == "expiring":
-            return {"installed": True, "version": "1.18.4", "eula_accepted": True,
+            return {"installed": True, "version": "2.0.0", "eula_accepted": True,
                     "key_type": "beta", "key_expires": "2026-08-23", "days_left": 4}
-        return {"installed": True, "version": "1.18.4", "eula_accepted": True,
+        return {"installed": True, "version": "2.0.0", "eula_accepted": True,
                 "key_type": "beta", "key_expires": "2026-10-14", "days_left": 56}
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     installed = os.path.exists(binary)
