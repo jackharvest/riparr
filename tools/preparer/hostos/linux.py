@@ -71,8 +71,14 @@ def parse_lsblk(text, root_disk=""):
             "protocol": tran,
             "removable_media": _flag(d.get("rm")),
             "ejectable": _flag(d.get("hotplug")),
-            # The disk carrying / is the one mistake that cannot be walked back.
-            "internal": (name == root_disk) or not _flag(d.get("hotplug")),
+            # The disk carrying / is the one mistake that cannot be walked back, and it
+            # is excluded whatever else it claims. Beyond that, hotplug alone is too
+            # strict: a USB reader passed through to a VM reports hotplug 0 with the
+            # removable-media bit set, and so do some readers on real machines -- which
+            # read as "No SD card found" with the card sitting in the reader. Removable
+            # media, or a USB or SD bus, is not an internal disk.
+            "internal": (name == root_disk) or not (
+                _flag(d.get("hotplug")) or _flag(d.get("rm")) or tran in ("usb", "mmc")),
             "virtual": tran in ("loop", "zram") or name.startswith(("loop", "zram", "dm-")),
             "icon": "",
         })
