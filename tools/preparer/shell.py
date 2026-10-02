@@ -241,6 +241,11 @@ def main(argv=None):
 
     shell, window = build(assets, a.shot, a.eval)
     webview.start(debug=a.debug, private_mode=True)
+    # The scratch directory holds custom.toml -- the derived Wi-Fi key among it. Only the
+    # superseded app.py ever removed it, so since the move to pywebview every session
+    # left one behind in the temp folder.
+    import shutil
+    shutil.rmtree(_bridge.RUNDIR, ignore_errors=True)
     return 0
 
 
