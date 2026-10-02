@@ -32,6 +32,13 @@ pyobjc-framework-WebKit>=10.0 ; sys_platform == "darwin"
 pyobjc-framework-CoreWLAN>=10.0 ; sys_platform == "darwin"
 pyobjc-framework-CoreLocation>=10.0 ; sys_platform == "darwin"
 
+# Linux's window. pywebview reaches WebKitGTK through PyGObject (`import gi`), and it is
+# not a dependency pywebview declares. The build runner had the system's python3-gi from
+# apt, which the Python that builds the bundle cannot see -- so nothing was collected,
+# and every Linux Preparer released exited at launch with "No module named 'gi'". From
+# a file manager that is a double-click that does nothing at all.
+PyGObject>=3.42 ; sys_platform == "linux"
+
 # CA certificates. PyInstaller bundles its own libssl and no trust store, so a frozen
 # build failed every HTTPS request with CERTIFICATE_VERIFY_FAILED while the same code
 # from a checkout worked -- the system Python has certificates and the bundle does not.

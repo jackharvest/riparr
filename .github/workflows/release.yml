@@ -73,8 +73,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            libgirepository1.0-dev libcairo2-dev pkg-config python3-dev \
-            gir1.2-webkit2-4.1 libwebkit2gtk-4.1-0
+            libgirepository1.0-dev libgirepository-2.0-dev libcairo2-dev \
+            pkg-config python3-dev gir1.2-gtk-3.0 gir1.2-webkit2-4.1 libwebkit2gtk-4.1-0
 
       - name: Dependencies
         run: |
@@ -338,6 +338,22 @@ jobs:
             }
             echo "ok  $m at $hit"
           done
+
+      # The Linux window is WebKitGTK through PyGObject. Without `gi` in the bundle the
+      # app exits at launch, before any window exists, and a double-click does nothing.
+      # Every Linux build up to 0.4.4 shipped that way. Import it the way pywebview
+      # does, from the bundle's own Python, rather than looking for a file name.
+      - name: The bundle can load its web view (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -e
+          INT="tools/preparer/dist/Riparr Preparer/_internal"
+          [ -d "$INT/gi" ] || { echo "::error::PyGObject (gi) is not in the bundle"; exit 1; }
+          echo "ok  gi at $INT/gi"
+          hit=$(find "$INT" -name "WebKit2-4.1.typelib" -print -quit)
+          [ -n "$hit" ] || { echo "::error::no WebKit2 4.1 typelib in the bundle"; exit 1; }
+          echo "ok  $hit"
 
       # A build with no CA certificates cannot download an operating system, check for
       # an update, or verify a checksum -- it fails every HTTPS call with
