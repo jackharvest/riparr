@@ -24,8 +24,9 @@ URL=https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v$VE
 export PATH=/usr/bin:/bin
 unset PKG_CONFIG_PATH
 
-OUT=$(cygpath -u "$1")
-TOOLS=${2:+$(cygpath -u "$2")}
+# Absolute, because the build below runs from inside the source tree.
+OUT=$(cygpath -au "$1")
+TOOLS=${2:+$(cygpath -au "$2")}
 WORK=$(mktemp -d)
 
 cd "$WORK"
@@ -75,4 +76,7 @@ fi
 
 echo "built:"
 ls -l "$OUT"
-"$OUT/debugfs.exe" -V
+# The build-tree binary, not the copy: a second cygwin1.dll next to an exe started from a
+# Cygwin shell clashes with the one already loaded. The copy is exercised by the next
+# workflow step, from Windows Python, which is how the app runs it.
+debugfs/debugfs.exe -V
