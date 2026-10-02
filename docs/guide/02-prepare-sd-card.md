@@ -93,10 +93,11 @@ disk and typing a Wi-Fi password.
 > board**. If you hit something, an issue with your OS version and card reader is the
 > most useful thing you can send.
 
-**On Windows, one combination is refused up front:** an image whose settings live in a
-Linux (ext4) filesystem. Windows can't write into one, so the Preparer says so before it
-touches your card rather than spending ten minutes writing and failing at the end. Use a
-Riparr image with a FAT boot partition, or prepare that card from macOS or Linux.
+**On Windows**, the Orange Pi's settings live in a Linux (ext4) filesystem that Windows
+can't open. The Preparer carries its own tool for that, writes your settings into a copy
+of the image first, and then writes the finished image to the card — so it needs about
+2 GB free on your system drive while it works. Windows may offer to format the card when
+it appears; choose **Cancel**.
 
 ### If you'd rather use a tool you already trust
 

@@ -47,21 +47,23 @@ browser is there for when you want detail.
 
 Download the Preparer for whatever you're sitting at. Everything else happens from there.
 
-| | | |
+| Your computer | Download | Then |
 |---|---|---|
-| **macOS** | `riparr-preparer-macos.dmg` | Open it, drag Riparr Preparer into Applications |
-| **Windows** | `riparr-preparer-windows-beta.exe` | Double-click it |
-| **Linux** | `riparr-preparer-linux-beta.tar.gz` | Unpack it, run `Riparr Preparer` |
+| **macOS** | [riparr-preparer-macos.dmg](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-macos.dmg) | Open it, drag Riparr Preparer into Applications |
+| **Windows** | [riparr-preparer-windows-beta.exe](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-windows-beta.exe) | Double-click it |
+| **Linux** | [riparr-preparer-linux-beta.tar.gz](https://github.com/jackharvest/riparr/releases/latest/download/riparr-preparer-linux-beta.tar.gz) | Unpack it, run `Riparr Preparer` |
 
 **[→ Latest release](../../releases/latest)**
 
-None of it is code-signed yet, so both will block it the first time.
+None of it is code-signed yet, so your computer will block it the first time.
 
 **macOS:** double-click it and let it get refused. Then go to **System Settings → Privacy
 & Security**, scroll to the bottom, and click **Open Anyway** next to the line about
 Riparr Preparer. One more dialog, click Open, and that's it — it won't ask again.
 
-**Windows:** More info → Run anyway.
+**Windows:** if Edge holds the download, open its menu (**…**) and choose **Keep**, then
+**Keep anyway**. When Windows asks about the publisher, click **Run** — or, if it shows
+"Windows protected your PC", **More info → Run anyway**.
 
 ---
 

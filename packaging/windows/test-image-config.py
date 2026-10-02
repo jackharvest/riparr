@@ -50,12 +50,19 @@ with open(img, "r+b") as f:
 dfs = armbian.find_debugfs()
 assert dfs, "no bundled debugfs found next to armbian.py"
 target = armbian.image_target(img, OFFSET)
+# What debugfs itself sees, so a failure here explains itself in the log.
+print("debugfs:", dfs)
+print("target: ", target)
+stats = armbian.debugfs_run([dfs, "-R", "stats", target])
+print("\n".join(stats.splitlines()[:8]))
+if "Filesystem features" not in stats:
+    sys.exit("debugfs could not open the test image")
 # The directories a real root filesystem already has.
-armbian.debugfs_run([dfs, "-w", "-f", "/dev/stdin", target], "".join(
+print(armbian.debugfs_script(dfs, target, "".join(
     "mkdir %s\n" % d for d in (
         "/etc", "/etc/wpa_supplicant", "/etc/systemd", "/etc/systemd/network",
         "/etc/systemd/system", "/etc/systemd/system/multi-user.target.wants",
-        "/etc/default", "/root", "/boot", "/lib", "/lib/systemd", "/lib/systemd/system")))
+        "/etc/default", "/root", "/boot", "/lib", "/lib/systemd", "/lib/systemd/system"))))
 
 xz = img + ".xz"
 with open(img, "rb") as s, lzma.open(xz, "wb", preset=0) as d:

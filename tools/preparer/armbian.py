@@ -114,17 +114,41 @@ def debugfs_run(argv, script=None, stdout_only=False):
     return out.decode("utf-8", "replace")
 
 
+def debugfs_script(debugfs, target, script):
+    """Run a debugfs -w command script. -> its output.
+
+    From a file rather than /dev/stdin: a Windows pipe handed to a Cygwin program is one
+    more translation layer than this needs, and a script it cannot read is a script that
+    runs no commands and fails no checks.
+    """
+    fd, path = tempfile.mkstemp(prefix="riparr-debugfs-", suffix=".txt")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(script)
+        return debugfs_run([debugfs, "-w", "-f", path, target])
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _run(debugfs, target, script):
     """Feed a command script to debugfs -w and fail loudly on any error it reports.
 
     debugfs exits 0 even when individual commands fail, so the output has to be read.
     Silent partial provisioning is the exact failure this whole module exists to avoid.
     """
-    out = debugfs_run([debugfs, "-w", "-f", "/dev/stdin", target], script)
+    out = debugfs_script(debugfs, target, script)
+    # "while trying to open" and "Bad magic number" are how debugfs says it never opened
+    # the filesystem at all. Without them a missing or misaddressed image ran every
+    # command against nothing, matched none of the other words, and reported success.
     bad = [ln for ln in out.splitlines()
            if any(k in ln for k in ("File not found", "File exists", "Filesystem not open",
                                     "Could not", "error", "Error", "Permission denied",
-                                    "read-only", "Invalid"))
+                                    "read-only", "Invalid", "while trying to open",
+                                    "while opening", "Bad magic number",
+                                    "No such file"))
            and "debugfs:" not in ln.split(":")[0].lower()[:9]]
     real = [ln for ln in bad if not ln.startswith("debugfs 1.")]
     if real:
@@ -134,7 +158,7 @@ def _run(debugfs, target, script):
 
 def _run_lenient(debugfs, target, script):
     """Run commands whose failure is expected and fine -- deleting what may not exist."""
-    debugfs_run([debugfs, "-w", "-f", "/dev/stdin", target], script)
+    debugfs_script(debugfs, target, script)
 
 
 def _put(tmpdir, name, content):

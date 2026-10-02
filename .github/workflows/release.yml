@@ -607,16 +607,17 @@ jobs:
           **Rip your Blu-rays and DVDs straight onto your NAS.** One box, one cable, no
           babysitting. Download the Preparer, let it write an SD card, plug the box in.
 
-          | | | |
+          | Your computer | Download | Then |
           |---|---|---|
-          | **macOS** | `riparr-preparer-macos.dmg` | Open it, drag Riparr Preparer into Applications |
-          | **Windows** | `riparr-preparer-windows-beta.exe` | Double-click it |
-          | **Linux** | `riparr-preparer-linux-beta.tar.gz` | Unpack it, run `Riparr Preparer` |
+          | **macOS** | [riparr-preparer-macos.dmg](../../releases/download/TAGNAME/riparr-preparer-macos.dmg) | Open it, drag Riparr Preparer into Applications |
+          | **Windows** | [riparr-preparer-windows-beta.exe](../../releases/download/TAGNAME/riparr-preparer-windows-beta.exe) | Double-click it |
+          | **Linux** | [riparr-preparer-linux-beta.tar.gz](../../releases/download/TAGNAME/riparr-preparer-linux-beta.tar.gz) | Unpack it, run `Riparr Preparer` |
 
-          Nothing is code-signed yet, so both will block it the first time. On **macOS**,
+          Nothing is code-signed yet, so your computer will block it the first time. On **macOS**,
           double-click it, let it get refused, then go to **System Settings → Privacy &
-          Security**, scroll to the bottom and click **Open Anyway**. On **Windows**,
-          More info → Run anyway.
+          Security**, scroll to the bottom and click **Open Anyway**. On **Windows**, if
+          Edge holds the download choose **… → Keep → Keep anyway**, then **Run** (or
+          **More info → Run anyway**).
 
           Already running Riparr? The box updates itself from **System → Updates**, and
           the Preparer updates itself from the sidebar. You do not need to download
@@ -625,6 +626,8 @@ jobs:
           [User guide](../../blob/main/docs/guide/README.md) · [Which drive to buy](../../blob/main/docs/guide/01-what-you-need.md#which-drive)
 
           HEAD
+          # The download links name this release's own files, not whatever is latest.
+          sed -i "s|TAGNAME|${GITHUB_REF_NAME}|g" notes.md
           printf '## What changed in %s\n\n%s\n' "$V" "$SECTION" >> notes.md
           echo "----- notes.md -----"
           cat notes.md
