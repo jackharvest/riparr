@@ -1244,7 +1244,8 @@ def ensure_key(assets):
         os.remove(priv)
     r = subprocess.run(
         [keygen, "-t", "ed25519", "-N", "", "-C", "riparr", "-f", priv],
-        capture_output=True, text=True)
+        capture_output=True, text=True,
+        **({"creationflags": 0x08000000} if sys.platform == "win32" else {}))
     if r.returncode != 0 or not os.path.exists(pub):
         return None
     try:

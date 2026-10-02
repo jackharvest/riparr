@@ -65,7 +65,7 @@ RUNDIR = _rundir()
 
 
 class NoSleep:
-    """Hold the Mac awake while a card is being written or a box set up.
+    """Hold the computer awake while a card is being written or a box set up.
 
     Both of these are long, unattended, and fail badly when interrupted: a display
     sleep is harmless but a system sleep drops the SSH session mid-install and closes
@@ -79,14 +79,39 @@ class NoSleep:
 
     def __init__(self):
         self.proc = None
+        self._win_stop = None
+
+    def _hold_windows(self):
+        """SetThreadExecutionState, from a thread that lives as long as the hold.
+
+        The assertion belongs to the calling thread and lapses when that thread ends, so
+        it cannot be made from whichever bridge worker happened to start the write. This
+        was described as "done in shell.py" and was never written: Windows slept through
+        card writes and setups like any idle machine.
+        """
+        if self._win_stop is not None:
+            return
+        stop = self._win_stop = threading.Event()
+
+        def hold():
+            import ctypes
+            ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+            k32 = ctypes.windll.kernel32
+            k32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+            stop.wait()
+            k32.SetThreadExecutionState(ES_CONTINUOUS)
+
+        threading.Thread(target=hold, name="riparr-nosleep", daemon=True).start()
 
     def hold(self, why):
+        if sys.platform == "win32":
+            self._hold_windows()
+            return
         if self.proc and self.proc.poll() is None:
             return
         try:
             cmd = hostos.keep_awake_command(os.getpid())
             if not cmd:
-                # Windows does it in-process instead; see shell.py.
                 self.proc = None
                 return
             self.proc = subprocess.Popen(
@@ -95,6 +120,9 @@ class NoSleep:
             self.proc = None
 
     def release(self):
+        if self._win_stop is not None:
+            self._win_stop.set()
+            self._win_stop = None
         if self.proc and self.proc.poll() is None:
             try:
                 self.proc.terminate()

@@ -1,3 +1,9 @@
-# Shell scripts run under bash on every platform, including Cygwin on the Windows runner,
-# where a CRLF checkout turns "pipefail" into "pipefail\r".
+# Everything Riparr ships runs on Linux, whichever system builds it. Git for Windows
+# checks text out with CRLF by default, so the Windows runner -- which stages the
+# appliance into the Windows Preparer -- would hand the box CRLF Python, CRLF systemd
+# units and CRLF configs. LF in every working tree, on every platform.
+* text=auto eol=lf
+
+# Shell scripts were the first to break: under Cygwin a CRLF checkout turns "pipefail"
+# into "pipefail\r".
 *.sh text eol=lf

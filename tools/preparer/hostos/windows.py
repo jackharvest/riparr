@@ -274,7 +274,7 @@ def reveal(path):
 
 def keep_awake_command(pid):
     """Windows has no command-line equivalent, so this is done in-process instead --
-    see shell.py, which calls SetThreadExecutionState through ctypes. Returning None
+    see bridge.NoSleep._hold_windows, which calls SetThreadExecutionState. Returning None
     is how a backend says "not by running something"."""
     return None
 

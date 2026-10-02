@@ -35,6 +35,10 @@ import threading
 import time
 from collections import deque
 
+# ssh, curl and friends are console programs. Started from a windowed app on Windows,
+# each would flash a console up behind the Preparer -- several a second during setup.
+_NOWIN = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -119,10 +123,28 @@ def publish(path, **kw):
 
 
 def _local_subnet():
-    """The /24 this Mac is on. Used only as a fallback when mDNS is silent."""
+    """The /24 this computer is on. Used only as a fallback when mDNS is silent.
+
+    The address the OS would route a packet out of, asked of a UDP socket -- connect()
+    on one sends nothing. This used to be `ipconfig getifaddr en0`, which only macOS
+    has, so on Windows and Linux the fallback was quietly switched off.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("192.0.2.1", 9))          # TEST-NET-1; never actually reached
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        if ip.count(".") == 3 and not ip.startswith("127."):
+            return ip.rsplit(".", 1)[0]
+    except OSError:
+        pass
+    if sys.platform != "darwin":
+        return None
     for iface in ("en0", "en1"):
         p = subprocess.run(["ipconfig", "getifaddr", iface],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, **_NOWIN)
         ip = p.stdout.strip()
         if ip.count(".") == 3:
             return ip.rsplit(".", 1)[0]
@@ -236,7 +258,7 @@ class Finisher:
     def _forget_host_key(self, target):
         if os.path.exists(self.known_hosts):
             subprocess.run(["ssh-keygen", "-R", target, "-f", self.known_hosts],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, **_NOWIN)
 
     def _run_remote(self, command, step, timeout, label=None):
         """Run one command on the box, streaming its output into the log."""
@@ -244,7 +266,7 @@ class Finisher:
         self._say("$ %s" % (label or command))
         p = subprocess.Popen(self._ssh_base() + [command],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, bufsize=1)
+                             text=True, bufsize=1, **_NOWIN)
         deadline = time.time() + timeout
         try:
             for line in p.stdout:
@@ -364,7 +386,7 @@ class Finisher:
             self._forget_host_key(ip)
             p = subprocess.run(
                 self._ssh_base(ip) + ["cat /etc/hostname 2>/dev/null"],
-                capture_output=True, text=True, timeout=15)
+                capture_output=True, text=True, timeout=15, **_NOWIN)
             if p.returncode == 0 and p.stdout.strip() == self.host:
                 return ip
         return None
@@ -374,7 +396,7 @@ class Finisher:
         self._forget_host_key(self.address)
         p = subprocess.run(
             self._ssh_base() + ["id -un; cat /etc/hostname; uname -sr"],
-            capture_output=True, text=True, timeout=TIMEOUTS["connect"])
+            capture_output=True, text=True, timeout=TIMEOUTS["connect"], **_NOWIN)
         if p.returncode != 0:
             raise StepFailed(
                 "connect", "The box refused the key from your card.",
@@ -398,31 +420,88 @@ class Finisher:
         # file to carry extended attributes the box has no use for -- they were being
         # unpacked onto the appliance and are pure litter. packaging/dmg is the disk-image
         # background art for the Mac installer; nothing on the board will ever read it.
-        tar = subprocess.Popen(
-            ["tar", "-cf", "-",
-             "--exclude", "./.venv", "--exclude", "./.git",
-             "--exclude", "__pycache__", "--exclude", "*.pyc",
-             "--exclude", "./packaging/dmg", "--exclude", "._*",
-             "-C", self.repo, "."],
-            stdout=subprocess.PIPE,
-            env=dict(os.environ, COPYFILE_DISABLE="1"))
-        ssh = subprocess.Popen(
-            self._ssh_base() + ["rm -rf %s && mkdir -p %s && tar -xf - -C %s"
-                                % (dest, dest, dest)],
-            stdin=tar.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True)
-        tar.stdout.close()
-        out, _ = ssh.communicate(timeout=TIMEOUTS["copy"])
-        tar.wait()
+        remote = self._ssh_base() + ["rm -rf %s && mkdir -p %s && tar -xf - -C %s"
+                                     % (dest, dest, dest)]
+        if sys.platform == "win32":
+            out, tar_rc, ssh_rc = self._copy_tree_windows(remote)
+        else:
+            tar = subprocess.Popen(
+                ["tar", "-cf", "-",
+                 "--exclude", "./.venv", "--exclude", "./.git",
+                 "--exclude", "__pycache__", "--exclude", "*.pyc",
+                 "--exclude", "./packaging/dmg", "--exclude", "._*",
+                 "-C", self.repo, "."],
+                stdout=subprocess.PIPE,
+                env=dict(os.environ, COPYFILE_DISABLE="1"))
+            ssh = subprocess.Popen(remote, stdin=tar.stdout, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True)
+            tar.stdout.close()
+            out, _ = ssh.communicate(timeout=TIMEOUTS["copy"])
+            tar.wait()
+            tar_rc, ssh_rc = tar.returncode, ssh.returncode
         for line in (out or "").splitlines():
             self._say(line)
-        if ssh.returncode != 0 or tar.returncode != 0:
+        if ssh_rc != 0 or tar_rc != 0:
             raise StepFailed("copy", "Couldn't copy Riparr onto the box.",
                              "\n".join(useful((out or "").splitlines())[-25:])
-                             or "tar exited %d, ssh exited %d"
-                             % (tar.returncode, ssh.returncode))
+                             or "tar exited %d, ssh exited %d" % (tar_rc, ssh_rc))
         self._run_remote("du -sh %s" % dest, "copy", 30)
         self._finish_step("copy")
+
+    _SKIP_DIRS = {".venv", ".git", "__pycache__"}
+
+    def _copy_tree_windows(self, remote):
+        """The same tar stream, built in Python. -> (output, tar_rc, ssh_rc).
+
+        Windows has a tar, but NTFS has no execute bit for it to record, so every script
+        would land on the box as 0644 and the first one run directly would fail. Here the
+        mode is decided per file: 0755 for anything that starts with "#!", which is every
+        executable in the repo, 0644 for the rest, owned by root.
+        """
+        import tarfile
+        ssh = subprocess.Popen(remote, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, **_NOWIN)
+        # Read the box's output while writing, so neither pipe can fill and stall.
+        chunks = []
+        reader = threading.Thread(target=lambda: chunks.append(ssh.stdout.read()),
+                                  daemon=True)
+        reader.start()
+        tar_rc = 0
+        try:
+            with tarfile.open(fileobj=ssh.stdin, mode="w|", format=tarfile.GNU_FORMAT) as t:
+                for root, dirs, files in os.walk(self.repo):
+                    rel = os.path.relpath(root, self.repo).replace(os.sep, "/")
+                    dirs[:] = sorted(d for d in dirs if d not in self._SKIP_DIRS
+                                     and not (rel == "packaging" and d == "dmg"))
+                    for name in sorted(files):
+                        if name.endswith(".pyc") or name.startswith("._"):
+                            continue
+                        path = os.path.join(root, name)
+                        arc = name if rel == "." else rel + "/" + name
+                        info = t.gettarinfo(path, arcname=arc)
+                        with open(path, "rb") as f:
+                            head = f.read(2)
+                            f.seek(0)
+                            info.mode = 0o755 if head == b"#!" else 0o644
+                            info.uid = info.gid = 0
+                            info.uname = info.gname = "root"
+                            t.addfile(info, f)
+        except (OSError, tarfile.TarError) as e:
+            chunks.append(("\ncould not build the archive: %s\n" % e).encode())
+            tar_rc = 1
+        finally:
+            try:
+                ssh.stdin.close()
+            except OSError:
+                pass
+        try:
+            ssh.wait(timeout=TIMEOUTS["copy"])
+        except subprocess.TimeoutExpired:
+            ssh.kill()
+            ssh.wait()
+        reader.join(timeout=5)
+        out = b"".join(c for c in chunks if c).decode("utf-8", "replace")
+        return out, tar_rc, ssh.returncode
 
     def step_bootstrap(self):
         self._begin("bootstrap")
@@ -453,7 +532,7 @@ class Finisher:
             self._check_cancel()
             for candidate in (by_name, url):
                 p = subprocess.run(["curl", "-fsS", "--max-time", "4", candidate],
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, **_NOWIN)
                 if p.returncode == 0:
                     self._say("%s answered" % candidate)
                     self.reachable_by_name = candidate == by_name
