@@ -38,6 +38,9 @@ from collections import deque
 # ssh, curl and friends are console programs. Started from a windowed app on Windows,
 # each would flash a console up behind the Preparer -- several a second during setup.
 _NOWIN = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
+# Output from the box is UTF-8. text=True alone decodes in the locale's code page, which
+# on Windows is cp1252 -- install.sh's "port 9797 · /opt/riparr" arrived as "Â·".
+_UTF8 = {"encoding": "utf-8", "errors": "replace"}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -144,7 +147,7 @@ def _local_subnet():
         return None
     for iface in ("en0", "en1"):
         p = subprocess.run(["ipconfig", "getifaddr", iface],
-                           capture_output=True, text=True, **_NOWIN)
+                           capture_output=True, text=True, **_UTF8, **_NOWIN)
         ip = p.stdout.strip()
         if ip.count(".") == 3:
             return ip.rsplit(".", 1)[0]
@@ -258,7 +261,7 @@ class Finisher:
     def _forget_host_key(self, target):
         if os.path.exists(self.known_hosts):
             subprocess.run(["ssh-keygen", "-R", target, "-f", self.known_hosts],
-                           capture_output=True, text=True, **_NOWIN)
+                           capture_output=True, text=True, **_UTF8, **_NOWIN)
 
     def _run_remote(self, command, step, timeout, label=None):
         """Run one command on the box, streaming its output into the log."""
@@ -266,7 +269,7 @@ class Finisher:
         self._say("$ %s" % (label or command))
         p = subprocess.Popen(self._ssh_base() + [command],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, bufsize=1, **_NOWIN)
+                             text=True, **_UTF8, bufsize=1, **_NOWIN)
         deadline = time.time() + timeout
         try:
             for line in p.stdout:
@@ -386,7 +389,7 @@ class Finisher:
             self._forget_host_key(ip)
             p = subprocess.run(
                 self._ssh_base(ip) + ["cat /etc/hostname 2>/dev/null"],
-                capture_output=True, text=True, timeout=15, **_NOWIN)
+                capture_output=True, text=True, **_UTF8, timeout=15, **_NOWIN)
             if p.returncode == 0 and p.stdout.strip() == self.host:
                 return ip
         return None
@@ -396,7 +399,7 @@ class Finisher:
         self._forget_host_key(self.address)
         p = subprocess.run(
             self._ssh_base() + ["id -un; cat /etc/hostname; uname -sr"],
-            capture_output=True, text=True, timeout=TIMEOUTS["connect"], **_NOWIN)
+            capture_output=True, text=True, **_UTF8, timeout=TIMEOUTS["connect"], **_NOWIN)
         if p.returncode != 0:
             raise StepFailed(
                 "connect", "The box refused the key from your card.",
@@ -420,7 +423,10 @@ class Finisher:
         # file to carry extended attributes the box has no use for -- they were being
         # unpacked onto the appliance and are pure litter. packaging/dmg is the disk-image
         # background art for the Mac installer; nothing on the board will ever read it.
-        remote = self._ssh_base() + ["rm -rf %s && mkdir -p %s && tar -xf - -C %s"
+        # -m: take the box's own clock for every file. The board has no RTC and its
+        # clock can trail ours until timesyncd catches up, and files stamped "in the
+        # future" filled install.sh's own copy with a warning per file.
+        remote = self._ssh_base() + ["rm -rf %s && mkdir -p %s && tar -xmf - -C %s"
                                      % (dest, dest, dest)]
         if sys.platform == "win32":
             out, tar_rc, ssh_rc = self._copy_tree_windows(remote)
@@ -434,7 +440,7 @@ class Finisher:
                 stdout=subprocess.PIPE,
                 env=dict(os.environ, COPYFILE_DISABLE="1"))
             ssh = subprocess.Popen(remote, stdin=tar.stdout, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, text=True)
+                                   stderr=subprocess.STDOUT, text=True, **_UTF8)
             tar.stdout.close()
             out, _ = ssh.communicate(timeout=TIMEOUTS["copy"])
             tar.wait()
@@ -532,7 +538,7 @@ class Finisher:
             self._check_cancel()
             for candidate in (by_name, url):
                 p = subprocess.run(["curl", "-fsS", "--max-time", "4", candidate],
-                                   capture_output=True, text=True, **_NOWIN)
+                                   capture_output=True, text=True, **_UTF8, **_NOWIN)
                 if p.returncode == 0:
                     self._say("%s answered" % candidate)
                     self.reachable_by_name = candidate == by_name
