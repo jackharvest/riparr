@@ -8,6 +8,14 @@ bother updating.
 
 ---
 
+## 0.4.3
+
+**The Windows Preparer can put MakeMKV on the card.** With the MakeMKV download in your
+build folder, writing a card on Windows failed unless you were an administrator or had
+Developer Mode on. It now works for everyone.
+
+---
+
 ## 0.4.2
 
 **Riparr reads the key from makemkv.com itself.** While GuinpinSoft isn't selling
