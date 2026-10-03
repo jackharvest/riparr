@@ -1926,15 +1926,42 @@ function destPath(share, folder) {
   return `//${share.host}/${parts.join("/")}`;
 }
 
+/* Full-disc backup's one moving part: the DVD half needs tools MakeMKV does not provide.
+   Blu-ray and UHD need nothing extra, so this only speaks up about DVDs, and only when
+   backup is the chosen mode -- a line about decryption libraries on a page where
+   nobody asked for backups is noise. */
+function backupToolsLine(t) {
+  if (!t) return "";
+  if (t.ready) return `<span class="test-out ok">DVD backups are ready.</span>`;
+  if (t.installing) return `<span class="test-out">${esc(t.message || "Installing the DVD backup tools…")}</span>`;
+  const why = t.phase === "error"
+    ? `<span class="test-out bad">${esc(t.message || "The install didn't finish.")}</span>`
+    : `<span class="test-out warn">DVDs need two extra tools, which aren't installed yet.
+         Until they are, DVDs are ripped as film files and Blu-rays are backed up as normal.</span>`;
+  return `${why}${t.can_install ? `<button class="btn" data-backup-tools>Install them</button>` : ""}`;
+}
+
 /* Ripping — what comes off the disc, and how it gets out. */
-settingsPages.ripping = (s) => `
+settingsPages.ripping = async (s) => {
+  let tools = null;
+  if (s.rip_mode === "backup") {
+    try { tools = await api.get("/api/backup/tools"); } catch (e) { tools = null; }
+  }
+  return `
   <div class="section"><h2>What to rip</h2><div>
     <label class="f"><span>Titles</span>
       <select data-set="rip_mode">
         ${opt("main", "Main title (default)", s.rip_mode)}
         ${opt("all", "All titles", s.rip_mode)}
         ${opt("backup", "Full disc backup", s.rip_mode)}
-      </select></label>
+      </select>
+      <span class="help"><b>Full disc backup</b> keeps the whole disc instead of one
+        film file: a <code>VIDEO_TS</code> or <code>BDMV</code> folder with the menus,
+        extras and every audio track, decrypted, so it plays from the folder and can be
+        made into an ISO later. It lands where the film would have, in
+        <code>Movies/Film (Year)/</code>. Expect the size of the disc itself: around
+        4–8 GB for a DVD, 25–50 GB for a Blu-ray.</span>
+      <div class="btn-row" id="backup-tools">${backupToolsLine(tools)}</div></label>
     <label class="f"><span>Minimum title length (seconds)</span>
       <input type="number" data-set="min_title_seconds" value="${s.min_title_seconds}">
       <span class="help">Filters menus and logo stings.</span></label>
@@ -2079,6 +2106,7 @@ settingsPages.ripping = (s) => `
       cannot see the result, so this is the only way to find out whether your drive
       blinks the way you would want: watch it.</p>
   </div></div>${saveBar()}`;
+};
 
 /* Connect — how Riparr reaches you, and how finished files reach everything else.
    The notification half exists because a box whose entire promise is "walk away" had
@@ -3563,6 +3591,29 @@ function wireContent(section, sub) {
       out.textContent = e.message;
     }
     $$("[data-signal-test]").forEach(x => x.disabled = false);
+  });
+
+  // Installing the DVD tools is a root oneshot that takes a few minutes, so the button
+  // hands over to a poll that repaints the one line, bounded at ten minutes.
+  $$("[data-backup-tools]").forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await api.post("/api/backup/tools", {});
+    } catch (e) {
+      toast(e.message, "bad");
+      b.disabled = false;
+      return;
+    }
+    for (let i = 0; i < 200; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const box = $("#backup-tools");
+      if (!box) return;                          // navigated away
+      let t;
+      try { t = await api.get("/api/backup/tools"); } catch (e) { continue; }
+      box.innerHTML = backupToolsLine(t);
+      if (t.ready) { toast("DVD backups are ready", "ok"); return; }
+      if (!t.installing && t.phase === "error") return;
+    }
   });
 
   $$("[data-test-notify]").forEach(b => b.onclick = async () => {

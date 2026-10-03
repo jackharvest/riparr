@@ -92,7 +92,7 @@ Open `riparr.local`, point it at your share, put a disc in.
 
 | | |
 |---|---|
-| **A board** | Orange Pi Zero 2W is what I built it on. Others are in there, some still marked beta |
+| **A board** | Orange Pi Zero 2W is what I built it on. Others are in there, including the full-size Raspberry Pi 3, 4 and 5, some still marked beta |
 | **An optical drive** | USB, or internal plus a bridge that actually *says* it does optical/ATAPI. [This is the bit people get wrong](docs/guide/01-what-you-need.md#which-drive) |
 | **An SD card** | Cheapest one that holds the OS. Riparr uses about 2.3 GB, so **8 GB works** and 16 GB is comfortable. Rips go to your NAS, not the card — bigger cards just buy you a bigger buffer |
 | **A share** | SMB. Any NAS, or a folder on a computer that's usually on |

@@ -176,6 +176,23 @@ jobs:
         run: |
           python server/choose-title.test.py
 
+      # A backup is a folder of a few hundred files, and the pipeline was built for one
+      # job making one file. This runs every stage -- staged and direct, resume after a
+      # power cut, verify, purge, the never-overwrite rule, the DVD-tools fallback --
+      # against the mock drive and share. It also caught staged films losing their year.
+      - name: Full-disc backups go through the whole pipeline
+        run: |
+          python server/backup-pipeline.test.py
+
+      # The card write's data-in, data-out pieces: sector arithmetic, device names,
+      # partition classification -- and since Raspberry Pi OS Trixie dropped custom.toml,
+      # the cloud-init seed files a Pi card boots from. Wrong seed files boot a stock image
+      # with no Wi-Fi and nothing saying why.
+      - name: Preparer selftest
+        working-directory: tools/preparer
+        run: |
+          python selftest.py
+
       # Root helpers run before riparr.service ever has, on a fresh box. One opened the
       # database with a plain sqlite3.connect(), created it empty and root-owned, and the
       # service died on its first write -- every fresh install, on every platform.

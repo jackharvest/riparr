@@ -8,6 +8,33 @@ bother updating.
 
 ---
 
+## 0.5.0
+
+**Full disc backups.** Settings → Ripping → Titles → **Full disc backup** keeps the whole
+disc instead of one MKV: the `VIDEO_TS` or `BDMV` folder with the menus, extras and every
+audio track, decrypted. It lands in your Movies folder where the film would have gone.
+Jellyfin and Kodi play it as a disc, and you can make an ISO from it later. Blu-rays and
+4K discs go through MakeMKV. DVDs use dvdbackup, which installs itself on the box a few
+minutes after this update. Until it has, DVDs rip as MKV and the job tells you so.
+
+**Raspberry Pi 3, 4 and 5.** The Preparer's board list now has the Pi 3 Model A+, 3
+Model B, 3 Model B+, 4 / 400 and 5. They won't fit the printed case, but the card setup
+is the same as every other board. All marked beta.
+
+**Raspberry Pi cards set themselves up again.** Current Raspberry Pi OS stopped reading
+the settings file the Preparer wrote, so a Pi card booted with no Wi-Fi and no login.
+The Preparer now writes the files Raspberry Pi OS actually reads. That fixes the Zero 2 W
+too.
+
+**The Wi-Fi list matches your board.** On a 2.4 GHz-only board (the Pi Zero 2 W and the
+Pi 3 Model B) the Preparer greys out networks its radio can't see.
+
+**Staged rips keep their year.** A film you named with a year, like "Spirited Away
+(2001)", lost the year if it was ripped to the card first and sent to your library later.
+
+One thing to know on a Raspberry Pi: adding extra Wi-Fi networks from Settings → Network
+isn't supported there yet. The network you set up with keeps working.
+
 ## 0.4.5
 
 **The Linux Preparer works.** Before this, it closed the moment you opened it. It now

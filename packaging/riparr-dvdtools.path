@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch for a Riparr request to install the DVD backup tools
+Documentation=https://github.com/jackharvest/riparr
+
+[Path]
+# Same one-way door as riparr-makemkv.path: the web service can create this file and
+# nothing else. What runs is fixed in riparr-dvdtools.service.
+PathExists=/run/riparr/dvdtools.request
+
+[Install]
+WantedBy=multi-user.target

@@ -124,7 +124,7 @@ Bigger effect on file size than anything else here.
 | **Keep forced subtitles** | On — these are the subtitles for alien/foreign dialogue |
 | **Keep commentary tracks** | Off |
 | **Minimum title length** | 120 seconds — filters menus and logo stings |
-| **Rip mode** | Main title *(default)* / All titles / Full disc backup |
+| **Rip mode** | Main title *(default)* / All titles / **Full disc backup** — the whole disc as a `VIDEO_TS` or `BDMV` folder, menus and all. DVDs need two extra tools, which install by themselves; until they have, DVDs are ripped as MKV and the job says so |
 | **When Riparr can't tell which title is the film** | **Use the most likely one** *(default)* / Ask me |
 | **On a disc with a 3D version** | **Rip the 2D version** *(default)* / Rip the 3D version |
 

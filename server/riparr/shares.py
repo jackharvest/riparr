@@ -467,6 +467,52 @@ class Transport:
                 return int(m.group(1))
         return None
 
+    # One entry of an `ls` listing: name, attribute letters (possibly none), size, then
+    # the date, which starts with a weekday. Anchoring on the weekday is what lets a
+    # filename contain spaces and digits without the size being misread.
+    _LS_ROW = re.compile(r"^  (.+?)\s+([A-Z]*)\s+(\d+)\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s")
+
+    def tree_sizes(self, name):
+        """{relative path: bytes} for every file under the folder `name`.
+
+        A disc backup is hundreds of files, and asking for each one's size is a fresh
+        smbclient per file -- minutes of handshakes to check a Blu-ray. One recursive
+        listing answers the lot. smbclient prints the starting folder's entries, then a
+        `\\full\\path` header before each subfolder's; the paths are share-relative, the
+        same root `_remote` builds from.
+
+        The parse is defensive rather than trusted: the caller asks again, one file at a
+        time, for anything this did not report. A listing format that drifts costs
+        speed, never a wrong answer.
+        """
+        remote = self._remote(name).strip("/")
+        if P.MOCK:
+            base = _mock_path(self.host, self.share, remote)
+            out = {}
+            for d, _dirs, files in os.walk(base):
+                for f in files:
+                    p = os.path.join(d, f)
+                    out[os.path.relpath(p, base).replace(os.sep, "/")] = os.path.getsize(p)
+            return out
+        rc, text, _ = self._run('recurse ON; ls "%s/*"' % remote, timeout=300)
+        if rc != 0:
+            return {}
+        out, cur = {}, remote
+        for line in text.splitlines():
+            if line.startswith("\\"):
+                cur = line.strip().lstrip("\\").replace("\\", "/")
+                continue
+            m = self._LS_ROW.match(line)
+            if not m:
+                continue
+            fname, attrs, size = m.group(1).rstrip(), m.group(2), int(m.group(3))
+            if fname in (".", "..") or "D" in attrs:
+                continue
+            full = "%s/%s" % (cur, fname) if cur else fname
+            if full.startswith(remote + "/"):
+                out[full[len(remote) + 1:]] = size
+        return out
+
     def put(self, local_path, name, progress=None, cancel=None, poll=4.0):
         """Upload a whole file, reporting progress by watching it grow.
 
@@ -611,6 +657,53 @@ def verify_remote(transport, name, local_path, expect_sha=None, progress=None,
             os.unlink(tmp)
         except OSError:
             pass
+
+
+def verify_remote_tree(transport, name, local_dir, progress=None, mode="quick"):
+    """`verify_remote` for a folder: every file under `local_dir` is at `name` on the
+    share, at the same size -- and, in deep mode, with the same bytes.
+
+    Quick asks the share for one recursive listing, then individually for anything the
+    listing missed, so a parse that drifts is slower rather than wrong. Deep reads every
+    file back, which is the same cost as the file path and the same reason to want it.
+    """
+    from .backup import tree_files
+    files = tree_files(local_dir)
+    if not files:
+        return {"ok": False, "error": "The backup folder is empty."}
+    total = sum(s for _, s in files)
+
+    listed = transport.tree_sizes(name)
+    wrong = []
+    for rel, size in files:
+        got = listed.get(rel)
+        if got is None:
+            got = transport.size("%s/%s" % (name, rel))
+        if got != size:
+            wrong.append("%s (%s on the share, %d here)"
+                         % (rel, "missing" if got is None else "%d bytes" % got, size))
+    if wrong:
+        more = "" if len(wrong) <= 3 else " and %d more" % (len(wrong) - 3)
+        return {"ok": False, "error": "%d file%s didn't arrive intact: %s%s"
+                % (len(wrong), "" if len(wrong) == 1 else "s", "; ".join(wrong[:3]), more)}
+    if mode != "deep":
+        return {"ok": True, "mode": "quick", "files": len(files)}
+
+    done = 0
+    for rel, size in files:
+        base = done
+
+        def step(d, _t, _base=base):
+            if progress:
+                progress(_base + d, total)
+
+        r = verify_remote(transport, "%s/%s" % (name, rel),
+                          os.path.join(local_dir, *rel.split("/")),
+                          progress=step, mode="deep")
+        if not r.get("ok"):
+            return {"ok": False, "error": "%s: %s" % (rel, r.get("error"))}
+        done += size
+    return {"ok": True, "mode": "deep", "files": len(files)}
 
 
 def sha256_file(path, progress=None, chunk=1 << 20):

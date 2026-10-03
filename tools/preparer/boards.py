@@ -30,10 +30,19 @@ ARMBIAN_DL = "https://dl.armbian.com/%s/%s"
 ARMBIAN_RELEASE = "Trixie_current_minimal"
 
 # Raspberry Pi publishes its own durable "latest" handle with a .sha256 companion.
+#
+# One image for every Raspberry Pi here. Raspberry Pi OS Lite (64-bit) carries the
+# device trees and kernels for the Zero 2 W, 3, 4, 400 and 5 on one card -- their own OS
+# list files it under pi3-64bit, pi4-64bit and pi5-64bit at the same URL -- so the
+# Preparer downloads it once and any Pi board reuses it. Checked 2026-10-03 against the
+# 2026-09-15 Trixie image's boot partition. Its first-boot setup is cloud-init, not
+# custom.toml: see rpi_cloudinit.py.
 RASPIOS_URL = "https://downloads.raspberrypi.com/raspios_lite_arm64_latest"
 RASPIOS_SHA = RASPIOS_URL + ".sha256"
 
 
+# `bands` is listed only for a board whose radio cannot do 5 GHz. Absent means 2.4 and
+# 5, which is every other board here; the Wi-Fi step greys out what the radio can't see.
 BOARDS = [
     {
         "id": "orangepizero2w",
@@ -96,15 +105,90 @@ BOARDS = [
                     "a real rip's peak memory is still unmeasured. It will work; it has "
                     "the least headroom of any supported board.",
         "cost": "budget",
+        "bands": ["2.4"],
         "note": "The namesake, and a guaranteed mechanical fit. Boots Raspberry Pi OS "
-                "rather than Armbian.",
+                "rather than Armbian. Its Wi-Fi is 2.4 GHz only.",
+    },
+
+    # ── full-size Raspberry Pis ──
+    #
+    # Not the Zero footprint, so none of these fit the printed enclosure -- they are here
+    # because people already own them, and the software side costs nothing: the same
+    # Raspberry Pi OS image and the same cloud-init provisioning as the Zero 2 W. All are
+    # arm64 with a USB host, which is the whole of Riparr's hardware requirement. The
+    # Pi 1, 2 and Zero / Zero W are absent for the reason board-support.md gives: no
+    # 64-bit CPU, so no MakeMKV.
+    #
+    # Power is the user's to sort out (micro-USB on the 3s, USB-C on the 4 and 5) and is
+    # mentioned only where it can quietly stop a drive working.
+    {
+        "id": "raspberrypi3aplus",
+        "name": "Raspberry Pi 3 Model A+",
+        "soc": "Broadcom BCM2837B0",
+        "ram": "512 MB",
+        "tier": "beta",
+        "os": "raspios",
+        "cost": "budget",
+        "ram_warn": "512 MB is the tight case for MakeMKV, the same as the Zero 2 W. It "
+                    "will work; it has the least headroom of any supported board.",
+        "note": "Full-size A+ board, so it won't fit the Zero-sized enclosure. One USB-A "
+                "port for the drive and dual-band Wi-Fi.",
+    },
+    {
+        "id": "raspberrypi3b",
+        "name": "Raspberry Pi 3 Model B",
+        "soc": "Broadcom BCM2837",
+        "ram": "1 GB",
+        "tier": "beta",
+        "os": "raspios",
+        "cost": "budget",
+        "bands": ["2.4"],
+        "note": "Full-size board, so it won't fit the Zero-sized enclosure. Its Wi-Fi is "
+                "2.4 GHz only — or plug in Ethernet.",
+    },
+    {
+        "id": "raspberrypi3bplus",
+        "name": "Raspberry Pi 3 Model B+",
+        "soc": "Broadcom BCM2837B0",
+        "ram": "1 GB",
+        "tier": "beta",
+        "os": "raspios",
+        "cost": "budget",
+        "note": "Full-size board, so it won't fit the Zero-sized enclosure. Dual-band "
+                "Wi-Fi, and Ethernet if you'd rather plug it in.",
+    },
+    {
+        "id": "raspberrypi4",
+        "name": "Raspberry Pi 4 Model B / 400",
+        "soc": "Broadcom BCM2711",
+        "ram": "1 – 8 GB",
+        "tier": "beta",
+        "os": "raspios",
+        "cost": "mid",
+        "note": "Full-size board, so it won't fit the Zero-sized enclosure. Plug the drive "
+                "into a blue USB 3.0 port, and Gigabit Ethernet will beat Wi-Fi to your "
+                "library.",
+    },
+    {
+        "id": "raspberrypi5",
+        "name": "Raspberry Pi 5",
+        "soc": "Broadcom BCM2712",
+        "ram": "1 – 16 GB",
+        "tier": "beta",
+        "os": "raspios",
+        "cost": "mid",
+        "note": "Full-size board, so it won't fit the Zero-sized enclosure. On a power "
+                "supply under 5 A the Pi 5 limits its USB ports to 600 mA, which a "
+                "bus-powered drive can exceed — use the official 27 W supply or a "
+                "drive with its own power.",
     },
 ]
 
 
 def all_boards():
     """The list as the UI wants it -- no internal URL fields, just what it displays."""
-    fields = ("id", "name", "soc", "ram", "tier", "os", "cost", "note", "ram_warn")
+    fields = ("id", "name", "soc", "ram", "tier", "os", "cost", "note", "ram_warn",
+              "bands")
     return [{k: b[k] for k in fields if k in b} for b in BOARDS]
 
 

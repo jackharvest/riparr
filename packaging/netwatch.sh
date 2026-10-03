@@ -36,6 +36,13 @@ set -u
 
 IFACE="${RIPARR_NETWATCH_IFACE:-wlan0}"
 MODULE="${RIPARR_NETWATCH_MODULE:-sprdwl_ng}"
+# Not every board is the Orange Pi. If its driver is not loaded, take whichever module
+# actually drives the interface (brcmfmac on a Raspberry Pi), so the reload rung reloads
+# something real instead of logging "not loaded" and skipping.
+if ! lsmod 2>/dev/null | grep -q "^${MODULE} "; then
+    _m=$(basename "$(readlink -f "/sys/class/net/$IFACE/device/driver/module" 2>/dev/null)" 2>/dev/null)
+    [ -n "$_m" ] && [ "$_m" != "module" ] && MODULE="$_m"
+fi
 
 # Every INTERVAL seconds, one probe. 60s is a compromise: often enough that a dead
 # radio is caught in minutes rather than hours, rare enough to be invisible.
@@ -103,7 +110,26 @@ ripping() {
     pgrep -x makemkvcon >/dev/null 2>&1 || pgrep -f 'makemkvcon ' >/dev/null 2>&1
 }
 
+# Raspberry Pi OS manages Wi-Fi with NetworkManager; Armbian, as provisioned, with
+# networkd and wpa_supplicant@. Raspberry Pi OS also ships the wpa_supplicant@ template
+# (NetworkManager drives wpa_supplicant itself), so "does the unit exist" cannot tell
+# them apart -- and restarting wpa_supplicant@wlan0 there would start a second
+# supplicant fighting NetworkManager for the radio. "Is it running" can: on Armbian the
+# unit is up even while the radio is wedged, and on a Pi it never is.
+uses_nm() {
+    ! systemctl is-active --quiet "wpa_supplicant@$IFACE.service" 2>/dev/null &&
+        systemctl is-active --quiet NetworkManager 2>/dev/null
+}
+
 reassociate() {
+    if uses_nm; then
+        log "Re-associating: asking NetworkManager to reconnect $IFACE."
+        nmcli device disconnect "$IFACE" >/dev/null 2>&1 || true
+        sleep 2
+        nmcli device connect "$IFACE" >/dev/null 2>&1 ||
+            warn "NetworkManager could not reconnect $IFACE."
+        return
+    fi
     log "Re-associating: restarting wpa_supplicant@$IFACE."
     systemctl restart "wpa_supplicant@$IFACE.service" 2>/dev/null ||
         warn "Could not restart wpa_supplicant@$IFACE."
@@ -117,6 +143,15 @@ reload_driver() {
         return 1
     fi
     log "Reloading the $MODULE driver."
+    if uses_nm; then
+        # NetworkManager notices the interface going and coming back on its own.
+        modprobe -r "$MODULE" 2>/dev/null || warn "rmmod $MODULE was refused."
+        sleep 2
+        modprobe "$MODULE" 2>/dev/null || warn "modprobe $MODULE failed."
+        sleep 5
+        nmcli device connect "$IFACE" >/dev/null 2>&1 || true
+        return
+    fi
     # wpa_supplicant holds the interface; stop it first or the rmmod is refused and
     # the rung silently does nothing, which reads in the log as "the reload didn't
     # help" when in fact it never happened.

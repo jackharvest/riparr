@@ -243,12 +243,92 @@ def test_contract():
     print("  %d names across 4 backends" % len(CONTRACT))
 
 
+# ───────────────────────────── Raspberry Pi first boot ─────────────────────────────
+# Trixie dropped custom.toml for cloud-init, and a card whose seed files are wrong boots
+# to a stock image with nothing saying why. What can be checked without a Pi is that the
+# Preparer's own settings come out the other end intact -- the awkward SSID, the hash,
+# the key going to root -- and that writing a card twice does not stack cmdline tokens.
+# The files were also validated against the image's own cloud-init 25.2 schema when this
+# was written (see rpi_cloudinit.py); that needs cloud-init itself, so it is not here.
+
+def test_cloud_init():
+    group("raspberry pi first boot (cloud-init)")
+    import os
+    import tempfile
+    import core
+    import rpi_cloudinit as CI
+    import writer
+    ssid = 'Mike\'s "Wi-Fi" \\ caf\u00e9'
+    key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample riparr-preparer"
+    toml = core.build_toml({
+        "hostname": "riparr", "user": "riparr", "pw_hash": "$6$salt$Zx/y.hash",
+        "ssid": ssid, "secure": True, "wifi_pw": "hunter22hunter", "hidden": True,
+        "country": "gb", "timezone": "America/Chicago", "keymap": "us",
+        "authorized_key": key})
+    c = CI.parse_custom_toml(toml)
+    check("the SSID survives custom.toml", c["ssid"], ssid)
+    check("the hash survives", c["pw_hash"], "$6$salt$Zx/y.hash")
+    check("the PSK is the derived key, not the passphrase", len(c["psk"]), 64)
+    check("the country is upper-cased", c["country"], "GB")
+    check("the key is read", c["authorized_keys"], [key])
+
+    seed = CI.build(toml, now_ms=7)
+    ud, nc = seed["user-data"], seed["network-config"]
+    check("user-data is a cloud-config", ud.splitlines()[0], "#cloud-config")
+    check("root gets the key without a refusal", "disable_root: false" in ud, True)
+    check("sshd is started", "[ systemctl, enable, --now, ssh ]" in ud, True)
+    check("the SSID is YAML-escaped", '"Mike\'s \\"Wi-Fi\\" \\\\ caf\u00e9":' in nc, True)
+    check("hidden is carried", "hidden: true" in nc, True)
+    check("instance id", seed["meta-data"], "instance-id: riparr-7\n")
+
+    open_net = CI.build(core.build_toml({
+        "hostname": "r", "user": "r", "pw_hash": "x", "ssid": "Cafe", "secure": False,
+        "country": "US", "authorized_key": key}))["network-config"]
+    check("an open network says so", "key-management: none" in open_net, True)
+
+    base = "console=tty1 root=PARTUUID=4d8fd085-02 rootwait resize\n"
+    once = CI.patch_cmdline(base, "riparr-1", "GB")
+    twice = CI.patch_cmdline(once, "riparr-2", "US")
+    check("cmdline keeps what was there", once.split()[:4], base.split())
+    check("writing twice leaves one of each", twice,
+          "console=tty1 root=PARTUUID=4d8fd085-02 rootwait resize "
+          "cfg80211.ieee80211_regdom=US ds=nocloud;i=riparr-2\n")
+
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "cmdline.txt"), "w") as f:
+        f.write(base)
+    check("the writer reports every file read back", writer._write_cloud_init(d, toml), None)
+    check("and all four are on the card",
+          sorted(n for n in os.listdir(d)),
+          ["cmdline.txt", "meta-data", "network-config", "user-data"])
+    print("  settings round-trip, open and hidden networks, idempotent cmdline")
+
+
+def test_boards():
+    group("board registry")
+    import boards
+    ids = [b["id"] for b in boards.BOARDS]
+    check("ids are unique", len(ids), len(set(ids)))
+    check("the default is the tested board", boards.get(boards.default_id())["tier"],
+          "verified")
+    pis = [b for b in boards.BOARDS if b["os"] == "raspios"]
+    check("every Pi uses the one Raspberry Pi OS image",
+          {boards.image_source(b["id"])["url"] for b in pis}, {boards.RASPIOS_URL})
+    for b in boards.BOARDS:
+        check("%s has bands it can name" % b["id"],
+              set(b.get("bands", ["2.4", "5"])) <= {"2.4", "5", "6"}, True)
+    check("the 2.4 GHz-only boards say so",
+          sorted(b["id"] for b in boards.BOARDS if b.get("bands") == ["2.4"]),
+          ["raspberrypi3b", "raspberrypizero2w"])
+    print("  %d boards, %d of them Raspberry Pi" % (len(ids), len(pis)))
+
+
 def main():
     print("Riparr Preparer selftest — host is %s, card writing %s"
           % (hostos.NAME, "supported" if hostos.CAN_WRITE else "not supported"))
     for fn in (test_contract, test_device_ids, test_partition_names,
                test_mount_matching, test_cmdline, test_sink_blocking,
-               test_partition_layout):
+               test_partition_layout, test_cloud_init, test_boards):
         fn()
     print()
     if FAILED:

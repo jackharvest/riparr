@@ -38,6 +38,7 @@ import threading
 import time
 
 from . import db, tv, led as LED, notify, platform as P, shares as SH, system as SY
+from . import backup as BK
 
 log = SY.component("Rip")
 
@@ -50,6 +51,28 @@ WINDOW_BYTES = 4 * 2 ** 30
 
 # Anything shorter than this is a menu, a logo sting or a copyright card.
 DEFAULT_MIN_TITLE = 120
+
+# A job's `output`: the film as one MKV, or the whole disc as its own folder. Chosen by
+# the `rip_mode` setting when the job is identified, and recorded on the job because
+# everything after that -- the transfer, the verification, a resume after a power cut,
+# the purge -- has to know which shape it is holding without re-reading the settings,
+# which may have changed since.
+BACKUP = "backup"
+MKV = "mkv"
+
+
+def _already_have(known):
+    """Whether a disc counts as already ripped *in the form being asked for now*.
+
+    A disc ripped to an MKV last month is not a duplicate when it goes back in to be
+    backed up -- that is the whole reason somebody would put it back in. The same disc
+    backed up twice is.
+    """
+    if not known or not known.get("ripped_at"):
+        return False
+    want = BACKUP if (_settings() or {}).get("rip_mode") == BACKUP else MKV
+    prior = db.get_job(known["job_id"]) if known.get("job_id") else None
+    return ((prior or {}).get("output") or MKV) == want
 
 _wake = threading.Event()
 _send_wake = threading.Event()
@@ -210,6 +233,8 @@ def enqueue(force=False, expect=None):
     # so nothing is ripped on the strength of a label.
     if not force:
         quick = db.disc_by_label_size(label, d.get("size_bytes"))
+        if quick and not _already_have(quick):
+            quick = None
         if quick:
             # Consuming the arm must *grant* the force, not merely skip the refusal.
             # Skipping alone would fall through to the scan below, where the arm is
@@ -272,7 +297,7 @@ def enqueue(force=False, expect=None):
 
     if not force:
         known = db.get_disc(fp)
-        if known and known.get("ripped_at"):
+        if _already_have(known):
             return None, _refuse_duplicate(known, d, label, _abandon)
         # Exclude the row just created, which now carries this same fingerprint.
         existing = db.job_for_fingerprint(fp, states=db.ACTIVE_STATES)
@@ -1066,11 +1091,22 @@ def purge_staging(need_bytes=0, keep_newest=0):
         if not transport:
             continue                       # its destination could not be confirmed
         name = _remote_name(job)
-        try:
-            size = os.path.getsize(local)
-            remote = transport.size(name) if name else None
-        except OSError:
-            continue
+        if job.get("output") == BACKUP:
+            # A folder is redundant only when every file in it is on the share at the
+            # same size -- the same test `_verify_backup` passed, asked again now.
+            try:
+                size = BK.tree_size(local)
+                ok = bool(name) and SH.verify_remote_tree(transport, name, local,
+                                                          mode="quick").get("ok")
+            except Exception:
+                continue
+            remote = size if ok else None
+        else:
+            try:
+                size = os.path.getsize(local)
+                remote = transport.size(name) if name else None
+            except OSError:
+                continue
         if remote != size:
             log.info("Keeping job %d on the card: the library copy is %s, not %d bytes.",
                      job["id"], remote, size)
@@ -1495,6 +1531,21 @@ def _identify(job, s):
     if not d:
         raise RipFailed("The disc was removed before Riparr could read it.")
 
+    # Full-disc backup takes the whole disc, so there is no title to choose and no
+    # season to work out -- and no reason to spend minutes scanning for them. All it
+    # needs is a name. If the disc cannot be backed up right now (a DVD on a box whose
+    # DVD tools have not installed yet), it is ripped as a film instead and the user is
+    # told: on an auto-ripping box a refused disc is one somebody has to come back for.
+    fallback = None
+    if s.get("rip_mode") == BACKUP:
+        ok, why = BK.can_backup(disc_family(d))
+        if ok:
+            return _identify_backup(job, s, d)
+        fallback = ("Rips are set to full-disc backup, but %s, so this disc was ripped "
+                    "as a film file instead." % why)
+        log.warning("Job %d: %s", job["id"], fallback)
+        db.update_job(job["id"], warning=fallback, output=MKV)
+
     # Report the scan as it goes. Nine minutes of "Reading the disc" with a sweeping
     # bar is honest but it is not company: makemkvcon knows how far through it is, and
     # the user should too.
@@ -1579,8 +1630,10 @@ def _identify(job, s):
     warning = uhd_warning(d, P.libredrive_status(d, block=True))
     if warning:
         log.warning("Job %d: %s", job["id"], warning)
+    warning = " ".join(w for w in (fallback, warning) if w) or None
     db.stage_end(job["id"])
-    db.update_job(job["id"], title=title_name, chosen_title=chosen["index"],
+    db.update_job(job["id"], title=title_name, chosen_title=chosen["index"], output=MKV,
+                  year=year,
                   titles=titles, bytes_total=chosen.get("bytes") or 0,
                   warning=warning, disc_family=disc_family(d),
                   # The whole disc, not the title. `bytes_total` is the film; this is
@@ -2290,9 +2343,10 @@ def _finish(job, s, transport, name, local_path, sent_from_card=False):
     if not sent_from_card:
         P.eject()
     log.info("Job %d finished: %s", job["id"], transport.describe(name))
+    what = ("Backed up, menus and all, and verified" if job.get("output") == BACKUP
+            else "Ripped and verified")
     notify.send("done", title=job.get("title") or job.get("disc_label") or "A disc",
-                body="Ripped and verified. It's in your library at %s."
-                     % transport.describe(name))
+                body="%s. It's in your library at %s." % (what, transport.describe(name)))
 
 
 def _finish_season(job, s, transport, folder, base, sent_from_card=False):
@@ -2333,6 +2387,295 @@ def _finish_season(job, s, transport, folder, base, sent_from_card=False):
                         transport.describe(folder)))
 
 
+# ─────────────────────────── full-disc backup ───────────────────────────
+#
+# The disc's own folder -- VIDEO_TS or BDMV, menus and all -- instead of one MKV. The
+# tools are driven by backup.py; what lives here is the same five stages a film goes
+# through, reshaped for a job whose output is a folder of a few hundred files rather
+# than one. The rules do not change shape: nothing half-written appears in a library,
+# nothing belonging to another disc is overwritten, and "done" means it was checked.
+#
+# A backup always files as a film. It is the whole disc, so there is no episode list
+# to split it into, and naming a box-set disc after its label is more honest than
+# guessing which episodes a folder of menus holds.
+
+def _identify_backup(job, s, d):
+    """The film path's identify, minus everything about titles. Returns the job, or
+    None when it is waiting for a name or was skipped."""
+    remembered = db.get_disc(job.get("fingerprint") or "") or {}
+    name = job.get("title") or remembered.get("title") or pretty_label(d.get("label"))
+    family = disc_family(d)
+
+    if not name:
+        behaviour = s.get("on_unknown_disc", "label")
+        if behaviour == "skip":
+            db.stage_end(job["id"])
+            db.update_job(job["id"], state="cancelled", finished_at=int(time.time()),
+                          error="Couldn't identify the disc, and the setting is to skip.")
+            P.eject()
+            return None
+        if behaviour == "label" and d.get("label"):
+            name = d.get("label")
+    if not name:
+        question = _identify_question(True, [], s["min_title_seconds"])
+        db.stage_end(job["id"])
+        db.update_job(job["id"], state="needs_input", question=question,
+                      phase="Waiting for you", titles=[], output=BACKUP,
+                      disc_family=family,
+                      disc_label=d.get("label") or job.get("disc_label"))
+        log.info("Job %d needs a human: %s", job["id"], question)
+        notify.send("needs_you", title=d.get("label") or "A disc", body=question)
+        return None
+
+    title_name, year = _split_year(name)
+    warning = uhd_warning(d, P.libredrive_status(d, block=True))
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
+    disc_bytes = int(d.get("size_bytes") or 0)
+    db.stage_end(job["id"])
+    db.update_job(job["id"], title=title_name, output=BACKUP, kind="movie", year=year,
+                  chosen_title=None, bytes_total=disc_bytes, warning=warning,
+                  disc_family=family, disc_bytes=disc_bytes,
+                  disc_label=d.get("label") or job.get("disc_label"))
+    job = db.get_job(job["id"])
+    job["_year"] = year
+    job["_device"] = d.get("device")
+    return job
+
+
+def _rip_backup(job, s, cancel_ev):
+    """Copy the whole disc into the job's scratch folder. Returns the folder."""
+    direct = use_direct(s, "movie")
+    job_dir = _job_dir(job["id"], direct=direct, kind="movie")
+    if job.get("fingerprint"):
+        db.record_disc(job["fingerprint"], label=job.get("disc_label"),
+                       title=job.get("title"), kind="movie",
+                       size_bytes=job.get("disc_bytes") or 0,
+                       disc_family=job.get("disc_family"))
+    db.update_job(job["id"], state="ripping", phase="Reading the disc",
+                  local_path=None, bytes_ripped=0, stage_pct=0)
+    db.stage_start(job["id"], "decrypt")
+
+    total = job.get("disc_bytes") or job.get("bytes_total") or 0
+
+    def progress(done, eta, phase):
+        db.update_job(job["id"], bytes_ripped=done, eta_seconds=eta,
+                      stage_pct=round((done / total) if total else 0, 4), phase=phase)
+
+    try:
+        folder, warning = BK.run(job.get("disc_family") or "bluray", job.get("_device"),
+                                 job_dir, cancel_ev, total, on_progress=progress,
+                                 on_first_byte=lambda: db.stage_start(job["id"], "save"),
+                                 log=log)
+    except BK.BackupCancelled:
+        raise Cancelled()
+    except BK.BackupFailed as e:
+        raise RipFailed(str(e))
+
+    size = BK.tree_size(folder)
+    db.stage_end(job["id"])
+    fields = {"local_path": folder, "bytes_ripped": size, "bytes_total": size,
+              "eta_seconds": None}
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
+        fields["warning"] = " ".join(w for w in (job.get("warning"), warning) if w)
+    db.update_job(job["id"], **fields)
+    return folder
+
+
+def _backup_name(job, s):
+    """The share-relative folder a backup lands in: the film's folder from the movie
+    template, so a backup sits where the MKV would have -- `Movies/The Matrix (1999)`
+    holding `VIDEO_TS` or `BDMV`, which is the layout Jellyfin and Kodi read as a disc.
+    A template with no folder in it uses the file's name, without the extension."""
+    _share, folder = db.destination("movie")
+    title = job.get("title") or job.get("disc_label") or "Unknown"
+    rel = _render_template(s.get("movie_template") or _TEMPLATES["movie"][1],
+                           title, job.get("_year"), source=job.get("disc_family"))
+    base = os.path.dirname(rel) or os.path.splitext(rel)[0] or sanitise(title)
+    return "%s/%s" % (folder, base) if folder else base
+
+
+def _backup_destination(name, job, exists):
+    """Never put a backup in a folder that already holds something. Returns
+    (name, warning, replace).
+
+    Stricter than `_avoid_clobbering`, and on purpose. Two files can share a film's
+    folder as versions; a disc folder cannot share it with anything -- a media server
+    that finds VIDEO_TS in a folder treats the whole folder as that disc, and the MKV
+    beside it is hidden. So an occupied folder is left alone unless it is this same
+    disc's earlier backup, which is what Re-rip is for, and `replace` says so.
+    """
+    tag = SOURCE_TAG.get(job.get("disc_family") or "")
+    candidates = [name]
+    if tag:
+        candidates.append("%s - %s" % (name, tag))
+    candidates += ["%s - Backup" % name] + ["%s - Backup %d" % (name, n)
+                                            for n in range(2, 10)]
+    mine = job.get("fingerprint") or ""
+    for cand in candidates:
+        if not exists(cand):
+            if cand == name:
+                return cand, None, False
+            return cand, ("Your library already has a folder called “%s”. "
+                          "This backup went into “%s” beside it, so nothing "
+                          "was overwritten." % (os.path.basename(name),
+                                                os.path.basename(cand))), False
+        prior = db.job_for_remote_name(cand)
+        if (mine and prior and prior.get("output") == BACKUP
+                and (prior.get("fingerprint") or "") == mine):
+            return cand, None, True
+    raise RipFailed("Every folder name Riparr would use for this backup is already taken "
+                    "in your library. The backup is still on the card.")
+
+
+def _wait_for_share(job, transport, title, cancel_ev):
+    """D11's backpressure for a backup: the copy is safe on the card, so a sleeping NAS
+    is a wait, never a failure. The same patience `_transfer` has."""
+    waited = 0
+    while not transport.reachable():
+        if cancel_ev.is_set():
+            raise Cancelled()
+        if waited == 0:
+            log.info("Job %d: the share is unreachable; waiting.", job["id"])
+            notify.send("share_lost", title=title,
+                        body="Your library share isn't answering. The backup is safe on "
+                             "the card and will finish on its own when the share is back.")
+            db.update_job(job["id"], phase="Waiting for your library to come back")
+        if waited > 6 * 3600:
+            raise RipFailed("Your library share hasn't answered in six hours. The backup "
+                            "is safe on the card — fix the share and retry this job.")
+        time.sleep(min(60, 5 + waited // 10))
+        waited += 30
+
+
+def _transfer_backup(job, s, local_dir, cancel_ev):
+    """Put the backup folder in the library. Returns (transport, name, where it is now).
+
+    Direct mode is one rename of the whole folder -- it is already on the share. Staged
+    mode sends it a file at a time, with one progress bar across all of them.
+    """
+    share, _ = db.destination("movie")
+    if not share:
+        raise RipFailed("There's no library share configured, so the backup has nowhere "
+                        "to go. It's still on the card.")
+    transport = SH.Transport(share)
+    title = job.get("title") or job.get("disc_label") or "Unknown"
+    base = _backup_name(job, s)
+    root = _library_root("movie")
+    total = BK.tree_size(local_dir)
+
+    if use_direct(s, "movie") and local_dir.startswith(root):
+        name, warning, replace = _backup_destination(
+            base, job, lambda n: os.path.exists(os.path.join(root, n)))
+        db.stage_start(job["id"], "upload")
+        db.update_job(job["id"], state="transferring", phase="Filing it in your library",
+                      bytes_sent=0, bytes_total=total)
+        dest = os.path.join(root, name)
+        if replace and os.path.isdir(dest):
+            shutil.rmtree(dest)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        try:
+            os.replace(local_dir, dest)
+        except OSError as e:
+            log.warning("Job %d: could not rename the backup into place (%s); copying.",
+                        job["id"], e)
+            try:
+                shutil.move(local_dir, dest)
+            except OSError as e2:
+                raise RipFailed("The backup finished but couldn't be filed in your "
+                                "library: %s" % e2)
+        db.stage_end(job["id"])
+        fields = {"bytes_sent": total, "eta_seconds": None, "local_path": dest,
+                  "remote_name": name, "dest_path": transport.describe(name)}
+        if warning:
+            log.warning("Job %d: %s", job["id"], warning)
+            fields["warning"] = " ".join(w for w in (job.get("warning"), warning) if w)
+        db.update_job(job["id"], **fields)
+        _cleanup_staging(job)
+        log.info("Job %d backup filed straight into the library: %s", job["id"], dest)
+        return transport, name, dest
+
+    _wait_for_share(job, transport, title, cancel_ev)
+    name, warning, _replace = _backup_destination(
+        base, job, lambda n: transport.size(n) is not None)
+    if warning:
+        log.warning("Job %d: %s", job["id"], warning)
+        db.update_job(job["id"],
+                      warning=" ".join(w for w in (job.get("warning"), warning) if w))
+
+    files = BK.tree_files(local_dir)
+    db.stage_start(job["id"], "upload")
+    db.update_job(job["id"], state="transferring", phase="Sending to your library",
+                  dest_path=transport.describe(name), remote_name=name,
+                  bytes_sent=0, bytes_total=total)
+    started, sent = time.time(), 0
+    for n, (rel, size) in enumerate(files, 1):
+        if cancel_ev.is_set():
+            raise Cancelled()
+        where = "Sending to your library — file %d of %d" % (n, len(files))
+
+        def progress(got, _of, _base=sent, _where=where):
+            done = _base + got
+            frac = (done / total) if total else 0
+            el = time.time() - started
+            db.update_job(job["id"], bytes_sent=done, phase=_where,
+                          stage_pct=round(frac, 4),
+                          eta_seconds=int(el / frac - el) if frac > 0.02 else None)
+
+        r = transport.put(os.path.join(local_dir, *rel.split("/")),
+                          "%s/%s" % (name, rel), progress=progress, cancel=cancel_ev)
+        if cancel_ev.is_set():
+            raise Cancelled()
+        if not r.get("ok"):
+            raise RipFailed("Couldn't write %s to your library: %s" % (rel, r.get("error")))
+        sent += size
+    db.stage_end(job["id"])
+    db.update_job(job["id"], bytes_sent=total, eta_seconds=None)
+    return transport, name, local_dir
+
+
+def _backup_verify_mode(mode, local_dir):
+    """Deep needs two copies. A direct backup has one, so it is checked by size --
+    asked of the server over smbclient, independently of the mount it was written
+    through, which is what makes even that check mean something."""
+    if mode == "deep" and local_dir.startswith(P.LIBRARY_MOUNT):
+        return "quick"
+    return mode
+
+
+def _verify_backup(job, s, transport, name, local_dir):
+    mode = s.get("verify_mode") or ("deep" if s.get("verify_after_transfer", True)
+                                    else "off")
+    if mode == "off":
+        db.update_job(job["id"], verified_mode="off")
+        return
+    if _backup_verify_mode(mode, local_dir) != mode:
+        log.info("Job %d: deep verification is not possible on a direct backup; "
+                 "checking every file's size instead.", job["id"])
+        mode = "quick"
+        db.update_job(job["id"], warning=" ".join(w for w in (
+            (db.get_job(job["id"]) or {}).get("warning"),
+            "Written straight to your library, so there is no second copy to hash. "
+            "Riparr checked every file's size instead.") if w))
+
+    db.stage_start(job["id"], "verify")
+    db.update_job(job["id"], state="verifying", bytes_verified=0,
+                  phase=("Checking every file arrived" if mode == "quick"
+                         else "Reading every file back to check every byte"))
+
+    def progress(done, total):
+        db.update_job(job["id"], bytes_verified=done,
+                      stage_pct=round(done / total, 4) if total else None)
+
+    r = SH.verify_remote_tree(transport, name, local_dir, progress=progress, mode=mode)
+    db.stage_end(job["id"])
+    if not r.get("ok"):
+        raise RipFailed("The backup reached your library but didn't verify: %s"
+                        % r.get("error"))
+    db.update_job(job["id"], verified_mode=r.get("mode") or mode)
+
+
 class RipFailed(Exception):
     pass
 
@@ -2371,7 +2714,8 @@ def _run_job(job):
             _finish_season(job, s, transport, folder, base)
             return
 
-        local_path = _rip(job, s, cancel_ev)
+        backup = job.get("output") == BACKUP
+        local_path = (_rip_backup if backup else _rip)(job, s, cancel_ev)
 
         # The disc has been read. In cache mode everything left to do happens from the
         # card, so the tray opens *now* rather than twenty minutes from now -- the user
@@ -2393,8 +2737,12 @@ def _run_job(job):
             _send_wake.set()
             return
 
-        transport, name, local_path = _transfer(job, s, local_path, cancel_ev)
-        _verify(job, s, transport, name, local_path)
+        if backup:
+            transport, name, local_path = _transfer_backup(job, s, local_path, cancel_ev)
+            _verify_backup(job, s, transport, name, local_path)
+        else:
+            transport, name, local_path = _transfer(job, s, local_path, cancel_ev)
+            _verify(job, s, transport, name, local_path)
         _finish(job, s, transport, name, local_path)
 
     except Cancelled:
@@ -2565,7 +2913,12 @@ def reverify(job_id, mode="quick"):
                           stage_pct=round(done / total, 4) if total else None)
 
         try:
-            r = SH.verify_remote(transport, name, local, progress=progress, mode=mode)
+            if job.get("output") == BACKUP:
+                r = SH.verify_remote_tree(transport, name, local, progress=progress,
+                                          mode=_backup_verify_mode(mode, local))
+            else:
+                r = SH.verify_remote(transport, name, local, progress=progress,
+                                     mode=mode)
         except Exception as e:
             r = {"ok": False, "error": str(e)}
         db.stage_end(job_id)
@@ -2672,9 +3025,13 @@ def _send_one(job):
             transport, folder, local = _transfer_season(job, s, local, cancel_ev)
             _finish_season(job, s, transport, folder, local, sent_from_card=True)
             return
-        job["_year"] = _split_year(job.get("title") or "")[1]
-        transport, name, local = _transfer(job, s, local, cancel_ev)
-        _verify(job, s, transport, name, local)
+        job["_year"] = job.get("year") or _split_year(job.get("title") or "")[1]
+        if job.get("output") == BACKUP:
+            transport, name, local = _transfer_backup(job, s, local, cancel_ev)
+            _verify_backup(job, s, transport, name, local)
+        else:
+            transport, name, local = _transfer(job, s, local, cancel_ev)
+            _verify(job, s, transport, name, local)
         _finish(job, s, transport, name, local, sent_from_card=True)
     except Cancelled:
         log.info("Job %d cancelled while sending.", job["id"])

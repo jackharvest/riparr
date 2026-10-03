@@ -54,6 +54,15 @@ fi
 [ -n "$IFACE" ] || fail "No wireless interface on this box." ""
 
 CONF="$CONF_DIR/wpa_supplicant-$IFACE.conf"
+if [ ! -f "$CONF" ] && systemctl is-active --quiet NetworkManager 2>/dev/null; then
+  # Raspberry Pi OS runs NetworkManager, not networkd + wpa_supplicant@, so there is no
+  # file here to rewrite. Writing NetworkManager profiles is a different mechanism with
+  # its own way to strand a headless box, and it has not been proven on hardware -- so
+  # it is refused plainly rather than attempted. The network the card was written with
+  # is unaffected and stays in use.
+  fail "Adding Wi-Fi networks from Riparr isn't supported on this board's system yet." \
+       "This box uses NetworkManager (Raspberry Pi OS). It keeps using the network it was set up with; to change it, write the card again with the Preparer."
+fi
 [ -f "$CONF" ] || fail "There is no wpa_supplicant config to update." "$CONF"
 
 # Keep the regulatory domain that is already there. Losing country= costs the 5 GHz

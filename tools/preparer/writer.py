@@ -486,6 +486,29 @@ def _provision_ext4(args, dev, partno, st):
     return 0
 
 
+def _write_cloud_init(boot, toml_body):
+    """Write user-data, network-config and meta-data, and add the NoCloud pointer and
+    Wi-Fi country to cmdline.txt. Returns the name of a file that did not read back,
+    or None. Harmless on an image without cloud-init: it ignores all four."""
+    import rpi_cloudinit
+    seed = rpi_cloudinit.build(toml_body)
+    files = {n: seed[n] for n in ("user-data", "network-config", "meta-data") if seed[n]}
+    cmdline = os.path.join(boot, "cmdline.txt")
+    if os.path.exists(cmdline):
+        with open(cmdline, encoding="utf-8", newline="") as f:
+            files["cmdline.txt"] = rpi_cloudinit.patch_cmdline(
+                f.read(), seed["instance_id"], seed["country"])
+    for name, text in files.items():
+        with open(os.path.join(boot, name), "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+    hostos.flush()
+    for name, text in files.items():
+        with open(os.path.join(boot, name), encoding="utf-8", newline="") as f:
+            if f.read() != text:
+                return name
+    return None
+
+
 def _provision_fat(args, dev, partno, st):
     """Raspberry Pi style, and what the Riparr image will be: drop files onto the FAT
     boot partition. This is the path that works the same on all three operating systems,
@@ -518,6 +541,15 @@ def _provision_fat(args, dev, partno, st):
                         message="Settings did not verify after writing.",
                         detail="custom.toml read back differently than it was written")
                 return 1
+
+        # And the same settings as cloud-init seed files, which is what Raspberry Pi OS
+        # Trixie actually reads -- it removed the custom.toml handler (rpi_cloudinit.py).
+        bad = _write_cloud_init(boot, body)
+        if bad:
+            publish(st, phase="error",
+                    message="Settings did not verify after writing.",
+                    detail="%s read back differently than it was written" % bad)
+            return 1
 
         if args.makemkv and os.path.isdir(args.makemkv):
             _copy_makemkv(os.path.join(boot, "makemkv"), args.makemkv, st)

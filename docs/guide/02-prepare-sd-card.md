@@ -9,7 +9,7 @@ set up entirely from a browser.
 
 ## The Riparr Preparer
 
-The supported boards run **Armbian** (or, for the Raspberry Pi Zero 2 W, Raspberry Pi OS),
+The supported boards run **Armbian** (or, for a Raspberry Pi, Raspberry Pi OS),
 and the Preparer is the tool that prepares a card for them. It scans for your Wi-Fi, writes
 your network in before the card ever boots, and downloads the right operating system for
 whichever board you have — so the box comes up on your network by itself the first time you

@@ -27,6 +27,25 @@ TV/
 These follow the conventions Plex, Jellyfin, and Emby all expect. Files land already
 matched — no "fix match" pass in Plex afterward.
 
+**Full disc backups** (Settings → Ripping → Titles → *Full disc backup*) keep the whole
+disc instead of one file, in the same folder the film would have gone to:
+
+```
+Movies/
+  Blade Runner (1982)/
+    BDMV/            ← a Blu-ray; a DVD gets VIDEO_TS/
+    CERTIFICATE/
+```
+
+Menus, extras, every audio track, decrypted. Jellyfin and Kodi play the folder as a disc,
+and you can turn it into an ISO later without the drive. Plex doesn't play disc folders,
+so stick with MKV if Plex is your player. A backup always files as a film, box sets
+included — it's the disc, not its episodes.
+
+A backup never goes into a folder that already has something in it. If you already have
+`Blade Runner (1982)/` from an MKV rip, the backup goes beside it as
+`Blade Runner (1982) - Bluray/`.
+
 ## Naming templates
 
 If you name things your own way, the templates are editable, Sonarr-style:

@@ -16,7 +16,7 @@ from typing import Dict, List
 from pydantic import BaseModel
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
-from . import (__version__, artwork as ART, db, drives as DRV, led as LED,
+from . import (__version__, artwork as ART, backup as BK, db, drives as DRV, led as LED,
                makemkv as MK,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
                tv as TV, updater)
@@ -96,6 +96,7 @@ def _startup():
     _check_password_reset()
     SY.start_scheduler()
     RIP.start()
+    BK.start()
     LED.start()
 
 
@@ -1514,6 +1515,23 @@ def makemkv_install(body: MakeMKVInstall, user=Depends(require_user)):
 @app.get("/api/makemkv/install")
 def makemkv_install_status(user=Depends(require_user)):
     return MK.install_status()
+
+
+# ── full-disc backup's DVD half ──
+# MakeMKV backs up Blu-ray and UHD itself. DVDs need dvdbackup and libdvdcss, which the
+# root side installs through its own one-way door (backup.py explains why).
+
+@app.get("/api/backup/tools")
+def backup_tools(user=Depends(require_user)):
+    return BK.status()
+
+
+@app.post("/api/backup/tools")
+def backup_tools_install(user=Depends(require_user)):
+    r = BK.request_install()
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r["error"])
+    return r
 
 
 @app.get("/api/makemkv/renewal")

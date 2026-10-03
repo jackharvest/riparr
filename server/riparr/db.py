@@ -107,6 +107,15 @@ ADDED_COLUMNS = {
         ("episode_plan", "TEXT"),
         ("season", "INTEGER"),
         ("series_id", "INTEGER"),      # TVmaze show id, so a re-rip need not search again
+        # mkv | backup -- what this job makes: the film as one file, or the whole disc
+        # as its own folder (rip.BACKUP). NULL on every job from before backups existed,
+        # which all made an MKV, so readers treat NULL as mkv.
+        ("output", "TEXT"),
+        # The year, kept apart from `title` because identify strips it out of the title.
+        # A staged rip is filed by the sender, later, from the database -- and the year
+        # used to live only in memory on the worker's copy of the job, so every staged
+        # film named "Spirited Away (2001)" was filed as plain "Spirited Away".
+        ("year", "INTEGER"),
     ],
     "discs": [
         ("title_index", "INTEGER"),    # the remembered title choice (R5: fix once, ever)

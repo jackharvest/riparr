@@ -324,9 +324,22 @@ async function downloadOS() {
 }
 
 /* ── step 2: wi-fi ──────────────────────────────────────── */
+
+/* Whether the *chosen* board's radio can see this network. `pi_ok` from the scan says
+   the network is on a band some supported board can use; a 2.4 GHz-only board (the
+   Zero 2 W, the Pi 3 Model B) also has to rule out 5 GHz-only networks, or the card is
+   written for a network the box will never find. Unknown band stays allowed. */
+function canJoin(n) {
+  if (!n.pi_ok) return false;
+  const b = boardById(state.board);
+  if (!b || !b.bands || !n.bands || !n.bands.length) return true;
+  return n.bands.some(x => b.bands.includes(x));
+}
+
 function netItem(n, i) {
   const tags = [];
-  if (n.pi_ok) {
+  const ok = canJoin(n);
+  if (ok) {
     if (n.bands.includes("2.4") && n.bands.includes("5")) tags.push(`<span class="tag good">2.4 + 5 GHz</span>`);
     else if (n.bands.includes("5")) tags.push(`<span class="tag good">5 GHz — faster</span>`);
     else if (n.bands.includes("2.4")) tags.push(`<span class="tag good">2.4 GHz</span>`);
@@ -338,10 +351,10 @@ function netItem(n, i) {
     else if (n.saved) tags.push(`<span class="tag">saved</span>`);
     if (!n.secure) tags.push(`<span class="tag warn">open</span>`);
   }
-  const sub = n.pi_ok ? tags.join("")
+  const sub = ok ? tags.join("")
     : `<span class="sub">the box has no radio for this band</span>`;
-  return `<div class="item ${n.pi_ok ? "" : "off"}" data-i="${i}">
-    ${n.pi_ok ? bars(n.rssi) : `<span class="bars"></span>`}
+  return `<div class="item ${ok ? "" : "off"}" data-i="${i}">
+    ${ok ? bars(n.rssi) : `<span class="bars"></span>`}
     <div class="grow">
       <div class="title">${esc(n.ssid)}</div>
       <div class="sub">${sub}</div>

@@ -31,8 +31,9 @@ Most common causes, in order:
 
 1. **Wrong password** — the usual one
 2. **A 5GHz network on a 2.4GHz-only board.** Most supported boards are dual-band and
-   5GHz is fine — but the Raspberry Pi Zero 2 W has no 5GHz radio, so on that board the
-   network must be 2.4GHz.
+   5GHz is fine — but the Raspberry Pi Zero 2 W and Pi 3 Model B have no 5GHz radio, so on
+   those boards the network must be 2.4GHz. The Preparer greys out networks your board
+   can't see.
 3. **No WiFi country set** — WiFi won't start without it (the Preparer sets this for you)
 4. **The network is captive-portal or enterprise** (802.1X) — not supported
 

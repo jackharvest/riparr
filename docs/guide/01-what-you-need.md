@@ -13,7 +13,7 @@ that's been in a drawer since 2014.
 | Part | Notes |
 |---|---|
 | **Optical drive** | See [which drive](#which-drive) below — this is the choice that matters most, and the only one you can get expensively wrong. |
-| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board — the **1 GB** model is plenty. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. Whichever you pick, the Preparer downloads the right OS for it. |
+| **A supported board** | The **Orange Pi Zero 2W** (Allwinner H618) is the tested board — the **1 GB** model is plenty. Riparr also runs on a family of boards in the same footprint — Banana Pi BPI-M4 Zero, Radxa Zero 3W/3E and others, marked *beta* until confirmed. A full-size **Raspberry Pi 3, 4 or 5** works too, though it won't fit the printed case. Whichever you pick, the Preparer downloads the right OS for it. |
 | **microSD card** | **8 GB, and bigger buys you nothing** unless you want deep verification — see [which card](#which-card). Films go straight to your library, not the card. |
 | **USB-C PD brick** | **45W or more.** It's the volts that matter, not the watts — see [how it's powered](#how-its-powered). |
 | **The power bits inside** | A PD trigger board and two buck converters. About $20 all in, and [the list is below](#how-its-powered). |
