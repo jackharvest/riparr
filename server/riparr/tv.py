@@ -38,7 +38,8 @@ is rather than presenting a guess as a fact.
 Metadata is TVmaze, for the same reason `artwork.py` uses Wikipedia rather than TMDB:
 no API key. A box that needs its owner to register for a developer account before it can
 name an episode is a box that does not work out of the box. TVmaze is CC BY-SA and asks
-to be credited, which the interface does.
+to be credited, which the interface does. A TMDB key is therefore optional; with one, TVmaze
+still finds the show, and TMDB supplies the numbers and names (`tmdb_episodes`).
 """
 import json
 import logging
@@ -468,6 +469,15 @@ def analyse(titles, min_seconds=120):
     if not titles:
         return None
 
+    # A segment map only compares across titles when it numbers one shared pool of
+    # stream files, which is what a Blu-ray playlist's map does. A DVD title has no
+    # source file, and its map counts that title's own cells from 1, so a DVD season disc
+    # reads "1,2-3,4-5..." on every title. Compared, every title "holds" the shorter
+    # ones and "overlaps" the rest, which collapsed a premiere-and-two-episodes disc into
+    # a film and a four-episode disc into two episodes. So those maps are
+    # dropped here and the disc is treated as having told us nothing.
+    titles = [dict(t, segments="") if t.get("segments") and not t.get("source") else t
+              for t in titles]
     floor = max(int(min_seconds or 0), SHORT_EPISODE_MIN_SECONDS)
     candidates = [t for t in titles if t.get("seconds", 0) >= floor]
     if len(candidates) < MIN_EPISODES:
@@ -522,6 +532,14 @@ def analyse(titles, min_seconds=120):
     cluster = _episode_cluster(unique)
     if len(cluster) < MIN_EPISODES:
         return None
+    # Film-length "episodes" that all run to the same second are one film in several
+    # versions -- English and original title cards, say -- not a season. A film DVD
+    # with two 88-minute titles that differ by two cells read as two episodes, because a
+    # DVD's maps are dropped above and nothing else here can see they are the same film.
+    # A season of feature-length episodes runs to different lengths.
+    lengths = [t["seconds"] for t in cluster]
+    if min(lengths) >= BONUS_FILM_SECONDS and max(lengths) - min(lengths) <= 2:
+        return None
     episode_seconds = _median([t["seconds"] for t in cluster])
 
     # A title at twice the episode length, sitting alongside a normal cluster, is a
@@ -536,13 +554,22 @@ def analyse(titles, min_seconds=120):
     # premiere. It sits below PLAY_ALL_RATIO, so it arrives here. If it holds the other
     # episodes' segments, or (with no segment map) runs as long as both of them, it is
     # the play-all, and ripping it as E03-E04 would put both episodes on disk twice.
+    #
+    # With no segment map, length cannot tell them apart: a 90-minute premiere beside
+    # two 45-minute episodes adds up exactly like a play-all. Excluding a real
+    # episode loses it silently, and ripping a play-all is one visible unticked row on
+    # a plan that is held for confirmation anyway, so such a title stays in and
+    # `plan_warnings` says why. The same argument `_dedup` makes for erring towards
+    # duplicates.
+    unsure_doubles = []
     for t in list(doubles):
-        # By length only when there are exactly two: against three or more episodes a
-        # 2x title cannot be their sum, and a real double has nothing to add up to.
-        if _really_plays_all(t, cluster, by_length=len(cluster) == 2):
+        if _really_plays_all(t, cluster, by_length=False):
             doubles.remove(t)
             if not play_all:
                 play_all = t
+        elif not parse_segments(t.get("segments")) and _really_plays_all(t, cluster,
+                                                                         by_length=len(cluster) == 2):
+            unsure_doubles.append(t["index"])
     episodes = sorted(cluster + doubles, key=lambda t: t["index"])
 
     # The play-all also says which titles are the season. An episode-length title with
@@ -632,12 +659,77 @@ def analyse(titles, min_seconds=120):
                       + [t for t in compilations if t is not play_all],
         "dedup_signal": _dedup_signal(remaining),
         "doubles": [t["index"] for t in doubles],
+        "unsure_doubles": unsure_doubles,
         "outside_play_all": [t["index"] for t in outside],
         "beyond_play_all": beyond,
         "order_source": order_source,
         "confidence": confidence or ORDER_TRUST[order_source],
         "episode_seconds": int(episode_seconds),
     }
+
+
+# Past this, the longest title is the reason the disc exists: a film sold in the box set,
+# which belongs on the film path. A bonus disc's documentaries run well short of it.
+BONUS_FILM_SECONDS = 75 * 60
+
+
+def bonus_disc(titles, min_seconds=120, allow_long=False):
+    """Read a title list as a box set's bonus disc: `analyse`'s shape, or None.
+
+    Only worth asking of a disc `analyse` has turned down and whose label belongs to a set
+    already filed. A bonus disc of 18, 14, 10 and 5 minutes plus ten shorts is too uneven
+    to be a season, so the film path kept the longest title and dropped the other thirteen.
+    Every title stays, in disc order, because nothing here can say which ones matter.
+
+    `allow_long` keeps a disc whose longest title is film-length. It is for the safety
+    net: a disc of a filed set that nothing else could read is held for a person, who
+    can file it as episodes, specials or a film, instead of going to Movies unasked.
+    """
+    keep = [t for t in titles or []
+            if t.get("seconds", 0) >= max(int(min_seconds or 0), 120)]
+    if not keep or (max(t["seconds"] for t in keep) >= BONUS_FILM_SECONDS
+                    and not allow_long):
+        return None
+    return {"episodes": sorted(keep, key=lambda t: t["index"]),
+            "order_source": "index", "confidence": "low", "doubles": [], "extras": [],
+            "episode_seconds": int(_median([t["seconds"] for t in keep]))}
+
+
+def finale_disc(titles, episode_list, season, first_episode, min_seconds=120):
+    """Read a box set's last disc as one long episode and its extras: `analyse`'s shape,
+    or None.
+
+    A box set's last disc can hold a 91-minute series finale and fourteen featurettes.
+    One episode is too few for a season and too long for a bonus disc, so it was filed as
+    a film. Only worth asking of a disc whose set already has a filed disc of this season:
+    the guide's next episode (from `first_episode`) must run as long as the one long
+    title -- or, in a guide that splits it, the next two together.
+    """
+    keep = [t for t in titles or []
+            if t.get("seconds", 0) >= max(int(min_seconds or 0), 120)]
+    long_ones = [t for t in keep if t["seconds"] >= BONUS_FILM_SECONDS]
+    if len(long_ones) != 1 or season in (None, 0) or not first_episode:
+        return None
+    by_number = {e["number"]: e for e in episode_list or []
+                 if e.get("season") == season and not e.get("special")}
+
+    def fits(*numbers):
+        runtime = sum((by_number.get(n) or {}).get("runtime") or 0 for n in numbers)
+        minutes = long_ones[0]["seconds"] / 60.0
+        return (all(n in by_number for n in numbers) and runtime > 0
+                and abs(runtime - minutes) <= 0.2 * minutes)
+
+    if fits(first_episode):
+        doubles = []
+    elif fits(first_episode, first_episode + 1):
+        doubles = [long_ones[0]["index"]]
+    else:
+        return None
+    return {"episodes": long_ones, "order_source": "index", "confidence": "low",
+            "doubles": doubles, "unsure_doubles": [],
+            "extras": sorted((t for t in keep if t is not long_ones[0]),
+                             key=lambda t: t["index"]),
+            "episode_seconds": int(long_ones[0]["seconds"])}
 
 
 def looks_like_blob(titles, min_seconds=120):
@@ -691,6 +783,9 @@ _SEASON_RE = re.compile(
 _ORDINAL_RE = re.compile(r"\b(%s)[\s_\-]+(?:season|series|book|volume)\b"
                          % "|".join(_ORDINALS), re.I)
 _DISC_RE = re.compile(r"(?:^|[\s_\-])d(?:isc|isk)?[\s_\-]*(\d{1,2})(?=$|[\s_\-])", re.I)
+# Run together on the end of the show's name, as in "EXS1D1". Only the two markers
+# together count: a lone S1 or D1 inside a word is far more likely to be part of a name.
+_COMPACT_RE = re.compile(r"(?<=[A-Za-z0-9])s(\d{1,2})d(\d{1,2})(?=$|[\s_\-.])", re.I)
 
 
 def _number(word):
@@ -711,6 +806,10 @@ def season_from_label(label):
         return None, None
     season = _SEASON_RE.search(s) or _ORDINAL_RE.search(s)
     disc = _DISC_RE.search(s)
+    if not season and not disc:
+        compact = _COMPACT_RE.search(s)
+        if compact:
+            return int(compact.group(1)), int(compact.group(2))
     return (_number(season.group(1)) if season else None,
             int(disc.group(1)) if disc else None)
 
@@ -722,6 +821,10 @@ def series_name_from_label(label):
     are specific to a season disc and would otherwise poison a title search.
     """
     s = (label or "").strip()
+    if not (_SEASON_RE.search(s) or _ORDINAL_RE.search(s) or _DISC_RE.search(s)):
+        compact = _COMPACT_RE.search(s)
+        if compact:
+            s = s[:compact.start()]
     # Everything before the season marker is the show: "Avatar: The Last Airbender Book
     # One: Water Disc 1" is "Avatar: The Last Airbender", and the book's subtitle after
     # it is not part of the name. Taking the marker out and keeping the rest searched
@@ -802,6 +905,30 @@ def search_series(name, limit=6):
     with _cache_lock:
         _show_cache[key] = (time.time(), out)
     return out
+
+
+def show(series_id):
+    """One show by its TVmaze id, in the shape `search_series` returns. None on failure."""
+    try:
+        s = _get("%s/shows/%d" % (API, int(series_id))) or {}
+    except Exception as e:
+        log.info("TVmaze lookup of show %s failed: %s", series_id, e)
+        return None
+    if not s.get("id"):
+        return None
+    return {"id": s["id"], "name": s.get("name") or "",
+            "year": (s.get("premiered") or "")[:4] or None,
+            "network": ((s.get("network") or s.get("webChannel") or {}) or {}).get("name") or "",
+            "score": 0, "runtime": s.get("averageRuntime") or s.get("runtime") or 0}
+
+
+def set_key(label):
+    """What the discs of one box set share: the show part of a label that also says
+    which season or disc it is. Empty for a label with no such marker, because two films
+    or two discs called "DVD_VIDEO" are not a set."""
+    if label is None or season_from_label(label) == (None, None):
+        return ""
+    return series_name_from_label(label).casefold()
 
 
 def pick_series(options, episode_seconds=None, season=None, facts=None, named=None):
@@ -951,6 +1078,86 @@ def episodes(series_id, include_specials=True):
     return out
 
 
+TMDB_API = "https://api.themoviedb.org/3"
+_tmdb_cache = {}
+
+
+def _tmdb_get(path, key):
+    """One TMDB request, with either kind of credential its settings page hands out: the
+    short v3 key goes in the query, the long v4 read token in a header. Exceptions carry
+    no URL, so logging one can't leak the key."""
+    headers = {"User-Agent": UA, "Accept": "application/json"}
+    url = TMDB_API + path
+    if key.startswith("eyJ"):
+        headers["Authorization"] = "Bearer " + key
+    else:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode({"api_key": key})
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=12) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def _tmdb_show_id(series_id, key):
+    """The TMDB id of a TVmaze show, through the ids TVmaze records for it. None if
+    neither finds a show: guessing by name is how a disc gets another show's numbers."""
+    ext = (_get("%s/shows/%d" % (API, int(series_id))) or {}).get("externals") or {}
+    for source, value in (("tvdb_id", ext.get("thetvdb")), ("imdb_id", ext.get("imdb"))):
+        if not value:
+            continue
+        found = _tmdb_get("/find/%s?external_source=%s"
+                          % (urllib.parse.quote(str(value)), source), key)
+        rows = (found or {}).get("tv_results") or []
+        if rows:
+            return int(rows[0]["id"])
+    return None
+
+
+def tmdb_episodes(series_id, key):
+    """Every episode of a TVmaze show as TMDB numbers them, shaped like `episodes`.
+    Empty on any failure, which the caller reports: unlike a missing name, numbers from
+    the wrong guide put files where the media server shows the wrong episode.
+
+    The same show can be counted differently: TVmaze can list a 90-minute premiere as
+    S01E01 and E02 where TMDB has one S01E01, and everything after it is one number apart.
+    Plex's and Jellyfin's default agents use TMDB, so its count is the one they read.
+    """
+    if not series_id or not key:
+        return []
+    sid = int(series_id)
+    with _cache_lock:
+        hit = _tmdb_cache.get(sid)
+        if hit and time.time() - hit[0] < CACHE_TTL:
+            return hit[1]
+    try:
+        tid = _tmdb_show_id(sid, key)
+        if tid is None:
+            log.info("TMDB has no show for TVmaze %s", sid)
+            return []
+        info = _tmdb_get("/tv/%d" % tid, key) or {}
+        numbers = [int(x["season_number"]) for x in info.get("seasons") or []
+                   if x.get("season_number") is not None]
+        out = []
+        # TMDB allows twenty appended seasons per request.
+        for i in range(0, len(numbers), 20):
+            part = numbers[i:i + 20]
+            raw = _tmdb_get("/tv/%d?append_to_response=%s" % (
+                tid, ",".join("season/%d" % n for n in part)), key) or {}
+            for n in part:
+                for e in (raw.get("season/%d" % n) or {}).get("episodes") or []:
+                    if e.get("episode_number") is None:
+                        continue
+                    out.append({"season": n, "number": int(e["episode_number"]),
+                                "name": e.get("name") or "",
+                                "runtime": e.get("runtime") or 0,
+                                "special": n == 0})
+    except Exception as e:
+        log.warning("TMDB episodes for TVmaze %s failed: %s", sid, e)
+        return []
+    with _cache_lock:
+        _tmdb_cache[sid] = (time.time(), out)
+    return out
+
+
 _dvd_cache = {}
 
 
@@ -1014,7 +1221,17 @@ def dvd_map_for(dvd, season):
     return m
 
 
-def number_rows(rows, season, start, episode_list=None, dvd_map=None, typed=()):
+def _guide_says_one(row, season, number, by_number):
+    """Whether the guide lists this double-length title as a single long episode: its
+    entry at this number runs about as long as the title. Needs a guide with real
+    per-episode runtimes, which is why only TMDB numbering asks."""
+    minutes = float(row.get("seconds") or 0) / 60.0
+    runtime = (by_number.get((season, number)) or {}).get("runtime") or 0
+    return bool(minutes and runtime) and abs(runtime - minutes) <= 0.2 * minutes
+
+
+def number_rows(rows, season, start, episode_list=None, dvd_map=None, typed=(),
+                fit_runtimes=False):
     """Number and name the episodes that will be written, in the order given.
 
     Two numbers per row. `position` is where the episode sits in the season *as the
@@ -1036,6 +1253,11 @@ def number_rows(rows, season, start, episode_list=None, dvd_map=None, typed=()):
         span = int(r.get("span") or 0) or (
             2 if int(r.get("episode_last") or r.get("episode") or 0)
             > int(r.get("episode") or 0) else 1)
+        # What the disc suggested, kept so that picking another show can undo a fit.
+        span = int(r.setdefault("disc_span", span))
+        if fit_runtimes and not dvd_map and span > 1 and _guide_says_one(
+                r, season, n, by_number):
+            span = 1
         spans.append((r, n, span))
         n += span
     use_dvd = bool(dvd_map) and all(p + k in dvd_map for _, p, s in spans
@@ -1065,8 +1287,14 @@ def number_rows(rows, season, start, episode_list=None, dvd_map=None, typed=()):
 
 # ── turning all of that into a list of files ─────────────────────────────────
 
+def guide_names(episode_list, season):
+    """{"number": name} for one season, so the page can rename rows as it renumbers them."""
+    return {str(e["number"]): e.get("name") or "" for e in episode_list or []
+            if season is not None and e["season"] == season and not e.get("special")}
+
+
 def build_plan(found, season=None, first_episode=1, series=None, episode_list=None,
-               dvd_map=None):
+               dvd_map=None, fit_runtimes=False):
     """The list of episodes to rip, numbered and named.
 
     Sequence comes from the disc (`found["episodes"]`, already ordered); numbers come
@@ -1089,7 +1317,8 @@ def build_plan(found, season=None, first_episode=1, series=None, episode_list=No
              "source": t.get("source") or ""}
             for t in found["episodes"]]
     dvd_map = dvd_map or {}
-    used = number_rows(plan, season, first_episode, episode_list, dvd_map)
+    used = number_rows(plan, season, first_episode, episode_list, dvd_map,
+                       fit_runtimes=fit_runtimes)
 
     return {
         # Kept in the plan, not re-fetched: renumbering after a correction, in the page
@@ -1102,6 +1331,7 @@ def build_plan(found, season=None, first_episode=1, series=None, episode_list=No
         "order_source": found["order_source"],
         "confidence": found["confidence"],
         "play_all_index": (found.get("play_all") or {}).get("index"),
+        "guide_names": guide_names(episode_list, season),
         "episodes": plan,
     }
 
@@ -1134,6 +1364,11 @@ def plan_warnings(plan, found, episode_list=None):
     if found.get("play_all"):
         out.append("The “play all” title was excluded. It's every episode in "
                    "one file, and it's what gave us the episode order.")
+    for idx in found.get("unsure_doubles") or []:
+        out.append("Title %d is as long as the disc's other two episodes together. It "
+                   "may be a double-length episode or a \u201cplay all\u201d, and this "
+                   "disc can't say which, so it is kept. If it's a repeat of them, "
+                   "untick it." % idx)
     if found.get("beyond_play_all"):
         n = len(found["beyond_play_all"])
         out.append("The disc's \u201cplay all\u201d stops short: %d episode%s after it %s "
@@ -1164,7 +1399,7 @@ def plan_warnings(plan, found, episode_list=None):
             over = [e for e in plan["episodes"] if e["episode_last"] > last]
             if over:
                 out.append("This numbering runs past the end of season %d, which "
-                           "TVmaze says has %d episodes. The starting episode is "
+                           "the episode guide says has %d episodes. The starting episode is "
                            "probably wrong." % (plan["season"], last))
     if not any(e["episode_title"] for e in plan["episodes"]):
         out.append("No episode titles were found, so the files are numbered but not "

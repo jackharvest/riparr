@@ -1166,6 +1166,14 @@ function seasonPrompt(j) {
   const held = !!(plan.hold && j.local_path);
   const verb = held ? "File" : "Rip";
   const extrasShown = (plan.extras || []).filter(x => !held || x.state === "ripped");
+  // Any season plan can turn out to be a film -- two versions of one film can read as
+  // two episodes. Plans made before the server offered a choice get
+  // the longest title, under the plan's name.
+  const filmRows = (plan.episodes || []).filter(e => !held || e.state === "ripped");
+  const film = plan.film_option || (filmRows.length ? {
+    title_index: filmRows.reduce((a, b) => (b.seconds > a.seconds ? b : a)).title_index,
+    name: plan.series || j.title || "",
+  } : null);
   const opts = plan.series_options || [];
   const trust = { high: ["Read off the disc", "ok"], medium: ["Very likely right", ""],
                   low: ["A guess", "warn"] }[plan.confidence] || ["", ""];
@@ -1236,7 +1244,9 @@ function seasonPrompt(j) {
         return "";
       })()}
 
-      <div class="ep-table" id="ep-rows" data-dvd="${esc(JSON.stringify(plan.dvd_map || {}))}">
+      <div class="ep-table" id="ep-rows" data-dvd="${esc(JSON.stringify(plan.dvd_map || {}))}"
+           data-names="${esc(JSON.stringify(plan.guide_names || {}))}"
+           data-season="${plan.season ?? ""}">
         ${rows.map((e, i) => episodeRow(e, i, rows.length)).join("")}
       </div>
 
@@ -1264,6 +1274,23 @@ function seasonPrompt(j) {
         <button class="btn" data-skip="${j.id}" data-held="${held ? 1 : ""}">${
           held ? "Discard what was read" : "Skip this disc"}</button>
       </div>
+      ${film ? `
+        <details class="ep-film">
+          <summary>Not episodes? File it as a film instead</summary>
+          <div class="btn-row">
+            <select id="film-title" aria-label="Which title is the film">
+              ${[...filmRows, ...extrasShown].map(r => `
+                <option value="${r.title_index}"${
+                  r.title_index === film.title_index ? " selected" : ""}>
+                  Title ${r.title_index} · ${esc(duration(r.seconds))}</option>`).join("")}
+            </select>
+            <input id="film-name" value="${esc(film.name || "")}"
+                   placeholder="Film name (Year)" aria-label="Film name">
+            <button class="btn" data-film="${j.id}">File as a film</button>
+          </div>
+          <div class="muted">Only the chosen title is filed, under Movies. The other
+            titles are let go.</div>
+        </details>` : ""}
       <div class="ep-credit muted">Episode names from
         <a href="https://www.tvmaze.com" target="_blank" rel="noopener">TVmaze</a>.</div>
     </div>`;
@@ -1277,6 +1304,7 @@ function episodeRow(e, i, total) {
       <span class="ep-num">${esc(episodeCode(e))}${span ? "" : ""}</span>
       <span class="ep-dur">${esc(duration(e.seconds))}</span>
       <input class="ep-title" value="${esc(e.episode_title || "")}"
+             data-orig="${esc(e.episode_title || "")}"
              placeholder="${span ? "Two episodes in one file" : "No name"}">
       <span class="ep-src muted">${esc(e.source || `Title ${e.title_index}`)}</span>
       <span class="ep-move">
@@ -2214,6 +2242,13 @@ settingsPages.ripping = async (s) => {
         "From TVmaze, which needs no account. Off gives you correctly numbered files "
         + "with no names — Plex and Jellyfin still match those perfectly, because they "
         + "match on the numbers.")}
+    <label class="f"><span>TMDB API key</span>
+      <input data-set="tmdb_api_key" type="password" value="${esc(s.tmdb_api_key || "")}"
+             placeholder="optional">
+      <span class="help">Numbers and names episodes the way TMDB does, which is what Jellyfin
+        and Plex read by default. TVmaze can count a show differently: it splits a
+        feature-length opener into two episodes, and then every later number is one off.
+        Without a key, TVmaze is used.</span></label>
     <label class="f"><span>Specials go in</span>
       <select data-set="tv_specials_folder">
         ${opt("Season 00", "Season 00 (default)", s.tv_specials_folder)}
@@ -4273,6 +4308,11 @@ function wireContent(section, sub) {
     // position holds -- the same mapping the box applies (tv.number_rows).
     let dvd = {};
     try { dvd = JSON.parse(($("#ep-rows") || {}).dataset.dvd || "{}"); } catch (e) {}
+    // The season's names by number, so a renumbered row is renamed too. A name you
+    // edited stays (it no longer matches data-orig); the server keeps it the same way.
+    let names = {};
+    try { names = JSON.parse(($("#ep-rows") || {}).dataset.names || "{}"); } catch (e) {}
+    const sameSeason = season === Number(($("#ep-rows") || {}).dataset.season ?? season);
     const all = $$("#ep-rows .ep-row");
     const covered = Object.keys(dvd).length && (() => {
       let p = n;
@@ -4292,6 +4332,13 @@ function wireContent(section, sub) {
       if (!keep) { cell.textContent = "—"; }
       else {
         const a = covered && dvd[n], b = covered && dvd[n + span - 1];
+        const input = r.querySelector(".ep-title");
+        const fresh = a ? (a.name || "")
+          : [...Array(span).keys()].map(k => names[n + k] || "").filter(x => x).join(" + ");
+        if (sameSeason && Object.keys(names).length && input.value === input.dataset.orig) {
+          input.value = fresh;
+          input.dataset.orig = fresh;
+        }
         cell.textContent = a
           ? episodeCode({ season: a.season, episode: a.number,
                           episode_last: b && b.number === a.number + span - 1
@@ -4324,6 +4371,18 @@ function wireContent(section, sub) {
   ["ep-season", "ep-first"].forEach(id => {
     const el = $("#" + id);
     if (el) el.oninput = renumberRows;
+  });
+
+  $$("[data-film]").forEach(b => b.onclick = async () => {
+    const name = (($("#film-name") || {}).value || "").trim();
+    if (!name) { toast("Give the film a name.", "bad"); return; }
+    if (!confirm(`File this disc as the film “${name}”?\n\nOnly the chosen title is kept.`)) return;
+    b.disabled = true;
+    try {
+      await api.post(`/api/queue/${b.dataset.film}/answer`, {
+        as_film: true, name, title_index: Number(($("#film-title") || {}).value) });
+    } catch (e) { toast(e.message, "bad"); b.disabled = false; return; }
+    route();
   });
 
   $$("[data-skip]").forEach(b => b.onclick = async () => {

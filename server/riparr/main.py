@@ -810,7 +810,7 @@ def autorip_set(body: AutoRip, user=Depends(require_user)):
 # back the same way when untouched, which is what makes "save" on a page you did not
 # retype your SMTP password into not wipe it. `list_shares` established the precedent
 # of never returning a stored password at all; these follow it.
-SECRET_SETTINGS = ("smtp_password", "ntfy_token")
+SECRET_SETTINGS = ("smtp_password", "ntfy_token", "tmdb_api_key")
 SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 
 
@@ -1365,6 +1365,7 @@ class DiscAnswer(BaseModel):
     episode_titles: Dict[str, str] = None   # title index -> a name typed by hand
     order: List[int] = None             # title indexes, in the order they should go
     extras: Dict[str, str] = None       # extras to rip: title index -> what to call it
+    as_film: bool = False               # a held season plan, filed as a film instead
 
 
 @app.post("/api/queue/{job_id}/answer")
@@ -1378,7 +1379,7 @@ def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
                              season=body.season, first_episode=body.first_episode,
                              series_id=body.series_id, include=body.include,
                              episode_titles=body.episode_titles, order=body.order,
-                             extras=body.extras)
+                             extras=body.extras, as_film=body.as_film)
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"ok": True, "message": message}

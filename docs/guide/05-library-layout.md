@@ -154,6 +154,16 @@ to have DVDs filed without asking.
 
 The names come from [TVmaze](https://www.tvmaze.com), which needs no account.
 
+Guides can count the same show differently. TVmaze may split a 90-minute premiere into E01
+and E02, while TMDB, which Jellyfin and Plex read by default, has it as one
+episode, so every later number is one apart. If your media server shows the wrong titles, add
+a **TMDB API key** in Settings and Riparr numbers from TMDB instead.
+
+**A box set's bonus disc goes under the show.** A disc whose label matches a set you've
+already filed, but which isn't laid out like a season, has every title of two minutes or
+more ripped as a special, numbered after any specials the guide already lists, and held for
+you to check and name. A title of 75 minutes or longer means it's treated as a film instead.
+
 **Disc order and broadcast order don't always agree.** Firefly is the famous one: the
 disc opens with "Serenity", which aired last, so every episode guide numbers it S01E11.
 TVmaze keeps a DVD-order list for shows like this, and Riparr checks it. The first file

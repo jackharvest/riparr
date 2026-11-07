@@ -155,7 +155,33 @@ f_two = tv.analyse(TWO, FLOOR)
 check("two episodes", [e["index"] for e in f_two["episodes"]], [0, 1])
 check("and the 2x title is the play-all", f_two["play_all"]["index"], 2)
 TWO_DVD = [t(0, 44), t(1, 43.3), t(2, 85)]
-check("on a DVD too, by adding up", len(tv.analyse(TWO_DVD, FLOOR)["episodes"]), 2)
+f_two_dvd = tv.analyse(TWO_DVD, FLOOR)
+check("on a DVD length can't say, so the 2x title is kept rather than lost",
+      ([e["index"] for e in f_two_dvd["episodes"]], f_two_dvd["play_all"],
+       f_two_dvd["doubles"], f_two_dvd["unsure_doubles"]), ([0, 1, 2], None, [2], [2]))
+
+print("a DVD's segment maps are per title and say nothing across titles (real discs)")
+def dvd(i, seconds, segments, chapters=8):
+    return {"index": i, "seconds": seconds, "bytes": 2 * 10**9, "name": "", "file": "",
+            "source": "", "segments": segments, "chapters": chapters, "audio": 2}
+DVD_PREMIERE = [dvd(0, 5429, "1,2,3,4,5-7,8,9,10-12,13-14,15-16,17,18-19,20-22,23-24,25", 18),
+          dvd(1, 2718, "1,2-3,4-5,6-7,8,9,10-11,12,13"),
+          dvd(2, 2715, "1,2-3,4-5,6-7,8-9,10-11,12-13,14-15,16")]
+DVD_FOUR = [dvd(0, 2714, "1,2,3-4,5-6,7-9,10-11,12-13,14,15"),
+          dvd(1, 2716, "1,2,3-4,5-7,8-9,10-11,12-14,15,16"),
+          dvd(2, 2721, "1,2,3-5,6-7,8-10,11-12,13-14,15,16"),
+          dvd(3, 2709, "1,2,3-5,6-7,8,9-11,12-14,15,16")]
+f_d1 = tv.analyse(DVD_PREMIERE, FLOOR)
+check("a DVD premiere and two episodes are not a film",
+      ([e["index"] for e in f_d1["episodes"]], f_d1["play_all"], f_d1["doubles"], f_d1["duplicates"]),
+      ([0, 1, 2], None, [0], []))
+f_d2 = tv.analyse(DVD_FOUR, FLOOR)
+check("a four-episode DVD keeps all four episodes",
+      ([e["index"] for e in f_d2["episodes"]], f_d2["duplicates"]), ([0, 1, 2, 3], []))
+check("the disc's own label is read", tv.season_from_label("EXS1D1"), (1, 1))
+check("and the show's name kept", tv.series_name_from_label("EXS1D1"), "Ex")
+check("a lone S1 inside a word is not a season", tv.season_from_label("CLASS1"), (None, None))
+check("nor a name ending in a D number", tv.season_from_label("APOLLO13D1"), (None, None))
 
 print("eleven-minute cartoons are episodes, not extras")
 CARTOONS = [t(i, 11 + (i % 3) * 0.2, 0.6, "%05d.mpls" % (800 + i), str(i)) for i in range(20)] + [
