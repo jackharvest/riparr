@@ -822,7 +822,10 @@ views.queue = async () => {
   state.status = st;
   const drives = state.status.drives || [];
   const inTray = drives.find(d => d.present);
-  setDiscArt(inTray && inTray.label);       // fire and forget; never blocks the render
+  // Once the disc is identified its job has a real title, which finds a poster where a
+  // short volume label ("EXFLM_NA") never would.
+  const trayJob = inTray && jobs.find(j => j.title && j.disc_label === inTray.label);
+  setDiscArt(inTray && ((trayJob && trayJob.title) || inTray.label));   // fire and forget
   const busy = jobs.some(j => j.state !== "needs_input");
   const loaded = drives.find(d => d.present);
   return `

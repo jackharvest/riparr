@@ -1045,6 +1045,22 @@ def pretty_label(label):
     return s.title() if s.isupper() or s.islower() else s
 
 
+def _film_name(disc_name, label):
+    """The best name the disc itself gives for a film: MakeMKV's disc name, else the label.
+
+    A Blu-ray's volume label is often a short code ("EXFLM_NA") while its disc name
+    (CINFO 2, from the disc's own metadata) is the full title. The disc name is used
+    only when it says something the label doesn't: an empty, generic or same-as-label
+    disc name falls back to the label, tidied as before.
+    """
+    def key(x):
+        return re.sub(r"[\W_]+", "", x or "").lower()
+    name = pretty_label(disc_name)
+    if name and key(disc_name) != key(label):
+        return name
+    return pretty_label(label)
+
+
 # Two titles this close in runtime are the same film, not two different ones. Six
 # seconds is deliberately tight: a 3D disc's two cuts are frame-identical, and decoy
 # playlists on an obfuscated disc sit minutes apart, not seconds.
@@ -2290,7 +2306,9 @@ def _identify(job, s):
         raise RipFailed("Nothing on this disc is longer than %d seconds, so there is "
                         "nothing worth ripping." % s["min_title_seconds"])
 
-    name = job.get("title") or remembered.get("title") or pretty_label(d.get("label"))
+    disc_name = next((t.get("disc_name") for t in titles if t.get("disc_name")), "")
+    name = (job.get("title") or remembered.get("title")
+            or _film_name(disc_name, d.get("label")))
 
     # Two separate questions, and they were one setting until a 3D Blu-ray walked into
     # it. "What do I call this" is answered by the volume label; "which title is the
@@ -2316,8 +2334,8 @@ def _identify(job, s):
             P.eject()
             return None
         # "label" with no label to use is not an answer, so it falls through and asks.
-        if behaviour == "label" and d.get("label"):
-            name = pretty_label(d.get("label")) or d.get("label")
+        if behaviour == "label" and (d.get("label") or disc_name):
+            name = _film_name(disc_name, d.get("label")) or d.get("label") or disc_name
             ask_name = False
 
     if ask_name or ask_title or show:

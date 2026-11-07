@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from riparr.rip import (choose_title, looks_obfuscated, _looks_like_3d,  # noqa: E402
-                        _identify_question)
+                        _identify_question, _film_name, parse_info)
 
 GB = 2 ** 30
 FLOOR = 120                       # the shipped min_title_seconds
@@ -92,6 +92,25 @@ check("a 3D disc is not accused of hiding anything",
       "2D and the 3D cut" in _identify_question(False, THREE_D, FLOOR), True)
 check("an obfuscated disc still is",
       "hiding the real one" in _identify_question(False, DECOYS, FLOOR), True)
+
+print("a film is named from the disc's own name before its label")
+SCAN = "\n".join([
+    'CINFO:2,0,"Example Film Returns"',
+    'TINFO:0,2,0,"Example Film Returns"',
+    'TINFO:0,9,0,"1:54:17"',
+    'TINFO:0,11,0,"30816436224"',
+])
+scanned = parse_info(SCAN)
+check("parse_info carries the disc name", scanned[0]["disc_name"], "Example Film Returns")
+check("a short label gives way to the disc name",
+      _film_name(scanned[0]["disc_name"], "EXFR_NA"), "Example Film Returns")
+check("no disc name: the label, tidied", _film_name("", "EXAMPLE_FILM"), "Example Film")
+check("a generic disc name: the label", _film_name("LOGICAL_VOLUME_ID", "EXAMPLE_FILM"),
+      "Example Film")
+check("a disc name that only repeats the label: tidied like the label",
+      _film_name("EXAMPLE_FILM", "EXAMPLE_FILM"), "Example Film")
+check("no label either: the disc name", _film_name("Example Film", ""), "Example Film")
+check("nothing at all", _film_name("", ""), "")
 
 print()
 if failures:
