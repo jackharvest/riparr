@@ -1282,7 +1282,68 @@ def number_rows(rows, season, start, episode_list=None, dvd_map=None, typed=(),
             name = " + ".join(x for x in names if x)
         if int(r.get("title_index", -1)) not in typed:
             r["episode_title"] = name
+    if not use_dvd and season is not None:
+        _pin_typed_names(spans, season, episode_list, typed)
     return use_dvd
+
+
+def _name_key(x):
+    x = re.sub(r"^(the|a|an)\s+", "", (x or "").strip().lower())
+    return re.sub(r"[^a-z0-9]+", " ", x).strip()
+
+
+def _guide_number_for(name, season, episode_list):
+    """The one guide episode of this season a typed name names, or None.
+
+    Exact after case and punctuation, with one allowance: "Example Story Part 1 & Part
+    2" names the guide's single "Example Story", because a person who typed the parts
+    was describing the file, not inventing two episodes.
+    """
+    key = _name_key(name)
+    if not key:
+        return None
+    hits = []
+    for e in episode_list or []:
+        if e["season"] != season or e.get("special"):
+            continue
+        g = _name_key(e.get("name"))
+        if not g:
+            continue
+        if key == g or (" part" not in " " + g and re.fullmatch(
+                re.escape(g) + r"( part[ 0-9and]*)+", key)):
+            hits.append(e["number"])
+    return hits[0] if len(hits) == 1 else None
+
+
+def _pin_typed_names(spans, season, episode_list, typed):
+    """Give a row whose typed name is a guide episode that episode's number.
+
+    A disc that isn't in guide order is corrected by naming what plays, and media
+    servers read the number, not the name: a typed name filed under the counted number
+    shows as the guide's episode at that number. All or nothing per disc: the pins are
+    applied only if no two files would then claim one number.
+    """
+    pins = {}
+    for r, _p, _span in spans:
+        if int(r.get("title_index", -1)) in typed:
+            n = _guide_number_for(r.get("episode_title"), season, episode_list)
+            if n is not None:
+                pins[id(r)] = n
+    if not pins:
+        return
+    claimed = []
+    for r, _p, _span in spans:
+        if id(r) in pins:
+            claimed.append(pins[id(r)])
+        else:
+            claimed.extend(range(int(r["episode"]), int(r["episode_last"]) + 1))
+    if len(claimed) != len(set(claimed)):
+        return
+    for r, _p, _span in spans:
+        if id(r) in pins:
+            r["season"] = season
+            r["episode"] = r["episode_last"] = pins[id(r)]
+            r["span"] = 1
 
 
 # ── turning all of that into a list of files ─────────────────────────────────

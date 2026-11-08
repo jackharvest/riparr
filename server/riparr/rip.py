@@ -1796,7 +1796,10 @@ def _identify_season(job, s, d, titles, remembered):
     plan["series_options"] = options
     # You have already answered for this set, and the numbers follow on from a filed disc.
     # Nothing is left to ask -- unless this disc has its own doubt about what a title is.
-    carried = bool(neighbour) and continued and not found.get("unsure_doubles")
+    # A neighbour that had to be renumbered by hand says the set isn't in guide order,
+    # so counting on from it is a guess: hold this disc too.
+    carried = (bool(neighbour) and continued and not found.get("unsure_doubles")
+               and not _renumbered_by_hand(neighbour))
     if moved_from is not None:
         plan["warnings"].insert(0, (
             "Riparr remembered E%02d as this disc's first episode, but %s is filed and "
@@ -1962,6 +1965,19 @@ def _answer_as_film(job, title_index, name):
     log.info("Job %d: filed as a film by request, title %d", job["id"], index)
     _send_wake.set()
     return True, "Thanks — filing it as a film."
+
+
+def _renumbered_by_hand(job_row):
+    """Whether a filed season disc has an episode numbered off its disc position."""
+    try:
+        plan = json.loads(job_row.get("episode_plan") or "{}")
+    except (TypeError, ValueError):
+        return False
+    if plan.get("dvd_map"):
+        return False                      # a DVD order is the guide's, not a correction
+    return any(r.get("include", True) and r.get("position") is not None
+               and int(r.get("episode") or 0) != int(r["position"])
+               for r in plan.get("episodes") or [])
 
 
 def _film_option(rows, label):

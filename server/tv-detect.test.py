@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from riparr import tv  # noqa: E402
-from riparr.rip import _mock_titles  # noqa: E402
+from riparr.rip import _mock_titles, _renumbered_by_hand  # noqa: E402
 
 GB = 2 ** 30
 FLOOR = 120                       # the shipped min_title_seconds
@@ -353,6 +353,55 @@ check("a missing season is called out",
           tv.plan_warnings(tv.build_plan(f7, season=None), f7)), True)
 check("the play-all exclusion is explained",
       any("play all" in x for x in tv.plan_warnings(plan, f6)), False)
+
+print("a typed name that is a guide episode takes that episode's number")
+GUIDE = ([{"season": 1, "number": n, "name": nm, "special": False, "runtime": 50}
+          for n, nm in enumerate(["Story A Part 1", "Story A Part 2", "Story B Part 1",
+                                  "Story B Part 2", "Story C"], 1)])
+
+
+def rows3():
+    return [{"title_index": 0, "seconds": 6000, "span": 2},
+            {"title_index": 1, "seconds": 3000, "span": 1},
+            {"title_index": 2, "seconds": 3000, "span": 1}]
+
+
+r = rows3()
+tv.number_rows(r, 1, 1, GUIDE)
+check("untyped: counted from the start", [(x["episode"], x["episode_last"]) for x in r],
+      [(1, 2), (3, 3), (4, 4)])
+r = rows3()
+r[0]["episode_title"], r[1]["episode_title"], r[2]["episode_title"] = (
+    "Story C Part 1 & Part 2", "story b, part 1", "Story B Part 2")
+tv.number_rows(r, 1, 1, GUIDE, typed={0, 1, 2})
+check("typed: each row takes its guide number",
+      [(x["episode"], x["episode_last"]) for x in r], [(5, 5), (3, 3), (4, 4)])
+check("typed names are kept on the files", r[0]["episode_title"], "Story C Part 1 & Part 2")
+check("positions still count the disc", [x["position"] for x in r], [1, 3, 4])
+r = rows3()
+r[1]["episode_title"] = "Story A Part 1"
+tv.number_rows(r, 1, 1, GUIDE, typed={1})
+check("a pin that would collide with a counted row is not applied",
+      [(x["episode"], x["episode_last"]) for x in r], [(1, 2), (3, 3), (4, 4)])
+r = rows3()
+r[1]["episode_title"] = "Something else entirely"
+tv.number_rows(r, 1, 1, GUIDE, typed={1})
+check("a typed name the guide doesn't know keeps the counted number", r[1]["episode"], 3)
+
+import json  # noqa: E402
+print("a disc renumbered by hand stops the next disc from carrying on unseen")
+check("counted in order: carry on",
+      _renumbered_by_hand({"episode_plan": json.dumps({"episodes": [
+          {"position": 1, "episode": 1}, {"position": 2, "episode": 2}]})}), False)
+check("a row moved off its position: hold the next disc",
+      _renumbered_by_hand({"episode_plan": json.dumps({"episodes": [
+          {"position": 1, "episode": 5}, {"position": 2, "episode": 2}]})}), True)
+check("an unticked row doesn't count",
+      _renumbered_by_hand({"episode_plan": json.dumps({"episodes": [
+          {"position": 1, "episode": 5, "include": False}]})}), False)
+check("a DVD order is the guide's, not a correction",
+      _renumbered_by_hand({"episode_plan": json.dumps({"dvd_map": {"1": {}}, "episodes": [
+          {"position": 1, "episode": 5}]})}), False)
 
 print("")
 if failures:
