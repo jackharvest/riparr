@@ -1182,7 +1182,7 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 /* An unticked extra is the normal case, not a rejected one: dim it, don't strike it. */
 .ep-row.ep-extra.dropped .ep-title { text-decoration: none; }
 .ep-extras { margin: -4px 0 14px; }
-.ep-extras > summary { cursor: pointer; font-size: 13px; padding: 6px 0; }
+.ep-extras > summary, .mqtt-topics > summary { cursor: pointer; font-size: 13px; padding: 6px 0; }
 .ep-extras .ep-table { margin: 6px 0 0; }
 .ep-extra .ep-move { width: 52px; }
 .ep-num { color: var(--fg-strong); font-variant-numeric: tabular-nums;
@@ -1877,6 +1877,6 @@ li.warn .cl-detail, li.fail .cl-detail { color: var(--fg-strong); }
    The topic list is a table drawn in monospace, so unlike the JSON samples above it
    must not wrap: a wrapped row puts a value under somebody else's topic. */
 .mqtt-topics { margin: 16px 0 4px; }
-.mqtt-topics > summary { cursor: pointer; font-size: 13px; color: var(--fg-muted); padding: 6px 0; }
+.mqtt-topics > summary { color: var(--fg-muted); }
 .mqtt-topics > summary:hover { color: var(--fg-strong); }
 .mqtt-topics code.block { white-space: pre; overflow-x: auto; }

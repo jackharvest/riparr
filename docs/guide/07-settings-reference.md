@@ -340,6 +340,7 @@ state the moment it subscribes. A value with nothing to report is the word `None
 | `autorip/state` | `ON` or `OFF` |
 | `drive/detected`, `drive/disc_present` | `ON` or `OFF` |
 | `drive/disc_type` | `dvd`, `bluray`, `uhd` or `cd` |
+| `drive/attributes` | JSON: the drive's vendor and model, the tray's state, the disc's label |
 | `system/health` | `ok`, `warning` or `error` — the Health table on System → Status. `system/attributes` lists the problems |
 | `system/cpu_temperature` | °C |
 | `storage/free`, `storage/total` | GiB on the card |

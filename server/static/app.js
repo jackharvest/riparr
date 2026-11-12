@@ -2411,6 +2411,37 @@ function mqttSection(s, m) {
       ? `<p class="ropt-warn">${icon("triangle-exclamation")}<span>${esc(m.error)}
           Riparr keeps trying by itself.</span></p>`
       : "";
+  // Rows, so the columns line up whatever the base topic is. The same list is in
+  // mqtt.py's docstring and in the settings reference; a new topic goes in all three.
+  const row = ([t, d]) => (t ? `${m.base_topic}/${t}` : "").padEnd(m.base_topic.length + 29) + d;
+  const topics = [
+    ["availability", "online | offline"],
+    ["job/state", "idle | queued | identifying | ripping |"],
+    ["", "transferring | verifying | needs_input | failed"],
+    ["job/title", "what is being ripped"],
+    ["job/progress", "0–100, through the current stage"],
+    ["job/attributes", "JSON: id, kind, phase, eta, error"],
+    ["autorip/state", "ON | OFF"],
+    ["drive/detected", "ON | OFF"],
+    ["drive/disc_present", "ON | OFF"],
+    ["drive/disc_type", "dvd | bluray | uhd | cd"],
+    ["drive/attributes", "JSON: vendor, model, tray, label"],
+    ["system/health", "ok | warning | error"],
+    ["system/attributes", "JSON: what is wrong"],
+    ["system/cpu_temperature", "°C"],
+    ["storage/free, /total", "GiB on the card"],
+    ["library/state", "ready | error | not_configured"],
+    ["library/free", "GiB on the share"],
+    ["library/attributes", "JSON: which share, what is wrong"],
+    ["network/connected", "ON | OFF"],
+    ["network/ssid, /signal, /ip", "the Wi-Fi link"],
+    ["update/available", "ON | OFF"],
+    ["update/state", "JSON: installed_version, latest_version"],
+    ["makemkv/key_days_left", "days"],
+  ].map(row).join("\n")
+    + "\n\nCommands (retained messages are ignored):\n"
+    + [["autorip/set", "ON | OFF"], ["drive/eject", "anything"]].map(row).join("\n");
+
   return `
   <div class="section"><h2>MQTT
     <span class="grow"></span>
@@ -2449,44 +2480,19 @@ function mqttSection(s, m) {
       <input data-set="mqtt_discovery_prefix" value="${esc(s.mqtt_discovery_prefix || "homeassistant")}">
       <span class="help">Home Assistant's default is <code>homeassistant</code>. Change
         it only if you changed it there.</span></label>
-    <div class="btn-row"><button class="btn" id="mqtt-test">Save and test the connection</button>
-      <span class="test-out" id="test-mqtt"></span></div>
+    ${testRow("mqtt", "Save and test the connection", "/api/mqtt/test", "Connecting…")}
     <details class="mqtt-topics"><summary>Topics</summary>
       <p class="muted">All retained, so a client sees the current state the moment it
         subscribes. A value with nothing to report is <code>None</code>.</p>
-      <code class="block">${esc(m.base_topic)}/availability            online | offline
-${esc(m.base_topic)}/job/state               idle | queued | identifying | ripping |
-${" ".repeat(m.base_topic.length)}                         transferring | verifying | needs_input | failed
-${esc(m.base_topic)}/job/title               what is being ripped
-${esc(m.base_topic)}/job/progress            0–100, through the current stage
-${esc(m.base_topic)}/job/attributes          JSON: id, kind, phase, eta, error
-${esc(m.base_topic)}/autorip/state           ON | OFF
-${esc(m.base_topic)}/drive/detected          ON | OFF
-${esc(m.base_topic)}/drive/disc_present      ON | OFF
-${esc(m.base_topic)}/drive/disc_type         dvd | bluray | uhd | cd
-${esc(m.base_topic)}/system/health           ok | warning | error
-${esc(m.base_topic)}/system/attributes       JSON: what is wrong
-${esc(m.base_topic)}/system/cpu_temperature  °C
-${esc(m.base_topic)}/storage/free, /total    GiB on the card
-${esc(m.base_topic)}/library/state           ready | error | not_configured
-${esc(m.base_topic)}/library/free            GiB on the share
-${esc(m.base_topic)}/network/connected       ON | OFF
-${esc(m.base_topic)}/network/ssid, /signal, /ip
-${esc(m.base_topic)}/update/available        ON | OFF
-${esc(m.base_topic)}/update/state            JSON: installed_version, latest_version
-${esc(m.base_topic)}/makemkv/key_days_left   days
-
-Commands (retained messages are ignored):
-${esc(m.base_topic)}/autorip/set             ON | OFF
-${esc(m.base_topic)}/drive/eject             anything</code>
+      <code class="block">${esc(topics)}</code>
     </details>
   </div></div>`;
 }
 
 settingsPages.connect = async (s) => {
-  const n = await api.get("/api/notifications");
-  // Older servers have no such endpoint; the page must still draw without it.
-  const mq = await api.get("/api/mqtt").catch(() => null);
+  // Older servers have no /api/mqtt; the page must still draw without it.
+  const [n, mq] = await Promise.all([
+    api.get("/api/notifications"), api.get("/api/mqtt").catch(() => null)]);
   const on = new Set(n.enabled || []);
   const ch = n.configured || {};
   const live = Object.values(ch).filter(Boolean).length;
@@ -2771,9 +2777,11 @@ async function followSites(keyTopic) {
 
 /* Save first, then send. A test button that tests the values already stored rather
    than the ones on screen answers a question nobody asked. */
-function testRow(channel) {
-  return `<div class="btn-row"><button class="btn" data-test-notify="${channel}">
-    Save and send a test</button><span class="test-out" id="test-${channel}"></span></div>`;
+function testRow(channel, label = "Save and send a test",
+                 url = "/api/notifications/test", doing = "Sending…") {
+  return `<div class="btn-row"><button class="btn" data-test-notify="${channel}"
+    data-test-url="${url}" data-test-doing="${doing}">
+    ${label}</button><span class="test-out" id="test-${channel}"></span></div>`;
 }
 
 /* Network — every network the box will join, in the order it should try them.
@@ -3979,8 +3987,8 @@ function wireContent(section, sub) {
     out.textContent = "Saving…";
     try {
       await api.put("/api/settings", collectSettings());
-      out.textContent = "Sending…";
-      const r = await api.post("/api/notifications/test", { channel });
+      out.textContent = b.dataset.testDoing;
+      const r = await api.post(b.dataset.testUrl, { channel });
       out.className = "test-out ok";
       out.textContent = r.message;
     } catch (e) {
@@ -3989,25 +3997,6 @@ function wireContent(section, sub) {
     }
     b.disabled = false;
   });
-
-  const mqttTest = $("#mqtt-test");
-  if (mqttTest) mqttTest.onclick = async () => {
-    const out = $("#test-mqtt");
-    mqttTest.disabled = true;
-    out.className = "test-out";
-    out.textContent = "Saving…";
-    try {
-      await api.put("/api/settings", collectSettings());
-      out.textContent = "Connecting…";
-      const r = await api.post("/api/mqtt/test", {});
-      out.className = "test-out ok";
-      out.textContent = r.message;
-    } catch (e) {
-      out.className = "test-out bad";
-      out.textContent = e.message;
-    }
-    mqttTest.disabled = false;
-  };
 
   /* Repair is slow (systemd oneshot, then a poll until the files appear), so the
      button says what it is doing rather than just disabling. A 45-second silence on a

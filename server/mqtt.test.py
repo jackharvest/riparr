@@ -167,7 +167,8 @@ else:
     db.set("mqtt_port", port)
 
     print("Publishing")
-    MQ.start(autorip_state=lambda: dict(ready), set_autorip=set_autorip,
+    MQ.start(autorip_state=lambda: {"enabled": bool(db.get("auto_rip")) and ready["ready"]},
+             set_autorip=set_autorip,
              capacity=lambda free: {"mode": "burst"})
     wait("says it is online", lambda: got("availability"), "online")
     wait("job state", lambda: got("job/state"), "idle")

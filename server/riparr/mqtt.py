@@ -18,6 +18,7 @@ at any moment sees the whole picture without waiting for the next change:
     <base>/drive/detected          ON | OFF
     <base>/drive/disc_present      ON | OFF
     <base>/drive/disc_type         dvd | bluray | uhd | cd
+    <base>/drive/attributes        JSON: vendor, model, tray, label
     <base>/system/health           ok | warning | error
     <base>/system/attributes       JSON: the problems behind that word
     <base>/system/cpu_temperature  degrees C
@@ -46,6 +47,7 @@ paho-mqtt is the one dependency this adds. It is pure Python, so there is no whe
 fail to build on the board, and it is imported lazily: a box whose update could not
 fetch it still starts, and says on the Connect page what is missing.
 """
+import functools
 import hashlib
 import json
 import os
@@ -54,24 +56,25 @@ import ssl
 import threading
 import time
 
-from . import __version__, db, platform as P, system as SY
+from . import __version__, db, platform as P, rip as RIP, system as SY, updater
 
 log = SY.component("MQTT")
 
 FAST = 5            # seconds between looks at the job and the tray
 SLOW = 30           # seconds between looks at everything that costs more than a query
-TIMEOUT = 8
+TEST_TIMEOUT = 8
 NONE = "None"
+NO_LIBRARY = "The MQTT library (paho-mqtt) isn't installed on this box."
 
-JOB_STATES = ["idle", "queued", "identifying", "ripping", "transferring", "verifying",
-              "needs_input", "failed"]
+# Derived, so a state the engine gains is one Home Assistant has been told about.
+JOB_STATES = ["idle"] + db.ACTIVE_STATES + ["failed"]
 
 _stop = threading.Event()
 _wake = threading.Event()
 _cmds = queue.Queue()
 _thread = None
 # What main.py lends this module, so it does not have to import main to ask whether
-# Auto Rip is ready: autorip_state(), set_autorip(bool), capacity(free_bytes).
+# Auto Rip is ready: autorip_state(), set_autorip(bool), capacity(free_bytes). See start().
 _hooks = {}
 
 
@@ -100,6 +103,7 @@ def _paho():
 
 # ─────────────────────────────── configuration ───────────────────────────────
 
+@functools.lru_cache(maxsize=1)
 def device_id():
     """Stable for the life of the install, and not the hostname.
 
@@ -122,27 +126,31 @@ def _slug(s):
     return out or "riparr"
 
 
-def base_topic():
+def base_topic(raw=None):
     """`riparr/<hostname>` unless told otherwise, so two boxes do not share topics."""
+    if raw is None:
+        raw = db.get("mqtt_base_topic")
     # Wildcards are legal in a subscription and never in a topic that is published to.
-    t = (db.get("mqtt_base_topic") or "").replace("#", "").replace("+", "")
+    t = (raw or "").replace("#", "").replace("+", "")
     t = "/".join(p.strip() for p in t.split("/") if p.strip())
     return t or "riparr/%s" % _slug(P.hostname())
 
 
 def _config():
-    host = (db.get("mqtt_host") or "").strip()
+    # One query, not one per key: this runs every five seconds whether MQTT is on or not.
+    s = db.all_settings()
+    host = (s.get("mqtt_host") or "").strip()
     return {
-        "enabled": bool(db.get("mqtt_enabled")) and bool(host),
+        "enabled": bool(s.get("mqtt_enabled")) and bool(host),
         "host": host,
-        "port": int(db.get("mqtt_port") or 1883),
-        "tls": bool(db.get("mqtt_tls")),
-        "tls_insecure": bool(db.get("mqtt_tls_insecure")),
-        "username": (db.get("mqtt_username") or "").strip(),
-        "password": db.get("mqtt_password") or "",
-        "base": base_topic(),
-        "discovery": bool(db.get("mqtt_discovery", True)),
-        "prefix": (db.get("mqtt_discovery_prefix") or "homeassistant").strip().strip("/"),
+        "port": int(s.get("mqtt_port") or 1883),
+        "tls": bool(s.get("mqtt_tls")),
+        "tls_insecure": bool(s.get("mqtt_tls_insecure")),
+        "username": (s.get("mqtt_username") or "").strip(),
+        "password": s.get("mqtt_password") or "",
+        "base": base_topic(s.get("mqtt_base_topic") or ""),
+        "discovery": bool(s.get("mqtt_discovery")),
+        "prefix": (s.get("mqtt_discovery_prefix") or "homeassistant").strip().strip("/"),
     }
 
 
@@ -167,8 +175,7 @@ def _new_client(cfg, client_id):
 
 def _connect(cfg):
     if not _paho():
-        _S.error = ("The MQTT library (paho-mqtt) isn't installed on this box. "
-                    "Updating Riparr from System → Updates installs it.")
+        _S.error = NO_LIBRARY + " Updating Riparr from System → Updates installs it."
         log.error(_S.error)
         return
     c = _new_client(cfg, "riparr-" + device_id())
@@ -240,8 +247,8 @@ def _disconnect():
         log.debug("Disconnect: %s", e)
 
 
-def _publish(suffix, payload, retain=True, absolute=False):
-    """Send a value if it differs from the last one sent. Returns whether it went."""
+def _publish(suffix, payload, absolute=False):
+    """Send a retained value, if it differs from the last one sent."""
     topic = suffix if absolute else "%s/%s" % (_S.cfg["base"], suffix)
     if isinstance(payload, (dict, list)):
         payload = json.dumps(payload, sort_keys=True)
@@ -251,12 +258,9 @@ def _publish(suffix, payload, retain=True, absolute=False):
         payload = "ON" if payload else "OFF"
     else:
         payload = str(payload)
-    if retain and _S.sent.get(topic) == payload:
-        return False
-    _S.client.publish(topic, payload, qos=1, retain=retain)
-    if retain:
+    if _S.sent.get(topic) != payload:
+        _S.client.publish(topic, payload, qos=1, retain=True)
         _S.sent[topic] = payload
-    return True
 
 
 # ─────────────────────────────── what the box is doing ───────────────────────────────
@@ -302,10 +306,9 @@ def _job_values():
             "job/attributes": attrs}
 
 
-def _drive_values():
-    from . import rip as RIP                    # rip imports half the package
-    drives = P.optical_drives()
-    d = drives[0] if drives else {}
+def _drive_values(drives):
+    # The drive with a disc in it, if any has one; otherwise the first.
+    d = next((x for x in drives if x.get("present")), drives[0] if drives else {})
     present = bool(d.get("present"))
     return {"drive/detected": bool(drives),
             "drive/disc_present": present,
@@ -314,7 +317,7 @@ def _drive_values():
                                  if d.get(k)}}
 
 
-def _health(sysinfo, mk, drives, share, wifi, storage, mode):
+def _health(clock, mk, drives, share, wifi, storage, mode):
     """The Health table on System → Status, as one word and a list.
 
     The page derives it in the browser because each line there links to the screen
@@ -322,7 +325,6 @@ def _health(sysinfo, mk, drives, share, wifi, storage, mode):
     here; if one is added to `healthMessages` in app.js it belongs here too.
     """
     bad, warn = [], []
-    clock = P.clock_status()
     if not clock.get("plausible"):
         bad.append("The system clock is wrong, so dates and key expiry mean nothing.")
     elif clock.get("synced") is False:
@@ -350,8 +352,6 @@ def _health(sysinfo, mk, drives, share, wifi, storage, mode):
         warn.append("Rips are staged on the system filesystem.")
     if mode == "degraded":
         warn.append("Not enough free space to rip safely.")
-    if sysinfo.get("throttled"):
-        warn.append("The board is throttling.")
     return ("error" if bad else "warning" if warn else "ok"), bad + warn
 
 
@@ -371,7 +371,6 @@ def _library(share):
 
 
 def _update_values():
-    from . import updater
     r = updater.last_result
     if r is None and not _S.update_asked and db.get("auto_check_updates", True):
         # The scheduled check may be hours away. Ask once, off this thread: a box
@@ -388,23 +387,24 @@ def _update_values():
             "update/available": (r.get("status") == "update") if r else None}
 
 
-def _slow_values():
+def _slow_values(drives):
     sysinfo = P.system_status()
     storage = P.storage_status()
     wifi = P.wifi_status()
     mk = P.makemkv_status()
     share = db.default_share()
-    drives = P.optical_drives()
-    auto = _hooks["autorip_state"]() if "autorip_state" in _hooks else {}
-    cap = _hooks["capacity"](storage["free_bytes"]) if "capacity" in _hooks else {}
+    # Once, and shared: before the clock has synced this forks `timedatectl` per call.
+    clock = P.clock_status()
+    cap = _hooks["capacity"](storage["free_bytes"])
 
-    health, problems = _health(sysinfo, mk, drives, share, wifi, storage, cap.get("mode"))
+    health, problems = _health(clock, mk, drives, share, wifi, storage, cap.get("mode"))
     lib_state, lib_free, lib_attrs = _library(share)
     days = mk.get("days_left")
-    if days is not None and not P.trust_dates():
+    if not (clock.get("plausible") and clock.get("synced") is not False):
         days = None                         # a day count against a wrong clock
 
-    v = {"autorip/ready": bool(auto.get("ready")),
+    # "enabled" is the switch in the sense the page means it: asked for, and able to run.
+    v = {"autorip/state": bool(_hooks["autorip_state"]().get("enabled")),
          "system/health": health,
          # No uptime: it differs on every read, and would republish this whole blob
          # every thirty seconds for a number nobody automates on.
@@ -428,14 +428,12 @@ def _slow_values():
 
 def _values(force_slow=False):
     now = time.time()
+    drives = P.optical_drives()
     if force_slow or not _S.slow or now - _S.slow_at >= SLOW:
-        _S.slow, _S.slow_at = _slow_values(), now
+        _S.slow, _S.slow_at = _slow_values(drives), now
     v = dict(_S.slow)
     v.update(_job_values())
-    v.update(_drive_values())
-    # The switch is "on" in the sense the page means it: asked for, and able to run.
-    ready = v.pop("autorip/ready")
-    v["autorip/state"] = bool(db.get("auto_rip")) and ready
+    v.update(_drive_values(drives))
     return v
 
 
@@ -513,7 +511,7 @@ def _discovery_topic(prefix, component, key):
     return "%s/%s/%s/%s/config" % (prefix, component, device_id(), key)
 
 
-def _discovery():
+def _discovery(values):
     """Announce the entities, or take back an announcement that is no longer wanted.
 
     What was announced, and under which prefix, is remembered in settings rather than
@@ -539,10 +537,10 @@ def _discovery():
     device = {"identifiers": [dev], "name": "Riparr" if host == "riparr"
               else "Riparr (%s)" % host,
               "manufacturer": "Riparr", "sw_version": __version__}
-    model = (P.system_status().get("model") or "").strip()
+    model = (values["system/attributes"].get("model") or "").strip()
     if model:
         device["model"] = model
-    ip = P.wifi_status().get("ip")
+    ip = values["network/ip"]
     if ip:
         port = os.environ.get("RIPARR_PORT") or ""
         device["configuration_url"] = "http://%s%s" % (
@@ -606,14 +604,16 @@ def _tick():
         _handle(*_cmds.get_nowait())
         acted = True
 
-    if _S.fresh:
+    fresh = _S.fresh
+    if fresh:
         # The broker may have lost its retained messages, or be a different broker.
         _S.fresh, _S.sent = False, {}
         _publish("availability", "online")
-        _discovery()
-        acted = True
 
-    for suffix, value in _values(force_slow=acted).items():
+    values = _values(force_slow=acted or fresh)
+    if fresh:
+        _discovery(values)
+    for suffix, value in values.items():
         _publish(suffix, value)
 
 
@@ -628,11 +628,12 @@ def _loop():
     _disconnect()
 
 
-def start(**hooks):
+def start(autorip_state, set_autorip, capacity):
     """Always started. With MQTT off the thread costs one settings read every 5 s,
     and turning it on from the settings page then needs no restart."""
     global _thread
-    _hooks.update(hooks)
+    _hooks.update(autorip_state=autorip_state, set_autorip=set_autorip,
+                  capacity=capacity)
     if _thread and _thread.is_alive():
         return
     _stop.clear()
@@ -659,13 +660,9 @@ def status():
     cfg = _config()
     return {"available": _paho() is not None,
             "enabled": cfg["enabled"],
-            "configured": bool(cfg["host"]),
             "connected": bool(_S.connected),
             "error": _S.error,
-            "host": cfg["host"], "port": cfg["port"],
-            "base_topic": cfg["base"],
-            "discovery": cfg["discovery"],
-            "discovery_prefix": cfg["prefix"]}
+            "base_topic": cfg["base"]}
 
 
 def test():
@@ -677,8 +674,7 @@ def test():
     """
     cfg = _config()
     if not _paho():
-        return {"ok": False, "error": "The MQTT library (paho-mqtt) isn't installed "
-                                      "on this box."}
+        return {"ok": False, "error": NO_LIBRARY}
     if not cfg["host"]:
         return {"ok": False, "error": "Enter the broker's address first."}
     done = threading.Event()
@@ -697,7 +693,7 @@ def test():
                                       % (cfg["host"], cfg["port"], e)}
     c.loop_start()
     try:
-        if not done.wait(TIMEOUT):
+        if not done.wait(TEST_TIMEOUT):
             return {"ok": False,
                     "error": "%s:%d accepted the connection and then said nothing. "
                              "If the broker expects TLS on this port, turn TLS on."
