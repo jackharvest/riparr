@@ -37,7 +37,7 @@ import subprocess
 import threading
 import time
 
-from . import db, tv, led as LED, notify, platform as P, shares as SH, system as SY
+from . import db, tv, notify, platform as P, shares as SH, system as SY
 from . import backup as BK, music as MU, wikidata as WD
 
 log = SY.component("Rip")
@@ -226,7 +226,6 @@ def enqueue(force=False, expect=None, manual=False):
     if refusal:
         log.info("Refused a disc this drive cannot read: %s", refusal)
         notify.send("failed", title=d.get("label") or "A disc", body=refusal)
-        LED.announce("failed")
         P.eject()
         return None, refusal
 
@@ -395,7 +394,6 @@ def _refuse_duplicate(known, drive, label, abandon=None):
     note_duplicate(known.get("fingerprint") or "", title, label, known.get("ripped_at"))
     notify.send("duplicate", title=title,
                 body="Already ripped on %s. Ejected without re-reading it." % when)
-    LED.announce("duplicate")
     # Say it with the drive too, for whoever is not looking at a browser. The light is
     # blinked *before* the eject, because it works by reading the disc and there is
     # nothing to read once the tray is open.
@@ -3166,7 +3164,6 @@ def _finish(job, s, transport, name, local_path, sent_from_card=False):
     db.update_job(job["id"], state="done", phase=None, finished_at=now,
                   eta_seconds=None, error=None,
                   dest_path=transport.describe(name))
-    LED.announce("done")
     # In cache mode the tray was opened the moment the disc was read, and the disc is
     # very likely already back on a shelf -- or replaced by the next one, which would
     # be spat out by an eject that thinks it is being helpful.
@@ -3279,7 +3276,6 @@ def _finish_season(job, s, transport, folder, base, sent_from_card=False):
     db.update_job(job["id"], state="done", phase=None, finished_at=now,
                   eta_seconds=None, error=None, episode_plan=plan,
                   dest_path=transport.describe(folder))
-    LED.announce("done")
     # No eject here. The disc came out the moment the last episode was read, and by now
     # the next disc of the box set may well be in -- a cache-mode transfer takes long
     # enough to swap -- so an eject that thinks it is being helpful would spit it out.
@@ -3320,7 +3316,6 @@ def _finish_partial_season(job, plan, missing, transport, folder):
     db.update_job(job["id"], state="failed", phase=None, finished_at=now,
                   eta_seconds=None, error=msg, episode_plan=plan,
                   dest_path=transport.describe(folder) if filed else None)
-    LED.announce("failed")
     log.warning("Job %d partly ripped: %s", job["id"], msg)
     notify.send("failed", title=plan.get("series") or job.get("title") or "A disc",
                 body=msg)
@@ -3693,7 +3688,6 @@ def _enqueue_cd(d, force=False, expect=None, manual=False):
                "has nothing on it to rip; anything else, clean it and try again.")
         log.info("Refused a CD with no readable TOC.")
         notify.send("failed", title=d.get("label") or "A CD", body=msg)
-        LED.announce("failed")
         P.eject()
         return None, msg
 
@@ -4271,7 +4265,6 @@ def _finish_music(job, s, transport, name, local_dir, sent_from_card=False):
         _cleanup_staging(job)
     db.update_job(job["id"], state="done", phase=None, finished_at=now,
                   eta_seconds=None, error=None, dest_path=transport.describe(name))
-    LED.announce("done")
     if not sent_from_card:
         P.eject()
     if job.get("output") == MU.FILES:
@@ -4319,7 +4312,6 @@ def _run_job(job):
             if not use_direct(s, "music"):
                 db.update_job(job["id"], state="transferring", bytes_sent=0,
                               phase="Waiting to send to your library")
-                LED.announce("done")
                 P.eject()
                 notify.send("ripped", title=job.get("title") or "A CD",
                             body="Read and ejected. It's crossing to your library now "
@@ -4338,7 +4330,6 @@ def _run_job(job):
         # moment mid-job where the tray is free.
         if job.get("kind") == "tv" and job.get("_plan"):
             base = _rip_season(job, s, cancel_ev)
-            LED.announce("done")
             P.eject()
             if job["_plan"].get("hold"):
                 _hold_after_rip(job)
@@ -4361,7 +4352,6 @@ def _run_job(job):
         if not use_direct(s, job.get("kind") or "movie"):
             db.update_job(job["id"], state="transferring", bytes_sent=0,
                           phase="Waiting to send to your library")
-            LED.announce("done")
             P.eject()
             log.info("Job %d: disc read and ejected; sending in the background.",
                      job["id"])
@@ -4391,7 +4381,6 @@ def _run_job(job):
         row = db.get_job(job_id) or {}
         db.update_job(job_id, state="failed", phase=None,
                       finished_at=int(time.time()), error=str(e))
-        LED.announce("failed")
         P.eject()
         notify.send("failed",
                     title=row.get("title") or row.get("disc_label") or "A disc",
@@ -4705,7 +4694,6 @@ def _send_one(job):
         db.stage_end(job["id"])
         db.update_job(job["id"], state="failed", phase=None,
                       finished_at=int(time.time()), error=str(e))
-        LED.announce("failed")
         notify.send("failed", title=job.get("title") or "A disc", body=str(e))
     except Exception as e:
         log.exception("Job %d hit an unexpected error while sending", job["id"])
