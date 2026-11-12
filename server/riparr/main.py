@@ -18,7 +18,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 from . import (__version__, artwork as ART, backup as BK, db, drives as DRV, led as LED,
                music as MU,
-               makemkv as MK,
+               makemkv as MK, mqtt as MQ,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
                tv as TV, updater)
 
@@ -100,6 +100,8 @@ def _startup():
     BK.start()
     MU.start()
     LED.start()
+    MQ.start(autorip_state=_autorip_state, set_autorip=_set_autorip,
+             capacity=_capacity)
 
 
 # ─────────────────────────────── auth ───────────────────────────────
@@ -795,13 +797,20 @@ def autorip(user=Depends(require_user)):
 
 @app.post("/api/autorip")
 def autorip_set(body: AutoRip, user=Depends(require_user)):
-    st = _autorip_state()
-    if body.enabled and not st["ready"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Auto Rip isn't ready yet — %s." % st["blockers"][0]["what"])
-    db.set("auto_rip", body.enabled)
+    try:
+        _set_autorip(body.enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    MQ.poke()
     return _autorip_state()
+
+
+def _set_autorip(enabled):
+    """The one way the switch moves, whether a browser or a broker asked."""
+    st = _autorip_state()
+    if enabled and not st["ready"]:
+        raise ValueError("Auto Rip isn't ready yet — %s." % st["blockers"][0]["what"])
+    db.set("auto_rip", bool(enabled))
 
 
 # ─────────────────────────────── settings ───────────────────────────────
@@ -810,7 +819,7 @@ def autorip_set(body: AutoRip, user=Depends(require_user)):
 # back the same way when untouched, which is what makes "save" on a page you did not
 # retype your SMTP password into not wipe it. `list_shares` established the precedent
 # of never returning a stored password at all; these follow it.
-SECRET_SETTINGS = ("smtp_password", "ntfy_token")
+SECRET_SETTINGS = ("smtp_password", "ntfy_token", "mqtt_password")
 SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 
 
@@ -855,6 +864,7 @@ async def put_settings(request: Request, user=Depends(require_user)):
     # response is the whole settings object, so a client that re-renders from it picks
     # the correction up for free; `adjusted` is there for one that wants to say why.
     adjusted = db.reconcile(body)
+    MQ.poke()                             # a new broker should not wait for the next tick
 
     out = _redact(db.all_settings())
     if adjusted:
@@ -876,6 +886,19 @@ class NotifyTest(BaseModel):
 @app.post("/api/notifications/test")
 def notifications_test(body: NotifyTest, user=Depends(require_user)):
     r = NT.test(body.channel)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error"))
+    return r
+
+
+@app.get("/api/mqtt")
+def mqtt_status(user=Depends(require_user)):
+    return MQ.status()
+
+
+@app.post("/api/mqtt/test")
+def mqtt_test(user=Depends(require_user)):
+    r = MQ.test()
     if not r.get("ok"):
         raise HTTPException(status_code=400, detail=r.get("error"))
     return r

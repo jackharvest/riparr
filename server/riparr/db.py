@@ -358,6 +358,22 @@ DEFAULTS = {
     "smtp_password": "",
     "smtp_from": "",
     "smtp_to": "",
+    # MQTT: the box's state on a broker, continuously, for Home Assistant and friends.
+    # Off until a broker is named; see mqtt.py for the topics.
+    "mqtt_enabled": False,
+    "mqtt_host": "",
+    "mqtt_port": 1883,
+    "mqtt_tls": False,
+    "mqtt_tls_insecure": False,
+    "mqtt_username": "",
+    "mqtt_password": "",
+    # Empty means riparr/<hostname>, so two boxes on one broker do not collide.
+    "mqtt_base_topic": "",
+    "mqtt_discovery": True,
+    "mqtt_discovery_prefix": "homeassistant",
+    # The prefix Home Assistant discovery was last announced under, so it can be
+    # taken back. Written by mqtt.py, not by a person.
+    "mqtt_discovery_published": "",
     "makemkv_key": "",
     # Resolved from whichever source answered, and only ever the expiry of the key this
     # box actually holds -- see makemkv._record_expiry. Durable, so the countdown keeps

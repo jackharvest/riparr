@@ -2393,8 +2393,100 @@ function channelRow(c, on, summary, body) {
   </div>`;
 }
 
+/* MQTT is not a fifth channel, which is why it is not in the list above. A channel is
+   told that something happened; a broker is told what the box is doing, all the time,
+   and decides for itself what that is worth. It also talks back -- two commands --
+   which no channel does. So it gets its own section and its own state badge: "set up"
+   is not the interesting fact about a connection that is supposed to stay open. */
+function mqttSection(s, m) {
+  const badge = !m.available ? ["bad", "library missing"]
+    : !m.enabled ? ["", "off"]
+    : m.connected ? ["ok", "connected"]
+    : ["warn", "not connected"];
+  const note = !m.available
+    ? `<p class="ropt-warn">${icon("triangle-exclamation")}<span>The MQTT library isn't
+        installed on this box, so nothing can be published. Installing an update from
+        <a href="#/system/updates">System → Updates</a> fetches it.</span></p>`
+    : (m.enabled && !m.connected && m.error)
+      ? `<p class="ropt-warn">${icon("triangle-exclamation")}<span>${esc(m.error)}
+          Riparr keeps trying by itself.</span></p>`
+      : "";
+  return `
+  <div class="section"><h2>MQTT
+    <span class="grow"></span>
+    <span class="badge ${badge[0]}">${badge[1]}</span></h2><div>
+    <p class="muted">Publishes what the box is doing to an MQTT broker, continuously —
+      the job and its progress, the disc in the tray, health, temperature, free space,
+      the network — and listens for two commands: turn Auto Rip on or off, and eject.
+      With discovery on, Home Assistant finds all of it by itself as one device.</p>
+    ${note}
+    ${sw("mqtt_enabled", "Publish to an MQTT broker", s.mqtt_enabled,
+         "Nothing is sent until this is on and a broker is named below.")}
+    <div class="grid2" style="margin-top:14px">
+      <label class="f"><span>Broker</span>
+        <input data-set="mqtt_host" value="${esc(s.mqtt_host || "")}" placeholder="homeassistant.local">
+        <span class="help">A name or an IP address, without <code>mqtt://</code>.</span></label>
+      <label class="f"><span>Port</span>
+        <input data-set="mqtt_port" type="number" value="${esc(String(s.mqtt_port ?? 1883))}">
+        <span class="help">1883 normally, 8883 with TLS.</span></label>
+      <label class="f"><span>Username</span>
+        <input data-set="mqtt_username" value="${esc(s.mqtt_username || "")}" autocomplete="off"></label>
+      <label class="f"><span>Password</span>
+        <input data-set="mqtt_password" type="password" value="${esc(s.mqtt_password || "")}"
+               autocomplete="new-password"></label>
+    </div>
+    ${sw("mqtt_tls", "Use TLS", s.mqtt_tls, "Encrypts the connection. The broker has to offer it on the port above.")}
+    ${sw("mqtt_tls_insecure", "Accept a self-signed certificate", s.mqtt_tls_insecure,
+         "Only with TLS on. Still encrypted, but the broker's identity is not checked.")}
+    <label class="f" style="margin-top:14px"><span>Base topic</span>
+      <input data-set="mqtt_base_topic" value="${esc(s.mqtt_base_topic || "")}"
+             placeholder="${esc(m.base_topic)}">
+      <span class="help">Everything is published beneath this. Leave it empty for
+        <code>${esc(m.base_topic)}</code>, which keeps two boxes apart on one broker.</span></label>
+    ${sw("mqtt_discovery", "Home Assistant discovery", s.mqtt_discovery,
+         "Announces the sensors, the Auto Rip switch and the eject button. Turning it off removes them again.")}
+    <label class="f"><span>Discovery prefix</span>
+      <input data-set="mqtt_discovery_prefix" value="${esc(s.mqtt_discovery_prefix || "homeassistant")}">
+      <span class="help">Home Assistant's default is <code>homeassistant</code>. Change
+        it only if you changed it there.</span></label>
+    <div class="btn-row"><button class="btn" id="mqtt-test">Save and test the connection</button>
+      <span class="test-out" id="test-mqtt"></span></div>
+    <details class="mqtt-topics"><summary>Topics</summary>
+      <p class="muted">All retained, so a client sees the current state the moment it
+        subscribes. A value with nothing to report is <code>None</code>.</p>
+      <code class="block">${esc(m.base_topic)}/availability            online | offline
+${esc(m.base_topic)}/job/state               idle | queued | identifying | ripping |
+${" ".repeat(m.base_topic.length)}                         transferring | verifying | needs_input | failed
+${esc(m.base_topic)}/job/title               what is being ripped
+${esc(m.base_topic)}/job/progress            0–100, through the current stage
+${esc(m.base_topic)}/job/attributes          JSON: id, kind, phase, eta, error
+${esc(m.base_topic)}/autorip/state           ON | OFF
+${esc(m.base_topic)}/drive/detected          ON | OFF
+${esc(m.base_topic)}/drive/disc_present      ON | OFF
+${esc(m.base_topic)}/drive/disc_type         dvd | bluray | uhd | cd
+${esc(m.base_topic)}/system/health           ok | warning | error
+${esc(m.base_topic)}/system/attributes       JSON: what is wrong
+${esc(m.base_topic)}/system/cpu_temperature  °C
+${esc(m.base_topic)}/storage/free, /total    GiB on the card
+${esc(m.base_topic)}/library/state           ready | error | not_configured
+${esc(m.base_topic)}/library/free            GiB on the share
+${esc(m.base_topic)}/network/connected       ON | OFF
+${esc(m.base_topic)}/network/ssid, /signal, /ip
+${esc(m.base_topic)}/update/available        ON | OFF
+${esc(m.base_topic)}/update/state            JSON: installed_version, latest_version
+${esc(m.base_topic)}/makemkv/key_days_left   days
+
+Commands (retained messages are ignored):
+${esc(m.base_topic)}/autorip/set             ON | OFF
+${esc(m.base_topic)}/drive/eject             anything</code>
+    </details>
+  </div></div>`;
+}
+
 settingsPages.connect = async (s) => {
   const n = await api.get("/api/notifications");
+  // Older servers have no such endpoint; the page must still draw without it.
+  const mq = await api.get("/api/mqtt").catch(() => null);
   const on = new Set(n.enabled || []);
   const ch = n.configured || {};
   const live = Object.values(ch).filter(Boolean).length;
@@ -2567,6 +2659,8 @@ settingsPages.connect = async (s) => {
       ${CHANNELS.map(c => channelRow(c, !!ch[c.key], summary[c.key], bodies[c.key])).join("")}
     </div>
   </div></div>
+
+  ${mq ? mqttSection(s, mq) : ""}
 
   <div class="section"><h2>Handoff</h2><div>
     <p class="muted">Not a notification: this is where finished files go <i>next</i>.
@@ -3895,6 +3989,25 @@ function wireContent(section, sub) {
     }
     b.disabled = false;
   });
+
+  const mqttTest = $("#mqtt-test");
+  if (mqttTest) mqttTest.onclick = async () => {
+    const out = $("#test-mqtt");
+    mqttTest.disabled = true;
+    out.className = "test-out";
+    out.textContent = "Saving…";
+    try {
+      await api.put("/api/settings", collectSettings());
+      out.textContent = "Connecting…";
+      const r = await api.post("/api/mqtt/test", {});
+      out.className = "test-out ok";
+      out.textContent = r.message;
+    } catch (e) {
+      out.className = "test-out bad";
+      out.textContent = e.message;
+    }
+    mqttTest.disabled = false;
+  };
 
   /* Repair is slow (systemd oneshot, then a poll until the files appear), so the
      button says what it is doing rather than just disabling. A 45-second silence on a
