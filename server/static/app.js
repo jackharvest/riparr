@@ -1236,6 +1236,14 @@ function seasonPrompt(j) {
         return "";
       })()}
 
+      <div class="btn-row" style="margin-bottom:8px">
+        <button class="btn tiny" id="ep-rename" data-sid="${plan.series_id || ""}"
+                ${plan.series_id || opts.length ? "" : "disabled"}
+                title="Look the names up again for the numbers shown now">Update names</button>
+        <span class="muted" style="font-size:12px">After changing season or first episode:
+          replaces every name with TVmaze's, including ones you typed.</span>
+      </div>
+
       <div class="ep-table" id="ep-rows" data-dvd="${esc(JSON.stringify(plan.dvd_map || {}))}">
         ${rows.map((e, i) => episodeRow(e, i, rows.length)).join("")}
       </div>
@@ -4302,6 +4310,52 @@ function wireContent(section, sub) {
       r.querySelector("[data-up]").disabled = i === 0;
       r.querySelector("[data-down]").disabled = i === all.length - 1;
     });
+  };
+  /* "Update names": the numbers on screen move when season or first episode change, but
+     the titles are text the page cannot tell from something typed by hand, so they stay
+     put. This asks TVmaze again and names each kept row by the number it now shows --
+     the same lookup the box does (tv.number_rows), DVD order and double episodes
+     included. */
+  const renameBtn = $("#ep-rename");
+  if (renameBtn) renameBtn.onclick = async () => {
+    const seasonRaw = ($("#ep-season") || {}).value;
+    const sid = Number(($("#ep-series") || {}).value || renameBtn.dataset.sid);
+    if (!sid) { toast("Pick a series from the list first.", "bad"); return; }
+    if (seasonRaw === "") { toast("Give it a season number first.", "bad"); return; }
+    const season = Number(seasonRaw);
+    renameBtn.disabled = true;
+    try {
+      const list = (await api.get(`/api/tv/episodes?series_id=${sid}&season=${season}`)).episodes || [];
+      const byNum = {};
+      list.forEach(e => { byNum[e.number] = e.name || ""; });
+      let dvd = {};
+      try { dvd = JSON.parse(($("#ep-rows") || {}).dataset.dvd || "{}"); } catch (e) {}
+      const all = $$("#ep-rows .ep-row");
+      const spanOf = r => r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
+      let n = Number(($("#ep-first") || {}).value || 1);
+      const covered = Object.keys(dvd).length && (() => {
+        let p = n;
+        return all.every(r => {
+          if (!r.querySelector(".ep-keep").checked) return true;
+          const ok = [...Array(spanOf(r)).keys()].every(k => dvd[p + k]);
+          p += spanOf(r);
+          return ok;
+        });
+      })();
+      let named = 0;
+      all.forEach(r => {
+        if (!r.querySelector(".ep-keep").checked) return;
+        const sp = spanOf(r);
+        const name = covered ? (dvd[n].name || "")
+          : [...Array(sp).keys()].map(k => byNum[n + k] || "").filter(Boolean).join(" + ");
+        r.querySelector(".ep-title").value = name;
+        if (name) named++;
+        n += sp;
+      });
+      toast(named ? `Updated ${named} name${named === 1 ? "" : "s"}.`
+                  : "TVmaze has no names for these numbers.", named ? "ok" : "bad");
+    } catch (e) { toast(e.message, "bad"); }
+    renameBtn.disabled = false;
   };
   $$("[data-up]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.up), -1));
   $$("[data-down]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.down), 1));
