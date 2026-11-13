@@ -50,6 +50,7 @@ print("A job, as topics")
 v = MQ._job_values()
 check("nothing in flight is idle", v["job/state"], "idle")
 check("idle has no title", v["job/title"], None)
+check("idle is 0 percent, not unknown", v["job/progress"], 0.0)
 
 rip = db.create_job(title="Arthur Christmas", state="ripping", kind="movie",
                     started_at=int(time.time()))

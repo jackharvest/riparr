@@ -14,7 +14,7 @@ at any moment sees the whole picture without waiting for the next change:
                                    (done lasts mqtt_done_seconds after a finished rip,
                                    then idle; a new disc replaces it at once)
     <base>/job/title               what is being ripped
-    <base>/job/progress            0-100, through the current stage
+    <base>/job/progress            0-100, through the current stage (0 when idle, 100 when done)
     <base>/job/attributes          JSON: id, kind, phase, eta, error ...
     <base>/autorip/state           ON | OFF
     <base>/drive/detected          ON | OFF
@@ -303,7 +303,9 @@ def _job_values():
                 job, state = last, "done"
 
     pct = None
-    if job and state == "done":
+    if state == "idle":
+        pct = 0.0           # a gauge with nothing to do reads 0, not unknown
+    elif job and state == "done":
         pct = 100.0
     elif job and state != "failed":
         if isinstance(job.get("stage_pct"), (int, float)):

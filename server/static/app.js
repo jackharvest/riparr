@@ -2419,7 +2419,7 @@ function mqttSection(s, m) {
     ["job/state", "idle | queued | identifying | ripping | done |"],
     ["", "transferring | verifying | needs_input | failed"],
     ["job/title", "what is being ripped"],
-    ["job/progress", "0–100, through the current stage"],
+    ["job/progress", "0–100, through the current stage (0 idle, 100 done)"],
     ["job/attributes", "JSON: id, kind, phase, eta, error"],
     ["autorip/state", "ON | OFF"],
     ["drive/detected", "ON | OFF"],
