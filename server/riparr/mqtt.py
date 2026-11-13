@@ -10,7 +10,9 @@ at any moment sees the whole picture without waiting for the next change:
 
     <base>/availability            online | offline   (offline is the broker's last will)
     <base>/job/state               idle | queued | identifying | ripping | transferring
-                                   | verifying | needs_input | failed
+                                   | verifying | needs_input | done | failed
+                                   (done lasts mqtt_done_seconds after a finished rip,
+                                   then idle; a new disc replaces it at once)
     <base>/job/title               what is being ripped
     <base>/job/progress            0-100, through the current stage
     <base>/job/attributes          JSON: id, kind, phase, eta, error ...
@@ -67,7 +69,7 @@ NONE = "None"
 NO_LIBRARY = "The MQTT library (paho-mqtt) isn't installed on this box."
 
 # Derived, so a state the engine gains is one Home Assistant has been told about.
-JOB_STATES = ["idle"] + db.ACTIVE_STATES + ["failed"]
+JOB_STATES = ["idle"] + db.ACTIVE_STATES + ["done", "failed"]
 
 _stop = threading.Event()
 _wake = threading.Event()
@@ -269,6 +271,13 @@ def _gib(n):
     return round(n / 2.0**30, 1) if n is not None else None
 
 
+def _done_seconds():
+    try:
+        return max(0, int(db.get("mqtt_done_seconds")))
+    except (TypeError, ValueError):
+        return 600
+
+
 def _job_values():
     active = db.list_jobs(states=db.ACTIVE_STATES)
     # The disc in the drive is the job somebody is watching. One that has given its
@@ -281,12 +290,22 @@ def _job_values():
         # A failure stays on the topic until the next disc replaces it. "idle" a
         # second after a rip died would be true and would hide the only thing an
         # automation is watching for.
-        last = db.list_jobs(states=db.FINAL_STATES, limit=1)
-        if last and last[0]["state"] == "failed":
-            job, state = last[0], "failed"
+        finals = db.list_jobs(states=db.FINAL_STATES, limit=10)
+        if finals and finals[0]["state"] == "failed":
+            job, state = finals[0], "failed"
+        else:
+            # A finished rip reads "done" for a while, then "idle". Newest by finish time,
+            # not start: an upload that outlived the next rip's start is the later "done".
+            # A new disc needs no code here: its job is active, so this is never reached.
+            dones = [j for j in finals if j["state"] == "done" and j.get("finished_at")]
+            last = max(dones, key=lambda j: j["finished_at"], default=None)
+            if last and 0 <= time.time() - last["finished_at"] < _done_seconds():
+                job, state = last, "done"
 
     pct = None
-    if job and state != "failed":
+    if job and state == "done":
+        pct = 100.0
+    elif job and state != "failed":
         if isinstance(job.get("stage_pct"), (int, float)):
             pct = job["stage_pct"] * 100
         elif state == "transferring" and job.get("bytes_total"):

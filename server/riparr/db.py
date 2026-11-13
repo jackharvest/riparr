@@ -371,6 +371,9 @@ DEFAULTS = {
     "mqtt_base_topic": "",
     "mqtt_discovery": True,
     "mqtt_discovery_prefix": "homeassistant",
+    # How long job/state says "done" after a rip finishes, before it goes back to
+    # "idle". A new disc ends it sooner. 0 skips "done" altogether.
+    "mqtt_done_seconds": 600,
     # The prefix Home Assistant discovery was last announced under, so it can be
     # taken back. Written by mqtt.py, not by a person.
     "mqtt_discovery_published": "",

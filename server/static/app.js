@@ -2416,7 +2416,7 @@ function mqttSection(s, m) {
   const row = ([t, d]) => (t ? `${m.base_topic}/${t}` : "").padEnd(m.base_topic.length + 29) + d;
   const topics = [
     ["availability", "online | offline"],
-    ["job/state", "idle | queued | identifying | ripping |"],
+    ["job/state", "idle | queued | identifying | ripping | done |"],
     ["", "transferring | verifying | needs_input | failed"],
     ["job/title", "what is being ripped"],
     ["job/progress", "0–100, through the current stage"],
@@ -2480,6 +2480,12 @@ function mqttSection(s, m) {
       <input data-set="mqtt_discovery_prefix" value="${esc(s.mqtt_discovery_prefix || "homeassistant")}">
       <span class="help">Home Assistant's default is <code>homeassistant</code>. Change
         it only if you changed it there.</span></label>
+    <label class="f"><span>Show "done" for (seconds)</span>
+      <input data-set="mqtt_done_seconds" type="number" min="0" step="1"
+             value="${esc(String(s.mqtt_done_seconds ?? 600))}">
+      <span class="help">After a rip finishes the job state reads <code>done</code> this long,
+        then <code>idle</code>. Inserting a new disc ends it sooner. 0 goes straight to
+        <code>idle</code>.</span></label>
     ${testRow("mqtt", "Save and test the connection", "/api/mqtt/test", "Connecting…")}
     <details class="mqtt-topics"><summary>Topics</summary>
       <p class="muted">All retained, so a client sees the current state the moment it
