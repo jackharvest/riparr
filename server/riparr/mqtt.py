@@ -731,7 +731,10 @@ def status():
             "enabled": cfg["enabled"],
             "connected": bool(_S.connected),
             "error": _S.error,
-            "base_topic": cfg["base"]}
+            "base_topic": cfg["base"],
+            # What an empty field means, which is not the same thing once a topic of
+            # one's own is saved -- and is what the field's help has to name.
+            "default_base_topic": base_topic("")}
 
 
 def test():

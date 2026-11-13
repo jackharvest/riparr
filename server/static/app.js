@@ -2470,9 +2470,9 @@ function mqttSection(s, m) {
          "Only with TLS on. Still encrypted, but the broker's identity is not checked.")}
     <label class="f" style="margin-top:14px"><span>Base topic</span>
       <input data-set="mqtt_base_topic" value="${esc(s.mqtt_base_topic || "")}"
-             placeholder="${esc(m.base_topic)}">
+             placeholder="${esc(m.default_base_topic || m.base_topic)}">
       <span class="help">Everything is published beneath this. Leave it empty for
-        <code>${esc(m.base_topic)}</code>. If you run more than one box on the same broker,
+        <code>${esc(m.default_base_topic || m.base_topic)}</code>. If you run more than one box on the same broker,
         change the topic so each has its own.</span></label>
     ${sw("mqtt_discovery", "Home Assistant discovery", s.mqtt_discovery,
          "Announces the box to Home Assistant.")}

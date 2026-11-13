@@ -141,6 +141,11 @@ db.conn().commit()
 print("Topics and entities")
 db.set("mqtt_base_topic", "/home/+/rip#/")
 check("wildcards never reach a published topic", MQ.base_topic(), "home/rip")
+db.set("mqtt_base_topic", "home/rip")
+check("the settings page is told the topic in use",
+      MQ.status()["base_topic"], "home/rip")
+check("and, separately, what an empty field would mean",
+      MQ.status()["default_base_topic"], "riparr/" + MQ._slug(P.hostname()))
 db.set("mqtt_base_topic", "")
 check("the default base names the box", MQ.base_topic(),
       "riparr/" + MQ._slug(P.hostname()))
