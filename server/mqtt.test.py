@@ -117,8 +117,24 @@ db.update_job(a, state="failed", finished_at=now - 60, error="The share went awa
 v = MQ._job_values()
 check("an upload that fails after the next disc finished still reads failed",
       (v["job/state"], v["job/title"]), ("failed", "Upload A"))
-c = db.create_job(title="Disc C", state="cancelled", started_at=now - 30, finished_at=now - 20)
-check("and a disc put in since then clears it", MQ._job_values()["job/state"], "idle")
+db.conn().execute("DELETE FROM jobs")
+db.conn().commit()
+
+print("A disc that fails while an earlier rip uploads")
+a = db.create_job(title="Upload A", state="transferring", started_at=now - 900,
+                  bytes_total=1000, bytes_sent=100)
+b = db.create_job(title="Disc B", state="failed", started_at=now - 300, finished_at=now - 60,
+                  error="Read error")
+v = MQ._job_values()
+check("the failure is reported at once, not when the upload ends",
+      (v["job/state"], v["job/title"]), ("failed", "Disc B"))
+check("the upload is still counted", v["job/attributes"]["sending"], 1)
+db.update_job(a, state="done", finished_at=now - 10)
+check("and it outlasts the upload finishing", MQ._job_values()["job/state"], "failed")
+c = db.create_job(title="Disc C", state="identifying", started_at=now - 5)
+check("until the next disc goes in", MQ._job_values()["job/state"], "identifying")
+db.update_job(c, state="cancelled", finished_at=now - 1)
+check("after which the failure is not brought back", MQ._job_values()["job/state"], "done")
 db.conn().execute("DELETE FROM jobs")
 db.conn().commit()
 

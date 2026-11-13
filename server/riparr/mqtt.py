@@ -306,18 +306,19 @@ def _job_values():
     # The disc in the drive is the job somebody is watching. One that has given its
     # disc back and is crossing the network comes second, and is counted either way.
     sending = [j for j in active if j["state"] in db.SENDING_STATES]
-    job = next((j for j in active if j["state"] not in db.SENDING_STATES), None) \
-        or (sending[0] if sending else None)
+    drive = next((j for j in active if j["state"] not in db.SENDING_STATES), None)
+    job = drive or (sending[0] if sending else None)
     state = job["state"] if job else "idle"
-    if not job:
+    if not drive:
         # A failure stays on the topic until the next disc replaces it. "idle" a
         # second after a rip died would be true and would hide the only thing an
-        # automation is watching for.
+        # automation is watching for. An earlier rip still uploading does not replace
+        # it either: the disc that just failed is the news, not the upload behind it.
         finals = db.list_jobs(states=db.FINAL_STATES, limit=10)
         failure = _standing_failure(finals, active)
         if failure:
             job, state = failure, "failed"
-        else:
+        elif not job:
             # A finished rip reads "done" for a while, then "idle". Newest by finish time,
             # not start: an upload that outlived the next rip's start is the later "done".
             # A new disc needs no code here: its job is active, so this is never reached.
