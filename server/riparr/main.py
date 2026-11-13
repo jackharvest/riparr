@@ -16,7 +16,7 @@ from typing import Dict, List
 from pydantic import BaseModel
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
-from . import (__version__, artwork as ART, backup as BK, db, drives as DRV, led as LED,
+from . import (__version__, artwork as ART, backup as BK, db, drives as DRV,
                music as MU,
                makemkv as MK,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
@@ -99,7 +99,6 @@ def _startup():
     RIP.start()
     BK.start()
     MU.start()
-    LED.start()
 
 
 # ─────────────────────────────── auth ───────────────────────────────
@@ -383,8 +382,6 @@ def status(user=Depends(require_user)):
         # it. The page turns it into "you already ripped this, here it is".
         "duplicate": RIP.pending_duplicate(),
         "library": P.library_status(),
-        "led": {"detected": LED.available(), "state": LED.current_state(),
-                "device": LED.SPI_DEV},
     }
 
 
@@ -492,17 +489,6 @@ def drive_signal_test(body: SignalTest = SignalTest(), user=Depends(require_user
                                    "reading one.")
     r = P.duplicate_signal((d or {}).get("device") or "/dev/sr0", mode=body.mode)
     return {"ok": bool(r.get("ok")), "message": r.get("message")}
-
-
-@app.post("/api/system/led/test")
-def led_test(user=Depends(require_user)):
-    """Walk the LED through its primaries so a fresh build can be proved in ten seconds.
-
-    Reports `detected: false` rather than a cheerful success when there is nothing
-    wired up — "I ran the test and the box said OK and the LED stayed dark" is the
-    least debuggable outcome this feature could offer.
-    """
-    return LED.self_test()
 
 
 @app.get("/api/drives/guide")

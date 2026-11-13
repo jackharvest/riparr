@@ -518,8 +518,7 @@ class Transport:
 
         `progress(bytes_sent, bytes_total)` is called from a watcher thread roughly
         every `poll` seconds. Without it the queue shows a bar that does not move for
-        three hours, which reads as a hang and gets the cable pulled -- the exact
-        failure the amber LED exists to prevent.
+        three hours, which reads as a hang and gets the cable pulled.
         """
         total = os.path.getsize(local_path)
         remote = self._remote(name)

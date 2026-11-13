@@ -792,9 +792,9 @@ def card_speed(sample=SPEED_SAMPLE):
 
 # ─────────────────── saying something with the drive itself ───────────────────
 #
-# The status LED on the board is the documented way the box speaks without a browser,
-# and on a board with nothing wired to SPI it says nothing at all. The optical drive
-# has a light on the front of it and it is always there, so it is worth using.
+# The box has no status light of its own, so without a browser it says nothing at
+# all. The optical drive has a light on the front of it and it is always there, so it
+# is worth using.
 #
 # **There is no way to address that light.** MMC -- the command set every optical drive
 # speaks -- has no LED control command, and the vendor-specific ones that exist are
