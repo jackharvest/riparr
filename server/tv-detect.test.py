@@ -388,6 +388,24 @@ r[1]["episode_title"] = "Something else entirely"
 tv.number_rows(r, 1, 1, GUIDE, typed={1})
 check("a typed name the guide doesn't know keeps the counted number", r[1]["episode"], 3)
 
+print("a typed name can be an episode of another season")
+TWO = ([{"season": 1, "number": n, "name": nm, "special": False, "runtime": 50}
+        for n, nm in enumerate(["Story A", "Story B Part 1", "Story B Part 2"], 1)]
+       + [{"season": 2, "number": n, "name": nm, "special": False, "runtime": 50}
+          for n, nm in enumerate(["Story C", "Story D"], 1)])
+r = rows3()
+r[0]["span"] = 1
+r[0]["episode_title"], r[1]["episode_title"], r[2]["episode_title"] = (
+    "Story D", "Story B Part 1", "Story B Part 2")
+tv.number_rows(r, 2, 1, TWO, typed={0, 1, 2})
+check("each row takes its own season and number",
+      [(x["season"], x["episode"]) for x in r], [(2, 2), (1, 2), (1, 3)])
+r = rows3()
+r[1]["episode_title"] = "Story B Part 1"
+tv.number_rows(r, None, 1, TWO, typed={1})
+check("with no season known, a typed name still finds its episode",
+      (r[1]["season"], r[1]["episode"]), (1, 2))
+
 import json  # noqa: E402
 print("a disc renumbered by hand stops the next disc from carrying on unseen")
 check("counted in order: carry on",

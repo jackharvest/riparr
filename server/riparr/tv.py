@@ -1282,7 +1282,7 @@ def number_rows(rows, season, start, episode_list=None, dvd_map=None, typed=(),
             name = " + ".join(x for x in names if x)
         if int(r.get("title_index", -1)) not in typed:
             r["episode_title"] = name
-    if not use_dvd and season is not None:
+    if not use_dvd:
         _pin_typed_names(spans, season, episode_list, typed)
     return use_dvd
 
@@ -1293,26 +1293,34 @@ def _name_key(x):
 
 
 def _guide_number_for(name, season, episode_list):
-    """The one guide episode of this season a typed name names, or None.
+    """The one guide episode a typed name names, as (season, number), or None.
 
     Exact after case and punctuation, with one allowance: "Example Story Part 1 & Part
     2" names the guide's single "Example Story", because a person who typed the parts
-    was describing the file, not inventing two episodes.
+    was describing the file, not inventing two episodes. This season's episodes are
+    looked at first; any other season's after, because box-set volumes don't follow the
+    guide's seasons and a disc can hold the end of one season and the start of the next.
     """
     key = _name_key(name)
     if not key:
         return None
     hits = []
     for e in episode_list or []:
-        if e["season"] != season or e.get("special"):
+        if e.get("special"):
             continue
         g = _name_key(e.get("name"))
         if not g:
             continue
         if key == g or (" part" not in " " + g and re.fullmatch(
                 re.escape(g) + r"( part[ 0-9and]*)+", key)):
-            hits.append(e["number"])
-    return hits[0] if len(hits) == 1 else None
+            hits.append((e["season"], e["number"]))
+    here = [h for h in hits if h[0] == season]
+    for group in (here, hits):
+        if len(group) == 1:
+            return group[0]
+        if group:
+            return None
+    return None
 
 
 def _pin_typed_names(spans, season, episode_list, typed):
@@ -1336,13 +1344,14 @@ def _pin_typed_names(spans, season, episode_list, typed):
         if id(r) in pins:
             claimed.append(pins[id(r)])
         else:
-            claimed.extend(range(int(r["episode"]), int(r["episode_last"]) + 1))
+            claimed.extend((r.get("season"), k)
+                           for k in range(int(r["episode"]), int(r["episode_last"]) + 1))
     if len(claimed) != len(set(claimed)):
         return
     for r, _p, _span in spans:
         if id(r) in pins:
-            r["season"] = season
-            r["episode"] = r["episode_last"] = pins[id(r)]
+            r["season"], r["episode"] = pins[id(r)]
+            r["episode_last"] = r["episode"]
             r["span"] = 1
 
 

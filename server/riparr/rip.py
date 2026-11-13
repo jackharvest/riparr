@@ -1645,6 +1645,14 @@ def _identify_season(job, s, d, titles, remembered):
         seasons = {e["season"] for e in episode_list if not e["special"]}
         if len(seasons) == 1:
             season = seasons.pop()
+    # A label's number that the guide has no season for isn't a season: box sets call
+    # their discs "Volume 3" whatever they hold. Unknown, so the plan stops and asks,
+    # rather than filing nameless episodes into a season that doesn't exist.
+    not_a_season = None
+    guide_seasons = {e["season"] for e in episode_list or [] if not e["special"]}
+    if (season is not None and guide_seasons and season not in guide_seasons
+            and remembered.get("season") is None):
+        not_a_season, season = season, None
 
     remembered_first = remembered.get("first_episode")
     first = remembered_first
@@ -1708,6 +1716,13 @@ def _identify_season(job, s, d, titles, remembered):
         plan["warnings"].insert(0, (
             "TMDB couldn't be asked about this show, so these numbers are TVmaze's, which "
             "may not match your media server. Check them before these are filed."))
+    if not_a_season is not None:
+        plan["warnings"].insert(0, (
+            "The label says %d, but the episode guide has no season %d of this show (it "
+            "lists %s), so the label's number is probably a volume, not a season. Pick "
+            "the season, or type what each episode is." % (
+                not_a_season, not_a_season,
+                ", ".join(str(n) for n in sorted(guide_seasons)))))
     if guessed:
         plan["warnings"].insert(0, (
             "This is disc %d, and the disc before it hasn't been ripped yet, so Riparr "
