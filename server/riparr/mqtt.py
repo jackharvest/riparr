@@ -277,6 +277,30 @@ def _done_seconds():
         return 600
 
 
+def _began(job):
+    return job.get("started_at") or job.get("queued_at") or 0
+
+
+def _ended(job):
+    return job.get("finished_at") or _began(job)
+
+
+def _standing_failure(finals, active):
+    """The latest failure, unless a disc has gone in since it happened.
+
+    Latest by when it *ended*, not by when the job started. An upload can fail long
+    after the next disc has started and finished, and the list from the database is in
+    start order -- in which that later disc comes first and hides the failure.
+    """
+    failed = [j for j in finals if j["state"] == "failed"]
+    if not failed:
+        return None
+    last = max(failed, key=_ended)
+    if any(_began(j) > _ended(last) for j in finals + active if j["id"] != last["id"]):
+        return None
+    return last
+
+
 def _job_values():
     active = db.list_jobs(states=db.ACTIVE_STATES)
     # The disc in the drive is the job somebody is watching. One that has given its
@@ -290,8 +314,9 @@ def _job_values():
         # second after a rip died would be true and would hide the only thing an
         # automation is watching for.
         finals = db.list_jobs(states=db.FINAL_STATES, limit=10)
-        if finals and finals[0]["state"] == "failed":
-            job, state = finals[0], "failed"
+        failure = _standing_failure(finals, active)
+        if failure:
+            job, state = failure, "failed"
         else:
             # A finished rip reads "done" for a while, then "idle". Newest by finish time,
             # not start: an upload that outlived the next rip's start is the later "done".

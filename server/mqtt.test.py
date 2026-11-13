@@ -107,6 +107,21 @@ check("a new disc ends done at once", MQ._job_values()["job/state"], "identifyin
 db.update_job(nxt, state="cancelled")
 db.update_job(send, finished_at=None)
 
+print("A failure that ends after a later disc")
+now = int(time.time())
+db.conn().execute("DELETE FROM jobs")
+db.conn().commit()
+a = db.create_job(title="Upload A", state="transferring", started_at=now - 1800)
+b = db.create_job(title="Disc B", state="done", started_at=now - 1500, finished_at=now - 1200)
+db.update_job(a, state="failed", finished_at=now - 60, error="The share went away")
+v = MQ._job_values()
+check("an upload that fails after the next disc finished still reads failed",
+      (v["job/state"], v["job/title"]), ("failed", "Upload A"))
+c = db.create_job(title="Disc C", state="cancelled", started_at=now - 30, finished_at=now - 20)
+check("and a disc put in since then clears it", MQ._job_values()["job/state"], "idle")
+db.conn().execute("DELETE FROM jobs")
+db.conn().commit()
+
 print("Topics and entities")
 db.set("mqtt_base_topic", "/home/+/rip#/")
 check("wildcards never reach a published topic", MQ.base_topic(), "home/rip")
