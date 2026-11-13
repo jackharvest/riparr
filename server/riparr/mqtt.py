@@ -75,7 +75,8 @@ _wake = threading.Event()
 _cmds = queue.Queue()
 _thread = None
 # What main.py lends this module, so it does not have to import main to ask whether
-# Auto Rip is ready: autorip_state(), set_autorip(bool), capacity(free_bytes). See start().
+# Auto Rip is ready: autorip_state(mk=, share=, drives=, cap=) -- handed what this module
+# has already looked up -- set_autorip(bool), capacity(free_bytes). See start().
 _hooks = {}
 
 
@@ -449,7 +450,8 @@ def _slow_values(drives):
     lib_state, lib_free, lib_attrs = _library(share)
 
     # "enabled" is the switch in the sense the page means it: asked for, and able to run.
-    v = {"autorip/state": bool(_hooks["autorip_state"]().get("enabled")),
+    autorip = _hooks["autorip_state"](mk=mk, share=share, drives=drives, cap=cap)
+    v = {"autorip/state": bool(autorip.get("enabled")),
          "system/health": health,
          # No uptime: it differs on every read, and would republish this whole blob
          # every thirty seconds for a number nobody automates on.

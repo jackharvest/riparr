@@ -668,7 +668,10 @@ def _library_room(drive):
     return min(room) if room else None
 
 
-def _autorip_state():
+_ASK = object()
+
+
+def _autorip_state(mk=_ASK, share=_ASK, drives=_ASK, cap=_ASK):
     """Auto Rip's prerequisites, every one of them, whether or not it is met.
 
     This used to return only the things that were wrong. That is the right shape for
@@ -684,10 +687,17 @@ def _autorip_state():
             the card is full, or the key dies this week
       fail  Auto Rip cannot work at all and the switch stays unavailable
     """
-    mk = P.makemkv_status()
-    share = db.default_share()
-    drives = P.optical_drives()
-    cap = _capacity(P.storage_status()["free_bytes"])
+    # A caller that has just looked these up hands them over. MQTT does, every thirty
+    # seconds for as long as the box is on, and probing the drive and MakeMKV twice
+    # each time to arrive at one boolean is real work on this board.
+    if mk is _ASK:
+        mk = P.makemkv_status()
+    if share is _ASK:
+        share = db.default_share()
+    if drives is _ASK:
+        drives = P.optical_drives()
+    if cap is _ASK:
+        cap = _capacity(P.storage_status()["free_bytes"])
     warn_days = int(db.get("warn_key_days") or 7)
     checks = []
 
