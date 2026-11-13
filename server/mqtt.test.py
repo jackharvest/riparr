@@ -149,6 +149,76 @@ check("entity keys are unique", len({(c, k) for c, k, _ in ents}), len(ents))
 check("everything but the button reports a state",
       [k for c, k, conf in ents if "state_topic" not in conf], ["eject"])
 
+# ─────────────────────────────── the tick, without a wire ───────────────────────────────
+
+class Recorder:
+    """Stands in for a connected paho client: remembers what was published."""
+    def __init__(self):
+        self.sent = []
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.sent.append((topic, payload))
+        return self
+
+    def wait_for_publish(self, timeout=None):
+        pass
+
+    def is_connected(self):
+        return True
+
+    def disconnect(self):
+        pass
+
+    def loop_stop(self):
+        pass
+
+    def topics(self, part):
+        return [t for t, _ in self.sent if part in t]
+
+
+def fake_connection():
+    """Settings that name a broker, and a tick that believes it is connected to it."""
+    rec = Recorder()
+    MQ._S.cfg, MQ._S.client, MQ._S.connected = MQ._config(), rec, True
+    MQ._S.session += 1
+    return rec
+
+
+print("A tick that fails once")
+db.set("mqtt_enabled", True)
+db.set("mqtt_host", "broker.invalid")
+db.set("mqtt_discovery_prefix", "ha-fake")
+MQ._hooks.update(autorip_state=lambda **kw: {"enabled": False},
+                 set_autorip=lambda on: None, capacity=lambda free: {"mode": "burst"})
+rec = fake_connection()
+real_values, calls = MQ._values, []
+
+
+def flaky(force_slow=False):
+    calls.append(1)
+    if len(calls) == 1:
+        raise RuntimeError("database is locked")
+    return real_values(force_slow)
+
+
+MQ._values = flaky
+try:
+    MQ._tick()
+except RuntimeError:
+    pass
+check("nothing was announced by the tick that failed", rec.topics("ha-fake/"), [])
+MQ._tick()
+check("the next tick announces to Home Assistant all the same",
+      len(rec.topics("ha-fake/")), len(MQ._entities()))
+MQ._tick()
+check("and only once per connection", len(rec.topics("ha-fake/")), len(MQ._entities()))
+MQ._values = real_values
+MQ._S.client, MQ._S.connected, MQ._S.cfg = None, False, None
+db.set("mqtt_enabled", False)
+db.set("mqtt_host", "")
+db.set("mqtt_discovery_prefix", "homeassistant")
+db.set("mqtt_discovery_published", "")
+
 # ─────────────────────────────── against a broker ───────────────────────────────
 
 broker = None

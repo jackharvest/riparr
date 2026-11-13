@@ -83,7 +83,8 @@ class _State:
     cfg = None          # the settings the current client was built from
     client = None
     connected = False
-    fresh = False       # just (re)connected: republish everything
+    session = 0         # counts (re)connections
+    announced = 0       # the session everything was last published in full for
     error = None        # why it is not connected, in words
     sent = {}           # topic -> last payload, so only changes go out
     slow = {}
@@ -191,7 +192,8 @@ def _connect(cfg):
             return
         client.subscribe([(cfg["base"] + "/autorip/set", 1),
                           (cfg["base"] + "/drive/eject", 1)])
-        _S.connected, _S.fresh, _S.error = True, True, None
+        _S.connected, _S.error = True, None
+        _S.session += 1
         log.info("Connected to %s:%d as %s", cfg["host"], cfg["port"], cfg["base"])
         _wake.set()
 
@@ -229,7 +231,7 @@ def _connect(cfg):
 
 def _disconnect():
     c, cfg = _S.client, _S.cfg
-    _S.client, _S.connected, _S.fresh, _S.sent = None, False, False, {}
+    _S.client, _S.connected, _S.sent = None, False, {}
     if not c:
         return
     try:
@@ -642,10 +644,14 @@ def _tick():
         _handle(*_cmds.get_nowait())
         acted = True
 
-    fresh = _S.fresh
+    # Just (re)connected, and not yet published in full for this connection. Marked
+    # as done only at the end: if anything below raises, the next tick starts over
+    # rather than leaving Home Assistant without its discovery until the next reconnect.
+    session = _S.session
+    fresh = _S.announced != session
     if fresh:
         # The broker may have lost its retained messages, or be a different broker.
-        _S.fresh, _S.sent = False, {}
+        _S.sent = {}
         _publish("availability", "online")
 
     values = _values(force_slow=acted or fresh)
@@ -653,6 +659,7 @@ def _tick():
         _discovery(values)
     for suffix, value in values.items():
         _publish(suffix, value)
+    _S.announced = session
 
 
 def _loop():
