@@ -459,6 +459,14 @@ def _order_by_source(episodes):
     return [t for _, t in sorted(zip(numbers, episodes), key=lambda x: x[0])]
 
 
+def _differ_in_kind(a, b):
+    """Whether two titles are presented differently: audio tracks, or bytes a second."""
+    if (a.get("audio") or 0) and (b.get("audio") or 0) and a["audio"] != b["audio"]:
+        return True
+    rates = [(t.get("bytes") or 0) / float(t["seconds"]) for t in (a, b) if t.get("seconds")]
+    return len(rates) == 2 and min(rates) > 0 and max(rates) / min(rates) >= 1.6
+
+
 def analyse(titles, min_seconds=120):
     """Read a title list as a television season disc. None if it isn't one.
 
@@ -539,6 +547,12 @@ def analyse(titles, min_seconds=120):
     # A season of feature-length episodes runs to different lengths.
     lengths = [t["seconds"] for t in cluster]
     if min(lengths) >= BONUS_FILM_SECONDS and max(lengths) - min(lengths) <= 2:
+        return None
+    # Two film-length titles presented differently are a film and an alternate version
+    # of it -- a storyboard cut, a silent or commentary-only one -- not two episodes. The
+    # tell is the presentation: one carries far fewer audio tracks, or half the picture
+    # per second. Two parts of a real two-part film are authored alike.
+    if len(cluster) == 2 and min(lengths) >= BONUS_FILM_SECONDS and _differ_in_kind(*cluster):
         return None
     episode_seconds = _median([t["seconds"] for t in cluster])
 

@@ -354,6 +354,26 @@ check("a missing season is called out",
 check("the play-all exclusion is explained",
       any("play all" in x for x in tv.plan_warnings(plan, f6)), False)
 
+print("a film with a storyboard cut is a film, not a two-episode season")
+FILM_ALT = [
+    {"index": 0, "seconds": 5598, "bytes": 11331532800, "source": "00200.mpls",
+     "segments": "1010", "chapters": 12, "audio": 1},
+    {"index": 1, "seconds": 240, "bytes": 702658560, "source": "00020.mpls",
+     "segments": "29,30", "chapters": 3, "audio": 1},
+    {"index": 2, "seconds": 5643, "bytes": 29728260096, "source": "00800.mpls",
+     "segments": "1001,1002,1003,1004,1005", "chapters": 12, "audio": 5},
+    {"index": 3, "seconds": 5643, "bytes": 29742747648, "source": "00801.mpls",
+     "segments": "1001,1006,1003,1007,1005", "chapters": 12, "audio": 5},
+    {"index": 4, "seconds": 475, "bytes": 1854523392, "source": "00201.mpls",
+     "segments": "1011,1012,1013,1014", "chapters": 4, "audio": 1},
+]
+check("film + alternate presentation: not a season", tv.analyse(FILM_ALT, FLOOR), None)
+TWO_PART = [{"index": i, "seconds": s_, "bytes": int(s_ * 5.2e6), "source": "0080%d.mpls" % i,
+             "segments": "10%d1,10%d2" % (i, i), "chapters": 12, "audio": 3}
+            for i, s_ in enumerate((5520, 5730))]
+check("two parts authored alike still read as episodes",
+      len((tv.analyse(TWO_PART, FLOOR) or {}).get("episodes") or []), 2)
+
 print("a typed name that is a guide episode takes that episode's number")
 GUIDE = ([{"season": 1, "number": n, "name": nm, "special": False, "runtime": 50}
           for n, nm in enumerate(["Story A Part 1", "Story A Part 2", "Story B Part 1",
