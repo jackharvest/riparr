@@ -179,6 +179,8 @@ much room is left — in **discs**, not gigabytes.
 The Queue page is the landing page and it is one screen: the **Auto Rip** switch, then
 either the queue or the tray. The tray is the disc currently loaded, the drive holding
 it, and — if there is no drive — why not. **Refresh** and **Eject** are top right.
+**Eject** works both ways: when the tray is already open it reads **Close tray** and
+pulls it back in, so you can have a disc read again without walking over to the box.
 
 You don't need to watch it. It's there for when a disc comes back out sooner than you
 expected and you want to know why.

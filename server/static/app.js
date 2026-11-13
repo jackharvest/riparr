@@ -825,11 +825,14 @@ views.queue = async () => {
   setDiscArt(inTray && inTray.label);       // fire and forget; never blocks the render
   const busy = jobs.some(j => j.state !== "needs_input");
   const loaded = drives.find(d => d.present);
+  // One button, both directions. The server decides which from the drive itself; the
+  // label only says what it is about to do, so a stale one costs nothing.
+  const trayOpen = drives.some(d => d.tray === "open");
   return `
     ${head("Queue", "Ripping and uploading happen as one overlapping operation.",
            `<button class="tool" id="t-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
             <button class="tool" id="t-eject" ${drives.length && !busy ? "" : "disabled"}>
-              <span class="ti">${icon("eject")}</span>Eject</button>`)}
+              <span class="ti">${icon("eject")}</span>${trayOpen ? "Close tray" : "Eject"}</button>`)}
     ${autoRipPanel(ar)}
     <div class="card disc-cell${artState.image ? " has-art" : ""}">
       ${artState.image ? `<div class="tray-art" role="presentation"
@@ -4030,6 +4033,7 @@ function wireContent(section, sub) {
   if (eject) eject.onclick = async () => {
     const r = await api.post("/api/drive/eject");
     toast(r.message, r.ok ? "ok" : "bad");
+    route();                    // the same button now does the opposite; say so
   };
 
   // Offered when the diagnosis says the drive is probably in the socket that cannot
