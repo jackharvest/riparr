@@ -199,6 +199,18 @@ jobs:
       - name: Each kind of disc does what its Auto Rip row says
         run: python server/autorip-kinds.test.py
 
+      # MQTT against a real broker, because what goes wrong there only exists on a
+      # wire: a retained "eject" obeyed on every reconnect, a refused Auto Rip that
+      # leaves Home Assistant's switch saying on, discovery entities that outlive the
+      # setting that announced them.
+      - name: The box says what it is doing over MQTT
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mosquitto >/dev/null
+          sudo systemctl stop mosquitto || true
+          pip install -q -r server/requirements.txt
+          python server/mqtt.test.py
+
       # The thermal guard against a fake /sys, under the runner's dash -- the shell the
       # box runs it with: steps down hot, up cool, rip ceiling and two cores only while
       # ripping, and the floor even with the setting off.

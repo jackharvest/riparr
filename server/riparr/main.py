@@ -18,7 +18,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 from . import (__version__, artwork as ART, backup as BK, db, drives as DRV, led as LED,
                music as MU,
-               makemkv as MK,
+               makemkv as MK, mqtt as MQ,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
                tv as TV, updater)
 
@@ -100,6 +100,8 @@ def _startup():
     BK.start()
     MU.start()
     LED.start()
+    MQ.start(autorip_state=_autorip_state, set_autorip=_set_autorip,
+             capacity=_capacity)
 
 
 # ─────────────────────────────── auth ───────────────────────────────
@@ -362,21 +364,27 @@ def _capacity(free_bytes, direct=None):
 @app.get("/api/status")
 def status(user=Depends(require_user)):
     storage = P.storage_status()
+    cap = _capacity(storage["free_bytes"])
+    optical, clock, wifi = P.optical_diagnosis(), P.clock_status(), P.wifi_status()
+    mk, drives, share = P.makemkv_status(), _drive_report(), db.default_share()
     # The user should never see a gigabyte: capacity is expressed in discs and mode.
     return {
         "version": __version__,
         "hostname": P.hostname(),
         "system": P.system_status(),
-        "storage": dict(storage, **_capacity(storage["free_bytes"])),
-        "optical": P.optical_diagnosis(),
-        "clock": P.clock_status(),
-        "wifi": P.wifi_status(),
-        "makemkv": P.makemkv_status(),
-        "drives": _drive_report(),
+        "storage": dict(storage, **cap),
+        "optical": optical,
+        "clock": clock,
+        "wifi": wifi,
+        "makemkv": mk,
+        "drives": drives,
+        # The Health table, derived once here; MQTT's system/health reads the same list.
+        "health": SY.health(clock, mk, drives, share, wifi, storage, cap.get("mode"),
+                            optical=optical),
         # Four fields, not the row. The row carries the SMB password, and the browser
         # has never needed it -- same argument as /api/setup/state, which was handing
         # it out to anyone at all.
-        "share": _share_out(db.default_share()),
+        "share": _share_out(share),
         "setup_complete": bool(db.get("setup_complete")),
         "autorip": _autorip_state(),
         # A refused duplicate leaves no job and no file, so this is the only trace of
@@ -666,7 +674,10 @@ def _library_room(drive):
     return min(room) if room else None
 
 
-def _autorip_state():
+_ASK = object()
+
+
+def _autorip_state(mk=_ASK, share=_ASK, drives=_ASK, cap=_ASK):
     """Auto Rip's prerequisites, every one of them, whether or not it is met.
 
     This used to return only the things that were wrong. That is the right shape for
@@ -682,10 +693,17 @@ def _autorip_state():
             the card is full, or the key dies this week
       fail  Auto Rip cannot work at all and the switch stays unavailable
     """
-    mk = P.makemkv_status()
-    share = db.default_share()
-    drives = P.optical_drives()
-    cap = _capacity(P.storage_status()["free_bytes"])
+    # A caller that has just looked these up hands them over. MQTT does, every thirty
+    # seconds for as long as the box is on, and probing the drive and MakeMKV twice
+    # each time to arrive at one boolean is real work on this board.
+    if mk is _ASK:
+        mk = P.makemkv_status()
+    if share is _ASK:
+        share = db.default_share()
+    if drives is _ASK:
+        drives = P.optical_drives()
+    if cap is _ASK:
+        cap = _capacity(P.storage_status()["free_bytes"])
     warn_days = int(db.get("warn_key_days") or 7)
     checks = []
 
@@ -795,13 +813,20 @@ def autorip(user=Depends(require_user)):
 
 @app.post("/api/autorip")
 def autorip_set(body: AutoRip, user=Depends(require_user)):
-    st = _autorip_state()
-    if body.enabled and not st["ready"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Auto Rip isn't ready yet — %s." % st["blockers"][0]["what"])
-    db.set("auto_rip", body.enabled)
+    try:
+        _set_autorip(body.enabled)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    MQ.poke()
     return _autorip_state()
+
+
+def _set_autorip(enabled):
+    """The one way the switch moves, whether a browser or a broker asked."""
+    st = _autorip_state()
+    if enabled and not st["ready"]:
+        raise ValueError("Auto Rip isn't ready yet — %s." % st["blockers"][0]["what"])
+    db.set("auto_rip", bool(enabled))
 
 
 # ─────────────────────────────── settings ───────────────────────────────
@@ -810,7 +835,7 @@ def autorip_set(body: AutoRip, user=Depends(require_user)):
 # back the same way when untouched, which is what makes "save" on a page you did not
 # retype your SMTP password into not wipe it. `list_shares` established the precedent
 # of never returning a stored password at all; these follow it.
-SECRET_SETTINGS = ("smtp_password", "ntfy_token")
+SECRET_SETTINGS = ("smtp_password", "ntfy_token", "mqtt_password")
 SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 
 
@@ -855,6 +880,7 @@ async def put_settings(request: Request, user=Depends(require_user)):
     # response is the whole settings object, so a client that re-renders from it picks
     # the correction up for free; `adjusted` is there for one that wants to say why.
     adjusted = db.reconcile(body)
+    MQ.poke()                             # a new broker should not wait for the next tick
 
     out = _redact(db.all_settings())
     if adjusted:
@@ -876,6 +902,19 @@ class NotifyTest(BaseModel):
 @app.post("/api/notifications/test")
 def notifications_test(body: NotifyTest, user=Depends(require_user)):
     r = NT.test(body.channel)
+    if not r.get("ok"):
+        raise HTTPException(status_code=400, detail=r.get("error"))
+    return r
+
+
+@app.get("/api/mqtt")
+def mqtt_status(user=Depends(require_user)):
+    return MQ.status()
+
+
+@app.post("/api/mqtt/test")
+def mqtt_test(user=Depends(require_user)):
+    r = MQ.test()
     if not r.get("ok"):
         raise HTTPException(status_code=400, detail=r.get("error"))
     return r
@@ -1765,6 +1804,8 @@ def update_install(user=Depends(require_user)):
 def config_export(user=Depends(require_user)):
     s = db.all_settings()
     s.pop("session_secret", None)
+    for k in db.NOT_BACKED_UP:
+        s.pop(k, None)
     return JSONResponse(
         {"version": __version__, "exported_at": int(time.time()),
          "settings": s, "shares": db.list_shares()},
@@ -1791,7 +1832,7 @@ async def config_import(request: Request, user=Depends(require_user)):
 
     settings = body.get("settings") or {}
     for k, v in settings.items():
-        if k != "session_secret":
+        if k not in db.NOT_RESTORED:
             db.set(k, v)
 
     # Registering the key is not a db.set -- see put_settings.

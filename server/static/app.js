@@ -2393,8 +2393,112 @@ function channelRow(c, on, summary, body) {
   </div>`;
 }
 
+/* MQTT is not a fifth channel, which is why it is not in the list above. A channel is
+   told that something happened; a broker is told what the box is doing, all the time,
+   and decides for itself what that is worth. It also talks back -- two commands --
+   which no channel does. So it gets its own section and its own state badge: "set up"
+   is not the interesting fact about a connection that is supposed to stay open. */
+function mqttSection(s, m) {
+  const badge = !m.available ? ["bad", "library missing"]
+    : !m.enabled ? ["", "off"]
+    : m.connected ? ["ok", "connected"]
+    : ["warn", "not connected"];
+  const note = !m.available
+    ? `<p class="ropt-warn">${icon("triangle-exclamation")}<span>The MQTT library isn't
+        installed on this box, so nothing can be published. Installing an update from
+        <a href="#/system/updates">System → Updates</a> fetches it.</span></p>`
+    : (m.enabled && !m.connected && m.error)
+      ? `<p class="ropt-warn">${icon("triangle-exclamation")}<span>${esc(m.error)}
+          Riparr keeps trying by itself.</span></p>`
+      : "";
+  // Rows, so the columns line up whatever the base topic is. The same list is in
+  // mqtt.py's docstring and in the settings reference; a new topic goes in all three.
+  const row = ([t, d]) => (t ? `${m.base_topic}/${t}` : "").padEnd(m.base_topic.length + 29) + d;
+  const topics = [
+    ["availability", "online | offline"],
+    ["job/state", "idle | queued | identifying | ripping | done |"],
+    ["", "transferring | verifying | needs_input | failed"],
+    ["job/title", "what is being ripped"],
+    ["job/progress", "0–100, through the current stage (0 idle, 100 done)"],
+    ["job/attributes", "JSON: id, kind, phase, eta, error"],
+    ["autorip/state", "ON | OFF"],
+    ["drive/detected", "ON | OFF"],
+    ["drive/disc_present", "ON | OFF"],
+    ["drive/disc_type", "dvd | bluray | uhd | cd"],
+    ["drive/attributes", "JSON: vendor, model, tray, label"],
+    ["system/health", "ok | warning | error"],
+    ["system/attributes", "JSON: what is wrong"],
+    ["system/cpu_temperature", "°C"],
+    ["storage/free, /total", "GiB on the card"],
+    ["library/state", "ready | error | not_configured"],
+    ["library/free", "GiB on the share"],
+    ["library/attributes", "JSON: which share, what is wrong"],
+    ["network/connected", "ON | OFF"],
+    ["network/ssid, /signal, /ip", "the Wi-Fi link"],
+    ["update/available", "ON | OFF"],
+    ["update/state", "JSON: installed_version, latest_version"],
+  ].map(row).join("\n")
+    + "\n\nCommands (retained messages are ignored):\n"
+    + [["autorip/set", "ON | OFF"], ["drive/eject", "anything"]].map(row).join("\n");
+
+  return `
+  <div class="section"><h2>MQTT
+    <span class="grow"></span>
+    <span class="badge ${badge[0]}">${badge[1]}</span></h2><div>
+    <p class="muted">Publishes what the box is doing to an MQTT broker, continuously —
+      the job and its progress, the disc in the tray, health, temperature, free space,
+      the network — and listens for two commands: turn Auto Rip on or off, and eject.
+      With discovery on, Home Assistant finds all of it by itself as one device.</p>
+    ${note}
+    ${sw("mqtt_enabled", "Publish to an MQTT broker", s.mqtt_enabled,
+         "Nothing is sent until this is on and a broker is named below.")}
+    <div class="grid2" style="margin-top:14px">
+      <label class="f"><span>Broker</span>
+        <input data-set="mqtt_host" value="${esc(s.mqtt_host || "")}" placeholder="homeassistant.local">
+        <span class="help">A name or an IP address, without <code>mqtt://</code>.</span></label>
+      <label class="f"><span>Port</span>
+        <input data-set="mqtt_port" type="number" value="${esc(String(s.mqtt_port ?? 1883))}">
+        <span class="help">1883 normally, 8883 with TLS.</span></label>
+      <label class="f"><span>Username</span>
+        <input data-set="mqtt_username" value="${esc(s.mqtt_username || "")}" autocomplete="off"></label>
+      <label class="f"><span>Password</span>
+        <input data-set="mqtt_password" type="password" value="${esc(s.mqtt_password || "")}"
+               autocomplete="new-password"></label>
+    </div>
+    ${sw("mqtt_tls", "Use TLS", s.mqtt_tls, "Encrypts the connection. The broker has to offer it on the port above.")}
+    ${sw("mqtt_tls_insecure", "Accept a self-signed certificate", s.mqtt_tls_insecure,
+         "Only with TLS on. Still encrypted, but the broker's identity is not checked.")}
+    <label class="f" style="margin-top:14px"><span>Base topic</span>
+      <input data-set="mqtt_base_topic" value="${esc(s.mqtt_base_topic || "")}"
+             placeholder="${esc(m.default_base_topic || m.base_topic)}">
+      <span class="help">Everything is published beneath this. Leave it empty for
+        <code>${esc(m.default_base_topic || m.base_topic)}</code>. If you run more than one box on the same broker,
+        change the topic so each has its own.</span></label>
+    ${sw("mqtt_discovery", "Home Assistant discovery", s.mqtt_discovery,
+         "Announces the box to Home Assistant.")}
+    <label class="f"><span>Discovery prefix</span>
+      <input data-set="mqtt_discovery_prefix" value="${esc(s.mqtt_discovery_prefix || "homeassistant")}">
+      <span class="help">Home Assistant's default is <code>homeassistant</code>. Change
+        it only if you changed it there.</span></label>
+    <label class="f"><span>Show "done" for (seconds)</span>
+      <input data-set="mqtt_done_seconds" type="number" min="0" step="1"
+             value="${esc(String(s.mqtt_done_seconds ?? 600))}">
+      <span class="help">After a rip finishes the job state reads <code>done</code> this long,
+        then <code>idle</code>. Inserting a new disc ends it sooner. 0 goes straight to
+        <code>idle</code>.</span></label>
+    ${testRow("mqtt", "Save and test the connection", "/api/mqtt/test", "Connecting…")}
+    <details class="mqtt-topics"><summary>Topics</summary>
+      <p class="muted">All retained, so a client sees the current state the moment it
+        subscribes. A value with nothing to report is <code>None</code>.</p>
+      <code class="block">${esc(topics)}</code>
+    </details>
+  </div></div>`;
+}
+
 settingsPages.connect = async (s) => {
-  const n = await api.get("/api/notifications");
+  // Older servers have no /api/mqtt; the page must still draw without it.
+  const [n, mq] = await Promise.all([
+    api.get("/api/notifications"), api.get("/api/mqtt").catch(() => null)]);
   const on = new Set(n.enabled || []);
   const ch = n.configured || {};
   const live = Object.values(ch).filter(Boolean).length;
@@ -2568,6 +2672,8 @@ settingsPages.connect = async (s) => {
     </div>
   </div></div>
 
+  ${mq ? mqttSection(s, mq) : ""}
+
   <div class="section"><h2>Handoff</h2><div>
     <p class="muted">Not a notification: this is where finished files go <i>next</i>.
       Riparr does not transcode — a board this size would take days and the result
@@ -2677,9 +2783,11 @@ async function followSites(keyTopic) {
 
 /* Save first, then send. A test button that tests the values already stored rather
    than the ones on screen answers a question nobody asked. */
-function testRow(channel) {
-  return `<div class="btn-row"><button class="btn" data-test-notify="${channel}">
-    Save and send a test</button><span class="test-out" id="test-${channel}"></span></div>`;
+function testRow(channel, label = "Save and send a test",
+                 url = "/api/notifications/test", doing = "Sending…") {
+  return `<div class="btn-row"><button class="btn" data-test-notify="${channel}"
+    data-test-url="${url}" data-test-doing="${doing}">
+    ${label}</button><span class="test-out" id="test-${channel}"></span></div>`;
 }
 
 /* Network — every network the box will join, in the order it should try them.
@@ -3076,14 +3184,15 @@ systemPages.status = async () => {
   state.status = st;
   const sys = st.system, m = st.makemkv, s = st.storage;
 
-  const health = healthMessages(st);
+  // Derived by the server (system.health), which MQTT reads too. Plain text: escape it.
+  const health = st.health || [];
   const healthRows = health.length
     ? health.map(h => `<tr>
         <td class="stat">${icon(h.level === "bad" ? "circle-exclamation" : "triangle-exclamation",
                                 h.level === "bad" ? "bad" : "warn")}</td>
-        <td>${h.message}</td>
+        <td>${esc(h.message)}</td>
         <td class="act">${h.href
-          ? `<a class="icon-btn" href="${h.href}" title="${esc(h.action || "Fix")}"
+          ? `<a class="icon-btn" href="${esc(h.href)}" title="${esc(h.action || "Fix")}"
                >${icon("gears")}</a>` : ""}</td></tr>`).join("")
     : `<tr><td class="stat">${icon("circle-check", "ok")}</td>
          <td colspan="2">No issues. Everything Riparr can check is working.</td></tr>`;
@@ -3197,69 +3306,6 @@ systemPages.status = async () => {
       </div>
     </div>`;
 };
-
-/* Health is derived here rather than server-side because every message needs a link to
-   the screen that fixes it, and only the client knows the routes. */
-function healthMessages(st) {
-  const out = [];
-
-  /* The clock goes first, because it invalidates several of the messages below it.
-     This board has no RTC and D4 says the power gets pulled, so an unsynchronised
-     boot is routine rather than exotic -- and every "N days left" and "3 hours ago"
-     in the interface is a subtraction against it. */
-  const clk = st.clock;
-  if (clk && !clk.plausible)
-    out.push({ level: "bad", message: `The system clock reads ${
-      new Date(clk.now * 1000).toLocaleString()}, which can't be right. Dates and key
-      expiry are meaningless until it syncs — check this box can reach the internet.`,
-      href: "#/settings/network", action: "Network settings" });
-  else if (clk && clk.synced === false)
-    out.push({ level: "warn", message: "The clock hasn't synchronised with a time "
-      + "server yet, so dates may be slightly out.",
-      href: "#/system/status", action: "Details" });
-
-  const m = st.makemkv;
-  if (!m.installed)
-    out.push({ level: "bad", message: "MakeMKV is not installed, so no disc can be read.",
-               href: "#/settings/makemkv", action: "Install MakeMKV" });
-  else if (m.days_left != null && st.clock && !st.clock.plausible)
-    out.push({ level: "warn", message: "Riparr can't tell whether the MakeMKV key is "
-      + "still valid, because the clock is wrong.",
-      href: "#/settings/makemkv", action: "Update the key" });
-  else if (m.days_left != null && m.days_left <= 0)
-    out.push({ level: "bad", message: "The MakeMKV key has expired. Rips will fail until it is replaced.",
-               href: "#/settings/makemkv", action: "Update the key" });
-  else if (m.key_stale)
-    out.push({ level: "warn", message: "A newer MakeMKV key has been published — the one "
-      + "on this box is older and may already have lapsed.",
-      href: "#/settings/makemkv", action: "Update the key" });
-  else if (m.days_left != null && m.days_left <= (state.settings?.warn_key_days ?? 7))
-    out.push({ level: "warn", message: `The MakeMKV key expires in ${m.days_left} day(s).`,
-               href: "#/settings/makemkv", action: "Update the key" });
-
-  if (!st.drives || !st.drives.length)
-    out.push({ level: "bad", message: `No optical drive detected — ${
-      esc((st.optical && st.optical.summary) || "nothing is on the USB bus")}.`,
-      href: "#/system/status", action: "Details" });
-
-  if (!st.share)
-    out.push({ level: "warn", message: "No network share configured, so finished rips have nowhere to go.",
-               href: "#/settings/share", action: "Add a share" });
-
-  if (!st.wifi.connected)
-    out.push({ level: "bad", message: "Wi-Fi is not connected.",
-               href: "#/settings/network", action: "Network settings" });
-
-  if (st.storage.dedicated === false)
-    out.push({ level: "warn", message: "Rips are staged on the system filesystem, not a dedicated partition.",
-               href: "#/system/status", action: "Details" });
-
-  if (st.storage.mode === "degraded")
-    out.push({ level: "warn", message: "Not enough free space to rip safely.",
-               href: "#/system/status", action: "Details" });
-
-  return out;
-}
 
 /* Riparr is two halves, and only one of them can update itself. The half in
    /opt/riparr the service replaces on its own; the half in /etc/systemd/system it
@@ -3885,8 +3931,8 @@ function wireContent(section, sub) {
     out.textContent = "Saving…";
     try {
       await api.put("/api/settings", collectSettings());
-      out.textContent = "Sending…";
-      const r = await api.post("/api/notifications/test", { channel });
+      out.textContent = b.dataset.testDoing;
+      const r = await api.post(b.dataset.testUrl, { channel });
       out.className = "test-out ok";
       out.textContent = r.message;
     } catch (e) {
@@ -3985,7 +4031,7 @@ function wireContent(section, sub) {
   $$("[data-restore]").forEach(b => b.onclick = async () => {
     const name = b.dataset.restore;
     if (!confirm(`Restore ${name}?\n\nThis overwrites your current settings. `
-                 + `Share passwords are not in a backup and will have to be re-entered.`)) return;
+                 + `Share passwords and the MQTT password are not in a backup and will have to be re-entered.`)) return;
     try {
       const r = await api.post(`/api/system/backups/${encodeURIComponent(name)}/restore`);
       toast(`Restored ${r.settings} setting(s). ${r.note}`, "ok");

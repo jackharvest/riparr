@@ -261,6 +261,8 @@ def create_backup(kind="manual"):
     # to themselves, so the password never goes in it -- the restore re-prompts.
     for s in payload["shares"]:
         s.pop("password", None)
+    for k in db.NOT_BACKED_UP:
+        payload["settings"].pop(k, None)
 
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("riparr.json", json.dumps(payload, indent=2))
@@ -320,14 +322,84 @@ def restore_backup(name):
 def _apply(payload, name):
     n = 0
     for k, v in (payload.get("settings") or {}).items():
-        if k in ("session_secret",):        # never restore the cookie key
+        if k in db.NOT_RESTORED:            # the cookie key, and what is on the broker
             continue
         db.set(k, v)
         n += 1
     component("Backup").warning("Restored %d setting(s) from %s", n, name)
     return {"ok": True, "settings": n,
             "shares": len(payload.get("shares") or []),
-            "note": "Share passwords are not stored in a backup and must be re-entered."}
+            "note": "Share passwords and the MQTT password are not stored in a backup and "
+                    "must be re-entered."}
+
+
+# ─────────────────────────────── health ───────────────────────────────
+
+def health(clock, mk, drives, share, wifi, storage, mode, optical=None):
+    """What is wrong with the box, as the Health table on System → Status lists it.
+
+    Derived here, once. It used to be derived in the browser, and then a second time in
+    mqtt.py for a broker that cannot run the browser's JavaScript -- two copies in two
+    languages, held together by a comment asking whoever changed one to change the
+    other. The page and `system/health` now read the same list.
+
+    Each entry is a level (`bad` or `warn`), a message in plain text, and the route of
+    the screen that fixes it with a name for the link. Everything is passed in: the
+    callers have these to hand already, and looking them up again is not free here.
+    """
+    out = []
+
+    def say(level, message, href, action):
+        out.append({"level": level, "message": message, "href": href, "action": action})
+
+    # The clock goes first, because it invalidates several of the messages below it.
+    # This board has no RTC and the power gets pulled, so an unsynchronised boot is
+    # routine rather than exotic -- and every "N days left" is a subtraction against it.
+    plausible = bool(clock.get("plausible"))
+    if not plausible:
+        say("bad", "The system clock reads %s, which can't be right. Dates and key "
+            "expiry are meaningless until it syncs — check this box can reach the "
+            "internet." % time.strftime("%d %b %Y %H:%M",
+                                        time.localtime(clock.get("now") or 0)),
+            "#/settings/network", "Network settings")
+    elif clock.get("synced") is False:
+        say("warn", "The clock hasn't synchronised with a time server yet, so dates "
+            "may be slightly out.", "#/system/status", "Details")
+
+    days = mk.get("days_left")
+    if not mk.get("installed"):
+        say("bad", "MakeMKV is not installed, so no disc can be read.",
+            "#/settings/makemkv", "Install MakeMKV")
+    elif days is not None and not plausible:
+        say("warn", "Riparr can't tell whether the MakeMKV key is still valid, because "
+            "the clock is wrong.", "#/settings/makemkv", "Update the key")
+    elif days is not None and days <= 0:
+        say("bad", "The MakeMKV key has expired. Rips will fail until it is replaced.",
+            "#/settings/makemkv", "Update the key")
+    elif mk.get("key_stale"):
+        say("warn", "A newer MakeMKV key has been published — the one on this box is "
+            "older and may already have lapsed.", "#/settings/makemkv", "Update the key")
+    elif days is not None and days <= int(db.get("warn_key_days") or 7):
+        say("warn", "The MakeMKV key expires in %d day(s)." % days,
+            "#/settings/makemkv", "Update the key")
+
+    if not drives:
+        if optical is None:
+            optical = P.optical_diagnosis()
+        say("bad", "No optical drive detected — %s."
+            % ((optical or {}).get("summary") or "nothing is on the USB bus"),
+            "#/system/status", "Details")
+    if not share:
+        say("warn", "No network share configured, so finished rips have nowhere to go.",
+            "#/settings/share", "Add a share")
+    if not wifi.get("connected"):
+        say("bad", "Wi-Fi is not connected.", "#/settings/network", "Network settings")
+    if storage.get("dedicated") is False:
+        say("warn", "Rips are staged on the system filesystem, not a dedicated partition.",
+            "#/system/status", "Details")
+    if mode == "degraded":
+        say("warn", "Not enough free space to rip safely.", "#/system/status", "Details")
+    return out
 
 
 # ─────────────────────────────── scheduled tasks ───────────────────────────────

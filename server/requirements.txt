@@ -6,3 +6,7 @@ uvicorn>=0.27
 passlib>=1.7
 itsdangerous>=2.1
 python-multipart>=0.0.9
+# MQTT (riparr/mqtt.py). Pure Python, so nothing to compile on the board. 2.0 is the
+# floor because of the callback API it introduced; the import is lazy, so a box that
+# could not fetch this still starts and says what is missing.
+paho-mqtt>=2.0
