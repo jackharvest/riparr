@@ -488,6 +488,12 @@ def init():
     c.commit()
 
 
+# State about *this* box that a backup or an export from another moment must not
+# overwrite. The cookie key is one. What is retained on the MQTT broker is another: put
+# back an older value and the box forgets entities it announced, and can never delete them.
+NOT_RESTORED = ("session_secret", "mqtt_discovery_published")
+
+
 def get(key, default=None):
     row = conn().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     if row is None:

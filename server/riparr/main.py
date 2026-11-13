@@ -1814,7 +1814,7 @@ async def config_import(request: Request, user=Depends(require_user)):
 
     settings = body.get("settings") or {}
     for k, v in settings.items():
-        if k != "session_secret":
+        if k not in db.NOT_RESTORED:
             db.set(k, v)
 
     # Registering the key is not a db.set -- see put_settings.

@@ -320,7 +320,7 @@ def restore_backup(name):
 def _apply(payload, name):
     n = 0
     for k, v in (payload.get("settings") or {}).items():
-        if k in ("session_secret",):        # never restore the cookie key
+        if k in db.NOT_RESTORED:            # the cookie key, and what is on the broker
             continue
         db.set(k, v)
         n += 1

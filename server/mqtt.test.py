@@ -247,6 +247,14 @@ MQ._tick()
 db.set("mqtt_username", "someone")
 MQ._tick()
 check("the same broker with a new login keeps its entities", deletions(rec), 0)
+
+print("Restoring a backup")
+check("the box knows what it announced", db.get("mqtt_discovery_published"), "ha-fake")
+SY._apply({"settings": {"mqtt_discovery_published": "", "mqtt_port": 1884}}, "old.zip")
+check("a backup from before the announcement does not make it forget",
+      db.get("mqtt_discovery_published"), "ha-fake")
+check("while ordinary settings are restored", db.get("mqtt_port"), 1884)
+db.set("mqtt_port", 1883)
 MQ._connect = real_connect
 MQ._S.client, MQ._S.connected, MQ._S.cfg = None, False, None
 db.set("mqtt_username", "")
