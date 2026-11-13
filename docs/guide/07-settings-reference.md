@@ -316,9 +316,10 @@ read, a dashboard tile with the progress.
 | **Broker**, **Port** | A name or IP address. 1883 normally, 8883 with TLS |
 | **Username**, **Password** | Only if your broker asks for them |
 | **Use TLS** | Encrypts the connection. **Accept a self-signed certificate** is for a broker with a certificate of its own making — still encrypted, but its identity is not checked |
-| **Base topic** | Everything is published beneath it. Empty means `riparr/<hostname>`, which keeps two boxes apart on one broker |
+| **Base topic** | Everything is published beneath it. Empty means `riparr/<hostname>`. With more than one box on a broker, give each its own |
 | **Home Assistant discovery** | On by default. The box appears in Home Assistant by itself as one device. Turning it off removes the entities again |
 | **Discovery prefix** | `homeassistant`, unless you changed it in Home Assistant |
+| **Show "done" for (seconds)** | How long `job/state` reads `done` after a rip finishes, before it goes back to `idle`. 600 by default. A new disc ends it sooner; 0 skips `done` |
 
 **Save and test the connection** saves what is on screen, connects once and tells you
 what the broker said — a wrong password and a wrong port give different answers. The
@@ -333,9 +334,9 @@ state the moment it subscribes. A value with nothing to report is the word `None
 | Topic | Value |
 |---|---|
 | `availability` | `online`, or `offline` — also if the box loses power |
-| `job/state` | `idle`, `queued`, `identifying`, `ripping`, `transferring`, `verifying`, `needs_input`, `failed` |
+| `job/state` | `idle`, `queued`, `identifying`, `ripping`, `transferring`, `verifying`, `needs_input`, `done`, `failed` |
 | `job/title` | What is being ripped |
-| `job/progress` | 0–100, through the current stage |
+| `job/progress` | 0–100, through the current stage. 0 when idle, 100 when done |
 | `job/attributes` | JSON: the job's id, kind, phase, time remaining and error, and how many earlier rips are still uploading |
 | `autorip/state` | `ON` or `OFF` |
 | `drive/detected`, `drive/disc_present` | `ON` or `OFF` |
@@ -348,9 +349,9 @@ state the moment it subscribes. A value with nothing to report is the word `None
 | `library/free` | GiB free on the share, when it is mounted |
 | `network/connected`, `network/ssid`, `network/signal`, `network/ip` | The Wi-Fi link |
 | `update/available` | `ON` when a newer Riparr is published. `update/state` carries both version numbers |
-| `makemkv/key_days_left` | Days until the MakeMKV key lapses |
 
-`failed` stays on `job/state` until the next disc goes in, so an automation that looks
+`done` stays on `job/state` for the time set above, then gives way to `idle`. `failed`
+stays until the next disc goes in, so an automation that looks
 a minute late still sees it. The job in the drive is the one reported; a rip that has
 given its disc back and is still uploading is reported once the drive is free.
 

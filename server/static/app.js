@@ -2437,7 +2437,6 @@ function mqttSection(s, m) {
     ["network/ssid, /signal, /ip", "the Wi-Fi link"],
     ["update/available", "ON | OFF"],
     ["update/state", "JSON: installed_version, latest_version"],
-    ["makemkv/key_days_left", "days"],
   ].map(row).join("\n")
     + "\n\nCommands (retained messages are ignored):\n"
     + [["autorip/set", "ON | OFF"], ["drive/eject", "anything"]].map(row).join("\n");

@@ -33,7 +33,6 @@ at any moment sees the whole picture without waiting for the next change:
     <base>/network/ssid, /signal, /ip
     <base>/update/state            JSON: installed_version, latest_version
     <base>/update/available        ON | OFF
-    <base>/makemkv/key_days_left   days
 
 A value with nothing to report is the literal `None`, not an empty payload: an empty
 retained message is how MQTT *deletes* a topic, and Home Assistant reads `None` as
@@ -420,9 +419,6 @@ def _slow_values(drives):
 
     health, problems = _health(clock, mk, drives, share, wifi, storage, cap.get("mode"))
     lib_state, lib_free, lib_attrs = _library(share)
-    days = mk.get("days_left")
-    if not (clock.get("plausible") and clock.get("synced") is not False):
-        days = None                         # a day count against a wrong clock
 
     # "enabled" is the switch in the sense the page means it: asked for, and able to run.
     v = {"autorip/state": bool(_hooks["autorip_state"]().get("enabled")),
@@ -441,8 +437,7 @@ def _slow_values(drives):
          "network/connected": bool(wifi.get("connected")),
          "network/ssid": wifi.get("ssid") or None,
          "network/signal": wifi.get("signal"),
-         "network/ip": wifi.get("ip") or None,
-         "makemkv/key_days_left": days}
+         "network/ip": wifi.get("ip") or None}
     v.update(_update_values())
     return v
 
@@ -521,10 +516,6 @@ def _entities():
                           "enabled_by_default": False}),
         ("update", "update", {"name": "Riparr", "state_topic": "update/state",
                               "device_class": "firmware"}),
-        ("sensor", "makemkv_key_days", {"name": "MakeMKV key",
-                                        "state_topic": "makemkv/key_days_left",
-                                        "unit_of_measurement": "d",
-                                        "icon": "mdi:key-variant", **diag}),
     ]
 
 
