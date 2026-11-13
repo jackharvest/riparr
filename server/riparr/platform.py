@@ -1014,6 +1014,28 @@ def eject(device="/dev/sr0"):
             "message": (p.stderr or p.stdout).strip() or "Tray ejected"}
 
 
+def tray_button(device="/dev/sr0"):
+    """What the Eject button does: open the tray, or pull it back in if it is open.
+
+    The box has no button of its own, so the page is the only way to move the tray --
+    and it could only ever open it. Somebody across the house who wanted a disc read
+    again had to walk over and push the tray in by hand. One button, both directions,
+    decided here from the drive rather than from whatever the page last rendered.
+
+    Only an answer of "open" closes. A drive that cannot say where its tray is gets
+    the eject it always got, which is the direction that hands a disc back.
+
+    The close does not wait for the disc to be read: the disc watcher picks it up
+    exactly as it does a tray pushed in by hand.
+    """
+    if not MOCK and OPT.tray_status(device)[1] == "open":
+        ok, message = close_tray(device, wait=0)
+        return {"ok": ok, "action": "close",
+                "message": "Tray closed. Give the drive a moment to read the disc."
+                           if ok else message}
+    return dict(eject(device), action="eject")
+
+
 # ─────────────────────────────── wi-fi ───────────────────────────────
 
 def _wifi_iface():

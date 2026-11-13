@@ -397,7 +397,8 @@ def _share_out(share):
 
 @app.post("/api/drive/eject")
 def drive_eject(user=Depends(require_user)):
-    return P.eject()
+    # A toggle: an open tray is pulled back in. See `tray_button`.
+    return P.tray_button()
 
 
 @app.post("/api/drive/close")
