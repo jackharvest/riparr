@@ -903,6 +903,9 @@ def read_titles(device, disc=None, on_progress=None):
     ordered list of its episodes, which is the one authoritative answer on the disc.
     See `tv.py`, which does the reasoning; this only has to carry the numbers out.
     """
+    # Cleared first, so no early return below leaves the last disc's messages to be
+    # read as this one's -- an old "key expired" would refuse a perfectly good scan.
+    _last_scan["messages"] = []
     if P.MOCK:
         return _mock_titles()
     key = _titles_key(disc)
@@ -960,7 +963,118 @@ def read_titles(device, disc=None, on_progress=None):
     out = parse_info("".join(out_lines))
     if key and out:
         _titles_cache.update(key=key, titles=out, at=time.time())
+    _last_scan["messages"] = [] if out else scan_messages("".join(out_lines))
+    if not out and _last_scan["messages"]:
+        # The empty answer is about to be read as "this is not a video disc". Keep what
+        # MakeMKV actually said, so a refusal can be told apart from a disc of files --
+        # and so the log has it, which it never used to.
+        log.warning("MakeMKV found no titles on %s. It said: %s", device,
+                    " | ".join(_last_scan["messages"][-8:]))
     return out
+
+
+_last_scan = {"messages": []}
+
+
+def scan_messages(text):
+    """MakeMKV's own MSG lines from a scan, as "code: text"."""
+    out = []
+    for line in (text or "").splitlines():
+        m = MSG.match(line.strip())
+        if m:
+            out.append("%s: %s" % (m.group(1), m.group(2)))
+    return out
+
+
+# MakeMKV refusing to work at all looks, from `info`, exactly like a disc with no
+# titles: no TINFO lines, exit code and all. Read as a data disc, an encrypted DVD is
+# then copied sector by sector, the encrypted half reads as errors, and what lands in
+# the library is a 7 GB ISO that is mostly zeros. 5021 is "this version is too old /
+# enter a registration key", which is what an expired beta key produces; the text
+# match catches the wording of the others without depending on their numbers.
+_REFUSAL_CODES = {"5021", "5095"}
+_REFUSAL_TEXT = re.compile(r"too old|key (?:has )?expired|evaluation period (?:has )?"
+                           r"expired|enter a registration key|key (?:is )?(?:not valid|"
+                           r"invalid)", re.I)
+
+
+def scan_refusal(messages=None):
+    """The message in which MakeMKV refused to read, or None."""
+    for m in (_last_scan["messages"] if messages is None else messages):
+        code, _, text = m.partition(": ")
+        if code in _REFUSAL_CODES or _REFUSAL_TEXT.search(text):
+            return text or m
+    return None
+
+
+VIDEO_FOLDERS = {"VIDEO_TS": "DVD", "BDMV": "Blu-ray", "HVDVD_TS": "HD DVD"}
+
+
+def video_folders(device):
+    """The video folders at the root of the disc's file system, e.g. ["VIDEO_TS"].
+
+    Read with bsdtar straight off the block device, as music.data_audio_files does --
+    no mount, no root. The file system on a retail DVD is not encrypted, only the video
+    in it, so this answers even when MakeMKV cannot.
+    """
+    binary = shutil.which("bsdtar")
+    if not binary or P.MOCK:
+        return []
+    try:
+        p = subprocess.run([binary, "-tf", device or "/dev/sr0"], capture_output=True,
+                           text=True, timeout=120, errors="replace")
+    except Exception:
+        return []
+    return no_titles_folders(p.stdout)
+
+
+def no_titles_folders(listing):
+    """The video folders in a disc listing that have something in them.
+
+    An empty VIDEO_TS is not a video disc: some burning software puts one on every
+    data DVD it writes, and that disc must still be saved as an image.
+    """
+    tops = set()
+    for line in (listing or "").splitlines():
+        parts = [p for p in line.strip().lstrip("./").split("/") if p]
+        if len(parts) >= 2:
+            tops.add(parts[0].upper())
+    return sorted(f for f in VIDEO_FOLDERS if f in tops)
+
+
+def guard_no_titles(device):
+    """Before an empty scan becomes a data disc: stop if it is really a video disc.
+
+    Raises RipFailed when MakeMKV refused to read, or when the disc has a VIDEO_TS or
+    BDMV folder that MakeMKV could not read titles from. Returns quietly otherwise.
+    """
+    refusal = scan_refusal()
+    if refusal:
+        renewed = _try_key_renewal()
+        raise RipFailed(
+            "MakeMKV wouldn't read this disc (it said: “%s”). That usually "
+            "means its key has run out. %s" % (refusal.rstrip("."), renewed))
+    found = video_folders(device)
+    if found:
+        what = VIDEO_FOLDERS[found[0]]
+        raise RipFailed(
+            "This is a %s, but MakeMKV couldn't read any titles on it, so Riparr "
+            "stopped instead of saving it as a disc image. Check System → MakeMKV, "
+            "clean the disc and put it back in." % what)
+
+
+def _try_key_renewal():
+    """Ask for the current beta key, which renews it when it can. Says what happened."""
+    before = (db.get("makemkv_key_renewal") or {}).get("at")
+    try:
+        from . import makemkv as MK
+        MK.beta_key(force=True)
+    except Exception as e:
+        log.info("Key lookup after a refused scan failed: %s", e)
+    after = (db.get("makemkv_key_renewal") or {}).get("at")
+    if after and after != before:
+        return "Riparr has just renewed the free beta key: put the disc back in."
+    return ("Check System → MakeMKV for the key, then put the disc back in.")
 
 
 def parse_info(text):
@@ -2303,6 +2417,8 @@ def _identify(job, s):
             db.update_job(job["id"], **fields)
 
     titles = read_titles(d.get("device"), d, on_progress=identify_progress)
+    if not titles:
+        guard_no_titles(d.get("device"))
     if not titles and s.get("music_enabled", True):
         # Nothing MakeMKV can read -- but a burned DVD of MP3s is still a disc of music,
         # and somebody who put it in wants it in their library, not an error.
