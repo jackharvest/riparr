@@ -213,7 +213,43 @@ check("the next tick announces to Home Assistant all the same",
 MQ._tick()
 check("and only once per connection", len(rec.topics("ha-fake/")), len(MQ._entities()))
 MQ._values = real_values
+
+print("Leaving a broker")
+n = len(MQ._entities())
+
+
+def deletions(r, prefix="ha-fake/"):
+    return len([1 for t, payload in r.sent if t.startswith(prefix) and payload == ""])
+
+
+check("it remembers what it announced", db.get("mqtt_discovery_published"), "ha-fake")
+db.set("mqtt_discovery", False)
+db.set("mqtt_enabled", False)
+MQ._tick()
+check("MQTT and discovery off together: the entities are taken back first",
+      deletions(rec), n)
+check("and it knows they are gone", db.get("mqtt_discovery_published"), "")
+check("then it lets go of the broker", MQ._S.client, None)
+
+db.set("mqtt_discovery", True)
+db.set("mqtt_enabled", True)
+rec = fake_connection()
+MQ._tick()
+check("announced again", db.get("mqtt_discovery_published"), "ha-fake")
+real_connect, MQ._connect = MQ._connect, lambda cfg: None
+db.set("mqtt_host", "other.invalid")
+MQ._tick()
+check("a different broker: the old one is cleaned up", deletions(rec), n)
+
+db.set("mqtt_host", "broker.invalid")
+rec = fake_connection()
+MQ._tick()
+db.set("mqtt_username", "someone")
+MQ._tick()
+check("the same broker with a new login keeps its entities", deletions(rec), 0)
+MQ._connect = real_connect
 MQ._S.client, MQ._S.connected, MQ._S.cfg = None, False, None
+db.set("mqtt_username", "")
 db.set("mqtt_enabled", False)
 db.set("mqtt_host", "")
 db.set("mqtt_discovery_prefix", "homeassistant")

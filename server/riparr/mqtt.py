@@ -551,6 +551,32 @@ def _discovery_topic(prefix, component, key):
     return "%s/%s/%s/%s/config" % (prefix, component, device_id(), key)
 
 
+def _withdraw(prefix):
+    for component, key, _ in _entities():
+        _S.client.publish(_discovery_topic(prefix, component, key), "", qos=1,
+                          retain=True)
+    log.info("Removed the Home Assistant entities announced under %s/", prefix)
+
+
+def _leaving(new):
+    """Take the announcement back from a broker the box is about to stop talking to.
+
+    `_discovery` only runs after a connect. Turning MQTT off, or naming a different
+    broker, means there is no later connect to this one -- so anything announced here
+    that the new settings do not keep has to be deleted now, while there is still a
+    connection to delete it over.
+    """
+    old = _S.cfg
+    if not (old and _S.client and _S.connected):
+        return
+    was = db.get("mqtt_discovery_published") or ""
+    stays = new["enabled"] and (new["host"], new["port"]) == (old["host"], old["port"])
+    want = new["prefix"] if stays and new["discovery"] else ""
+    if was and was != want:
+        _withdraw(was)
+        db.set("mqtt_discovery_published", "")
+
+
 def _discovery(values):
     """Announce the entities, or take back an announcement that is no longer wanted.
 
@@ -563,10 +589,7 @@ def _discovery(values):
     was = db.get("mqtt_discovery_published") or ""
     want = cfg["prefix"] if cfg["discovery"] else ""
     if was and was != want:
-        for component, key, _ in _entities():
-            _S.client.publish(_discovery_topic(was, component, key), "", qos=1,
-                              retain=True)
-        log.info("Removed the Home Assistant entities announced under %s/", was)
+        _withdraw(was)
     if was != want:
         db.set("mqtt_discovery_published", want)
     if not want:
@@ -630,6 +653,7 @@ def _handle(topic, payload):
 def _tick():
     cfg = _config()
     if cfg != _S.cfg:
+        _leaving(cfg)
         _disconnect()
         _S.cfg, _S.error = cfg, None
         while not _cmds.empty():
