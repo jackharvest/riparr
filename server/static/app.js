@@ -2473,9 +2473,10 @@ function mqttSection(s, m) {
       <input data-set="mqtt_base_topic" value="${esc(s.mqtt_base_topic || "")}"
              placeholder="${esc(m.base_topic)}">
       <span class="help">Everything is published beneath this. Leave it empty for
-        <code>${esc(m.base_topic)}</code>, which keeps two boxes apart on one broker.</span></label>
+        <code>${esc(m.base_topic)}</code>. If you run more than one box on the same broker,
+        change the topic so each has its own.</span></label>
     ${sw("mqtt_discovery", "Home Assistant discovery", s.mqtt_discovery,
-         "Announces the sensors, the Auto Rip switch and the eject button. Turning it off removes them again.")}
+         "Announces the box to Home Assistant.")}
     <label class="f"><span>Discovery prefix</span>
       <input data-set="mqtt_discovery_prefix" value="${esc(s.mqtt_discovery_prefix || "homeassistant")}">
       <span class="help">Home Assistant's default is <code>homeassistant</code>. Change
