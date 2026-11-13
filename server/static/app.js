@@ -4031,7 +4031,7 @@ function wireContent(section, sub) {
   $$("[data-restore]").forEach(b => b.onclick = async () => {
     const name = b.dataset.restore;
     if (!confirm(`Restore ${name}?\n\nThis overwrites your current settings. `
-                 + `Share passwords are not in a backup and will have to be re-entered.`)) return;
+                 + `Share passwords and the MQTT password are not in a backup and will have to be re-entered.`)) return;
     try {
       const r = await api.post(`/api/system/backups/${encodeURIComponent(name)}/restore`);
       toast(`Restored ${r.settings} setting(s). ${r.note}`, "ok");

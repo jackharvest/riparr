@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -283,6 +284,18 @@ check("a backup from before the announcement does not make it forget",
       db.get("mqtt_discovery_published"), "ha-fake")
 check("while ordinary settings are restored", db.get("mqtt_port"), 1884)
 db.set("mqtt_port", 1883)
+db.set("mqtt_password", "an-ha-login")
+db.set("mqtt_username", "someone")
+made = SY.create_backup()
+with zipfile.ZipFile(SY.backup_path(made["name"])) as z:
+    saved = json.loads(z.read("riparr.json"))["settings"]
+check("the broker password is not written into a backup", "mqtt_password" in saved, False)
+check("the rest of the broker's settings are", saved.get("mqtt_username"), "someone")
+SY._apply({"settings": saved}, made["name"])
+check("restoring one leaves the password already on the box alone",
+      db.get("mqtt_password"), "an-ha-login")
+db.set("mqtt_password", "")
+db.set("mqtt_username", "")
 MQ._connect = real_connect
 MQ._S.client, MQ._S.connected, MQ._S.cfg = None, False, None
 db.set("mqtt_username", "")

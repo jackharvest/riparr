@@ -493,6 +493,12 @@ def init():
 # back an older value and the box forgets entities it announced, and can never delete them.
 NOT_RESTORED = ("session_secret", "mqtt_discovery_published")
 
+# Left out of a backup and of an export, like the share passwords are: both are files
+# that get downloaded and mailed around. With the Mosquitto add-on the broker login is a
+# Home Assistant account, which is more than a file like that should be carrying. It is
+# typed in again after a restore.
+NOT_BACKED_UP = ("mqtt_password",)
+
 
 def get(key, default=None):
     row = conn().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()

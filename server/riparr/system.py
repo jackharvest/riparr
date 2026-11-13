@@ -261,6 +261,8 @@ def create_backup(kind="manual"):
     # to themselves, so the password never goes in it -- the restore re-prompts.
     for s in payload["shares"]:
         s.pop("password", None)
+    for k in db.NOT_BACKED_UP:
+        payload["settings"].pop(k, None)
 
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("riparr.json", json.dumps(payload, indent=2))
@@ -327,7 +329,8 @@ def _apply(payload, name):
     component("Backup").warning("Restored %d setting(s) from %s", n, name)
     return {"ok": True, "settings": n,
             "shares": len(payload.get("shares") or []),
-            "note": "Share passwords are not stored in a backup and must be re-entered."}
+            "note": "Share passwords and the MQTT password are not stored in a backup and "
+                    "must be re-entered."}
 
 
 # ─────────────────────────────── health ───────────────────────────────

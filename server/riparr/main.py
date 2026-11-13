@@ -1804,6 +1804,8 @@ def update_install(user=Depends(require_user)):
 def config_export(user=Depends(require_user)):
     s = db.all_settings()
     s.pop("session_secret", None)
+    for k in db.NOT_BACKED_UP:
+        s.pop(k, None)
     return JSONResponse(
         {"version": __version__, "exported_at": int(time.time()),
          "settings": s, "shares": db.list_shares()},

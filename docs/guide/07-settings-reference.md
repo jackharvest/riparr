@@ -314,7 +314,7 @@ read, a dashboard tile with the progress.
 |---|---|
 | **Publish to an MQTT broker** | Off by default. Nothing is sent until this is on and a broker is named |
 | **Broker**, **Port** | A name or IP address. 1883 normally, 8883 with TLS |
-| **Username**, **Password** | Only if your broker asks for them |
+| **Username**, **Password** | Only if your broker asks for them. The password is left out of backups and exports, and is entered again after a restore |
 | **Use TLS** | Encrypts the connection. **Accept a self-signed certificate** is for a broker with a certificate of its own making — still encrypted, but its identity is not checked |
 | **Base topic** | Everything is published beneath it. Empty means `riparr/<hostname>`. With more than one box on a broker, give each its own |
 | **Home Assistant discovery** | On by default. The box appears in Home Assistant by itself as one device. Turning it off removes the entities again |
