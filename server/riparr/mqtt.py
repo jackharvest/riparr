@@ -366,41 +366,10 @@ def _drive_values(drives):
                                  if d.get(k)}}
 
 
-def _health(clock, mk, drives, share, wifi, storage, mode):
-    """The Health table on System → Status, as one word and a list.
-
-    The page derives it in the browser because each line there links to the screen
-    that fixes it. Nothing on a broker can follow a link, so the same checks are made
-    here; if one is added to `healthMessages` in app.js it belongs here too.
-    """
-    bad, warn = [], []
-    if not clock.get("plausible"):
-        bad.append("The system clock is wrong, so dates and key expiry mean nothing.")
-    elif clock.get("synced") is False:
-        warn.append("The clock hasn't synchronised with a time server yet.")
-
-    days = mk.get("days_left")
-    if not mk.get("installed"):
-        bad.append("MakeMKV is not installed, so no disc can be read.")
-    elif days is not None and not clock.get("plausible"):
-        warn.append("Can't tell whether the MakeMKV key is valid: the clock is wrong.")
-    elif days is not None and days <= 0:
-        bad.append("The MakeMKV key has expired.")
-    elif mk.get("key_stale"):
-        warn.append("A newer MakeMKV key has been published.")
-    elif days is not None and days <= int(db.get("warn_key_days") or 7):
-        warn.append("The MakeMKV key expires in %d day(s)." % days)
-
-    if not drives:
-        bad.append("No optical drive detected.")
-    if not share:
-        warn.append("No network share configured.")
-    if not wifi.get("connected"):
-        bad.append("Wi-Fi is not connected.")
-    if storage.get("dedicated") is False:
-        warn.append("Rips are staged on the system filesystem.")
-    if mode == "degraded":
-        warn.append("Not enough free space to rip safely.")
+def _health(problems):
+    """SY.health's list as the one word a broker can act on, and the reasons behind it."""
+    bad = [p["message"] for p in problems if p["level"] == "bad"]
+    warn = [p["message"] for p in problems if p["level"] != "bad"]
     return ("error" if bad else "warning" if warn else "ok"), bad + warn
 
 
@@ -446,7 +415,8 @@ def _slow_values(drives):
     clock = P.clock_status()
     cap = _hooks["capacity"](storage["free_bytes"])
 
-    health, problems = _health(clock, mk, drives, share, wifi, storage, cap.get("mode"))
+    health, problems = _health(SY.health(clock, mk, drives, share, wifi, storage,
+                                         cap.get("mode")))
     lib_state, lib_free, lib_attrs = _library(share)
 
     # "enabled" is the switch in the sense the page means it: asked for, and able to run.

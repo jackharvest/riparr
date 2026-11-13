@@ -364,21 +364,27 @@ def _capacity(free_bytes, direct=None):
 @app.get("/api/status")
 def status(user=Depends(require_user)):
     storage = P.storage_status()
+    cap = _capacity(storage["free_bytes"])
+    optical, clock, wifi = P.optical_diagnosis(), P.clock_status(), P.wifi_status()
+    mk, drives, share = P.makemkv_status(), _drive_report(), db.default_share()
     # The user should never see a gigabyte: capacity is expressed in discs and mode.
     return {
         "version": __version__,
         "hostname": P.hostname(),
         "system": P.system_status(),
-        "storage": dict(storage, **_capacity(storage["free_bytes"])),
-        "optical": P.optical_diagnosis(),
-        "clock": P.clock_status(),
-        "wifi": P.wifi_status(),
-        "makemkv": P.makemkv_status(),
-        "drives": _drive_report(),
+        "storage": dict(storage, **cap),
+        "optical": optical,
+        "clock": clock,
+        "wifi": wifi,
+        "makemkv": mk,
+        "drives": drives,
+        # The Health table, derived once here; MQTT's system/health reads the same list.
+        "health": SY.health(clock, mk, drives, share, wifi, storage, cap.get("mode"),
+                            optical=optical),
         # Four fields, not the row. The row carries the SMB password, and the browser
         # has never needed it -- same argument as /api/setup/state, which was handing
         # it out to anyone at all.
-        "share": _share_out(db.default_share()),
+        "share": _share_out(share),
         "setup_complete": bool(db.get("setup_complete")),
         "autorip": _autorip_state(),
         # A refused duplicate leaves no job and no file, so this is the only trace of

@@ -3184,14 +3184,15 @@ systemPages.status = async () => {
   state.status = st;
   const sys = st.system, m = st.makemkv, s = st.storage;
 
-  const health = healthMessages(st);
+  // Derived by the server (system.health), which MQTT reads too. Plain text: escape it.
+  const health = st.health || [];
   const healthRows = health.length
     ? health.map(h => `<tr>
         <td class="stat">${icon(h.level === "bad" ? "circle-exclamation" : "triangle-exclamation",
                                 h.level === "bad" ? "bad" : "warn")}</td>
-        <td>${h.message}</td>
+        <td>${esc(h.message)}</td>
         <td class="act">${h.href
-          ? `<a class="icon-btn" href="${h.href}" title="${esc(h.action || "Fix")}"
+          ? `<a class="icon-btn" href="${esc(h.href)}" title="${esc(h.action || "Fix")}"
                >${icon("gears")}</a>` : ""}</td></tr>`).join("")
     : `<tr><td class="stat">${icon("circle-check", "ok")}</td>
          <td colspan="2">No issues. Everything Riparr can check is working.</td></tr>`;
@@ -3305,69 +3306,6 @@ systemPages.status = async () => {
       </div>
     </div>`;
 };
-
-/* Health is derived here rather than server-side because every message needs a link to
-   the screen that fixes it, and only the client knows the routes. */
-function healthMessages(st) {
-  const out = [];
-
-  /* The clock goes first, because it invalidates several of the messages below it.
-     This board has no RTC and D4 says the power gets pulled, so an unsynchronised
-     boot is routine rather than exotic -- and every "N days left" and "3 hours ago"
-     in the interface is a subtraction against it. */
-  const clk = st.clock;
-  if (clk && !clk.plausible)
-    out.push({ level: "bad", message: `The system clock reads ${
-      new Date(clk.now * 1000).toLocaleString()}, which can't be right. Dates and key
-      expiry are meaningless until it syncs — check this box can reach the internet.`,
-      href: "#/settings/network", action: "Network settings" });
-  else if (clk && clk.synced === false)
-    out.push({ level: "warn", message: "The clock hasn't synchronised with a time "
-      + "server yet, so dates may be slightly out.",
-      href: "#/system/status", action: "Details" });
-
-  const m = st.makemkv;
-  if (!m.installed)
-    out.push({ level: "bad", message: "MakeMKV is not installed, so no disc can be read.",
-               href: "#/settings/makemkv", action: "Install MakeMKV" });
-  else if (m.days_left != null && st.clock && !st.clock.plausible)
-    out.push({ level: "warn", message: "Riparr can't tell whether the MakeMKV key is "
-      + "still valid, because the clock is wrong.",
-      href: "#/settings/makemkv", action: "Update the key" });
-  else if (m.days_left != null && m.days_left <= 0)
-    out.push({ level: "bad", message: "The MakeMKV key has expired. Rips will fail until it is replaced.",
-               href: "#/settings/makemkv", action: "Update the key" });
-  else if (m.key_stale)
-    out.push({ level: "warn", message: "A newer MakeMKV key has been published — the one "
-      + "on this box is older and may already have lapsed.",
-      href: "#/settings/makemkv", action: "Update the key" });
-  else if (m.days_left != null && m.days_left <= (state.settings?.warn_key_days ?? 7))
-    out.push({ level: "warn", message: `The MakeMKV key expires in ${m.days_left} day(s).`,
-               href: "#/settings/makemkv", action: "Update the key" });
-
-  if (!st.drives || !st.drives.length)
-    out.push({ level: "bad", message: `No optical drive detected — ${
-      esc((st.optical && st.optical.summary) || "nothing is on the USB bus")}.`,
-      href: "#/system/status", action: "Details" });
-
-  if (!st.share)
-    out.push({ level: "warn", message: "No network share configured, so finished rips have nowhere to go.",
-               href: "#/settings/share", action: "Add a share" });
-
-  if (!st.wifi.connected)
-    out.push({ level: "bad", message: "Wi-Fi is not connected.",
-               href: "#/settings/network", action: "Network settings" });
-
-  if (st.storage.dedicated === false)
-    out.push({ level: "warn", message: "Rips are staged on the system filesystem, not a dedicated partition.",
-               href: "#/system/status", action: "Details" });
-
-  if (st.storage.mode === "degraded")
-    out.push({ level: "warn", message: "Not enough free space to rip safely.",
-               href: "#/system/status", action: "Details" });
-
-  return out;
-}
 
 /* Riparr is two halves, and only one of them can update itself. The half in
    /opt/riparr the service replaces on its own; the half in /etc/systemd/system it

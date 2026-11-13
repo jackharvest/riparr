@@ -138,6 +138,29 @@ check("after which the failure is not brought back", MQ._job_values()["job/state
 db.conn().execute("DELETE FROM jobs")
 db.conn().commit()
 
+print("Health, derived once")
+fine = dict(clock={"plausible": True, "synced": True, "now": time.time()},
+            mk={"installed": True, "days_left": 20}, drives=[{"present": False}],
+            share={"host": "nas", "path": "media"}, wifi={"connected": True},
+            storage={"dedicated": True}, mode="burst")
+check("a box with nothing wrong has nothing to say", SY.health(**fine), [])
+check("which is the word ok", MQ._health(SY.health(**fine)), ("ok", []))
+probs = SY.health(**dict(fine, mk={"installed": True, "days_left": 3}, mode="degraded"))
+check("warnings are warnings", [p["level"] for p in probs], ["warn", "warn"])
+check("each with the screen that fixes it",
+      [p["href"] for p in probs], ["#/settings/makemkv", "#/system/status"])
+word, said = MQ._health(SY.health(**dict(fine, wifi={"connected": False}, share=None)))
+check("anything bad makes it error", word, "error")
+check("and the bad news comes first",
+      said, ["Wi-Fi is not connected.",
+             "No network share configured, so finished rips have nowhere to go."])
+probs = SY.health(**dict(fine, drives=[], optical={"summary": "the bridge is there, the drive is not"}))
+check("no drive says what the bus looks like", probs[0]["message"],
+      "No optical drive detected — the bridge is there, the drive is not.")
+probs = SY.health(**dict(fine, clock={"plausible": False, "now": 0}))
+check("a wrong clock outranks a day count",
+      [p["level"] for p in probs], ["bad", "warn"])
+
 print("Topics and entities")
 db.set("mqtt_base_topic", "/home/+/rip#/")
 check("wildcards never reach a published topic", MQ.base_topic(), "home/rip")
