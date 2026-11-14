@@ -181,7 +181,13 @@ PYEOF
   # `soft` so a NAS that goes away returns an error instead of wedging the rip in
   # uninterruptible sleep -- D4 says the cable gets pulled, and a hung mount is the one
   # state this appliance cannot recover from on its own.
-  BASE="credentials=$CRED,uid=$UID_R,gid=$GID_R,file_mode=0664,dir_mode=0775,soft,noatime"
+  #
+  # `iocharset=utf8` because the kernel's default is not: Armbian builds cifs with
+  # CONFIG_NLS_DEFAULT=iso8859-1, so every UTF-8 filename was read as Latin-1, one
+  # character per byte. "Ein Münchner im Himmel" reached the NAS as "Ein MÃ¼nchner im
+  # Himmel", and verification -- which goes through smbclient, in UTF-8 -- then could
+  # not find the file it had just written and failed the rip.
+  BASE="credentials=$CRED,uid=$UID_R,gid=$GID_R,file_mode=0664,dir_mode=0775,soft,noatime,iocharset=utf8"
   ADDR=$(resolve "$HOST")
   if [ -z "$ADDR" ]; then
     log "could not find $HOST by DNS or by network name — rips bound for it will stage on the card instead"
