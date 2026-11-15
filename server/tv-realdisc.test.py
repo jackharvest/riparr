@@ -386,6 +386,19 @@ tv.cross_check(blank, [], avatar_titles)
 check("a name TVmaze lacks is taken from the witness", blank[0]["episode_title"],
       "The Boy in the Iceberg")
 
+# ── Kiki's Delivery Service (Blu-ray, 2026-11-14) ────────────────────────────
+# Title list as the box parsed it (no raw scan was kept). The film, 00800.mpls, is
+# seamless-branched from 01001/01003/01005.m2ts, which MakeMKV also lists bare. It
+# used to be taken for a play-all of its parts, leaving three 7-9 minute bonus pieces
+# filed as a three-episode season.
+
+print("Kiki's Delivery Service: a film with seamless branching is not a season")
+titles = json.load(open(os.path.join(FIX, "kikis-delivery-service-bluray.titles.json"),
+                        encoding="utf-8"))
+check("not read as a season", tv.analyse(titles, MAKEMKV_MIN), None)
+check("the film is the 105-minute, six-audio-track playlist",
+      rip.choose_title(titles, MAKEMKV_MIN)["source"], "00800.mpls")
+
 print("")
 if failures:
     print("%d FAILED: %s" % (len(failures), ", ".join(failures)))

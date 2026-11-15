@@ -554,6 +554,19 @@ def analyse(titles, min_seconds=120):
     # per second. Two parts of a real two-part film are authored alike.
     if len(cluster) == 2 and min(lengths) >= BONUS_FILM_SECONDS and _differ_in_kind(*cluster):
         return None
+    # A compilation is only a play-all if it holds the episodes. A film with seamless
+    # branching is built from pieces the disc also offers bare -- Kiki's Delivery
+    # Service's 00800.mpls is 01001, 01003 and 01005.m2ts end to end, at 9, 37 and 52
+    # minutes -- so the film counted as a compilation of its own parts, went out of the
+    # way as the play-all, and three short bonus pieces were left to be "the season".
+    # A film-length compilation that holds fewer than two of the episodes, with them
+    # mapped well enough to know, and that runs far past all of them together, is the
+    # film the disc exists for.
+    if (play_all and play_all["seconds"] >= BONUS_FILM_SECONDS
+            and len([t for t in cluster if parse_segments(t.get("segments"))]) >= MIN_EPISODES
+            and len(_held(play_all, cluster)) < MIN_EPISODES
+            and play_all["seconds"] > PLAY_ALL_SUM_HIGH * sum(t["seconds"] for t in cluster)):
+        return None
     episode_seconds = _median([t["seconds"] for t in cluster])
 
     # A title at twice the episode length, sitting alongside a normal cluster, is a
