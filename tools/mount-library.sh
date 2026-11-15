@@ -29,7 +29,36 @@ DB="${RIPARR_DB:-/var/lib/riparr/riparr.db}"
 MOUNT="${RIPARR_LIBRARY_MOUNT:-/srv/library}"
 PY="${RIPARR_PYTHON:-/opt/riparr/.venv/bin/python}"
 
-log() { echo "riparr-mount: $*"; }
+# Everything this script says also goes to a file the web service can read. journald
+# alone was not enough: Armbian keeps it in RAM, the service account cannot read it, and
+# so the one line that said *why* a share would not mount -- the mount error -- was the
+# one line nobody could get to. A customer's LinkStation spent a week reported as
+# "probably asleep" while that line sat in a journal no-one could open.
+LOGDIR="$(dirname "$DB")/logs"
+MLOG="$LOGDIR/mount.txt"
+# One line per share this run looked at: id, ok, epoch, SMB version, address, error.
+# platform.mount_status() reads it, so the page can say the reason instead of guessing.
+STATUS="$(dirname "$DB")/mount-status.tsv"
+STATUS_NEW=""
+
+log() {
+  echo "riparr-mount: $*"
+  [ -d "$LOGDIR" ] && echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$MLOG" 2>/dev/null
+  return 0
+}
+status() { STATUS_NEW+="$1"$'\t'"$2"$'\t'"$(date +%s)"$'\t'"$3"$'\t'"$4"$'\t'"${5//[$'\t\n']/ }"$'\n'; }
+finish() {
+  # Capped, because every write is a write to the SD card: the last 400 lines is weeks
+  # of boots and reconnects, and far more than anyone reads.
+  if [ -f "$MLOG" ]; then
+    tail -n 400 "$MLOG" > "$MLOG.tmp" 2>/dev/null && mv -f "$MLOG.tmp" "$MLOG"
+    chown riparr:riparr "$MLOG" 2>/dev/null; chmod 0644 "$MLOG" 2>/dev/null
+  fi
+  if [ -n "$STATUS_NEW" ]; then
+    printf '%s' "$STATUS_NEW" > "$STATUS.tmp" && chmod 0644 "$STATUS.tmp" && mv -f "$STATUS.tmp" "$STATUS"
+  fi
+}
+trap finish EXIT
 
 [ -x "$PY" ] || PY=python3
 command -v mount.cifs >/dev/null || { log "cifs-utils is not installed; skipping"; exit 0; }
@@ -69,8 +98,18 @@ default_id = default["id"]
 
 wanted = []
 # Every destination kind in db.KINDS. Music was added after films and television, and a
-# list that names them by hand is a list that silently stops mounting the next one.
-for key in ("movie_share_id", "tv_share_id", "music_share_id"):
+# list that names them by hand is a list that silently stops mounting the next one --
+# which is exactly what happened to data discs: added to db.KINDS, never added here, so
+# a data destination on its own share was never mounted at all. So ask the settings for
+# every *_share_id rather than naming them; one that was never set uses the default,
+# which is added below anyway.
+try:
+    keys = [r[0] for r in c.execute(
+        "SELECT key FROM settings WHERE key LIKE '%\\_share\\_id' ESCAPE '\\'")]
+except Exception:
+    keys = []
+for key in sorted(set(keys) | {"movie_share_id", "tv_share_id", "music_share_id",
+                               "data_share_id"}):
     sid = setting(c, key)
     sid = sid if sid in shares else default_id
     if sid not in wanted:
@@ -151,7 +190,7 @@ while IFS=$'\t' read -r SID ISDEF HOST SHARE USER DOMAIN; do
   if [ "$ISDEF" = "1" ]; then TARGET="$MOUNT"; else TARGET="$MOUNT-$SID"; fi
 
   if mountpoint -q "$TARGET"; then
-    log "already mounted at $TARGET"; continue
+    log "already mounted at $TARGET"; status "$SID" 1 "" "" ""; continue
   fi
 
   # The share row holds the password, so it is read here and written only to a 0600
@@ -185,18 +224,49 @@ PYEOF
   ADDR=$(resolve "$HOST")
   if [ -z "$ADDR" ]; then
     log "could not find $HOST by DNS or by network name — rips bound for it will stage on the card instead"
+    status "$SID" 0 "" "" "could not find $HOST by DNS or by network name"
     rm -f "$CRED"; continue
   fi
   [ "$ADDR" != "$HOST" ] && BASE="$BASE,ip=$ADDR"
 
-  DONE=0; ERR=""
-  for VERS in 3.1.1 3.0 2.1; do
+  # Newest first, down to SMB 1. 2.1 used to be the floor, and that left out every NAS
+  # whose Samba predates 4.0 -- Buffalo LinkStations, older WD and Zyxel boxes -- which
+  # speak 2.0 at best. smbclient negotiates 2.0 happily, so the share's Test passed and
+  # the page said "verified just now" beside "Not connected", for ever. SMB 1 is last and
+  # only reached when nothing newer answers; it is logged as such so it can be fixed on
+  # the NAS rather than lived with.
+  DONE=0; ERR=""; ERRS=""; USED=""; FIRST=""
+  for VERS in 3.1.1 3.0 2.1 2.0 1.0; do
     # Keep the error: thrown away, every failure here looked like a NAS that was off.
     if ERR=$(mount -t cifs "//$HOST/$SHARE" "$TARGET" -o "$BASE,vers=$VERS" 2>&1); then
-      log "mounted //$HOST/$SHARE at $TARGET (SMB $VERS, $ADDR)"; DONE=1; break
+      DONE=1; USED=$VERS; break
     fi
+    ERR=${ERR:-no error given}
+    ERRS+="SMB $VERS: ${ERR//$'\n'/ }; "
+    # The newest version's answer is the one to report: what SMB 1 says on a kernel
+    # built without it ("Invalid argument") explains nothing about this NAS.
+    [ -n "$FIRST" ] || FIRST=$ERR
+    case "$ERR" in
+      # Wrong password or no such share: the server understood this version well
+      # enough to answer. Older versions will only say the same thing, and each try is
+      # another failed login in the NAS's log -- some lock the account after a few.
+      *"error(13)"*|*"error(2)"*) FIRST=$ERR; break ;;
+      # Nothing answered at all. No version will do better, and five timeouts in a row
+      # is a Reconnect button that spins for a minute.
+      *"error(110)"*|*"error(113)"*|*"error(115)"*|*"error(111)"*) break ;;
+    esac
   done
-  [ "$DONE" = "1" ] || log "could not mount //$HOST/$SHARE at $ADDR: ${ERR:-no error given} — rips bound for it will stage on the card instead"
+  if [ "$DONE" = "1" ]; then
+    log "mounted //$HOST/$SHARE at $TARGET (SMB $USED, $ADDR)"
+    [ "$USED" = "1.0" ] && log "//$HOST only speaks SMB 1. It works, but SMB 1 is old and insecure; turning on SMB 2 or 3 on the NAS is worth doing"
+    status "$SID" 1 "$USED" "$ADDR" ""
+  else
+    log "could not mount //$HOST/$SHARE at $ADDR — ${ERRS%; } — rips bound for it will stage on the card instead"
+    # The kernel usually says more than mount.cifs does ("Dialect not supported", "bad
+    # network name"), and only root can read it.
+    dmesg 2>/dev/null | grep -iE "cifs|smb" | tail -n 6 | while IFS= read -r k; do log "  kernel: $k"; done
+    status "$SID" 0 "" "$ADDR" "$FIRST"
+  fi
   rm -f "$CRED"
 done <<< "$ROWS"
 
