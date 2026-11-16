@@ -21,6 +21,7 @@ from . import (__version__, artwork as ART, backup as BK, db, drives as DRV, led
                makemkv as MK,
                notify as NT, platform as P, rip as RIP, shares as SH, system as SY,
                tv as TV, updater)
+from . import diagnostics as DIAG
 
 STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 COOKIE = "riparr_session"
@@ -1020,22 +1021,49 @@ def shares_remount(user=Depends(require_user)):
                    "over SSH to add it: sudo bash /opt/riparr/tools/install.sh")
 
     # The mount is a systemd oneshot reached through a path unit, so there is no return
-    # value to wait on -- poll the thing that actually matters instead. cifs mounts on
-    # this hardware land in about a second; 20 is generous enough for a NAS that has to
-    # spin its disks up first.
-    deadline = time.time() + 20
+    # value to wait on. The mount script writes its status file when it finishes, so wait
+    # for one newer than this request; a box whose script predates that file falls back
+    # to watching the mounts themselves, as it always did.
+    asked = time.time()
+    lib = {}
+
+    def check():
+        nonlocal lib
+        lib = {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}
+        return all(v.get("mounted") for v in lib.values())
+
+    deadline = asked + 25
     while time.time() < deadline:
         time.sleep(0.5)
-        lib = {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}
-        if any(v.get("mounted") for v in lib.values()):
+        if check():
             return {"ok": True, "message": "Reconnected.", "library": lib}
+        try:
+            if os.path.getmtime(P.MOUNT_STATUS) >= asked - 1:
+                break
+        except OSError:
+            pass
+    check()
 
-    lib = {k: P.library_status(db.destination(k)[0]) for k in db.KINDS}
-    return {"ok": False,
-            "message": "Riparr asked, but the share still isn't mounted. The machine "
-                       "is probably asleep or off the network — nothing here needs "
-                       "changing, and rips will use the card until it answers.",
-            "library": lib}
+    # "Any one mounted" used to count as reconnected, so a box with films on one share
+    # and data discs on another said "Reconnected." while half its destinations were
+    # still on the card. Say which, and why, in the NAS's own terms where there are any.
+    down = [k for k, v in lib.items() if not v.get("mounted")]
+    reasons = []
+    for k in down:
+        r = lib[k].get("reason")
+        if r and r not in reasons:
+            reasons.append(r)
+    if reasons:
+        message = " ".join(reasons)
+    else:
+        message = ("Riparr asked, but the share still isn't mounted. The machine is "
+                   "probably asleep or off the network — rips will use the card until it "
+                   "answers.")
+    if len(down) < len(lib):
+        message = "Partly reconnected; %s still not. %s" % (
+            ", ".join(db.KINDS[k][2].lower() for k in down), message)
+    return {"ok": False, "message": message, "library": lib,
+            "diagnostics": "/api/system/diagnostics"}
 
 
 @app.post("/api/shares/discover")
@@ -1864,6 +1892,15 @@ def system_log_download(name: str, user=Depends(require_user)):
     if not path:
         raise HTTPException(status_code=404, detail="No such log file")
     return FileResponse(path, media_type="text/plain", filename=name)
+
+
+@app.get("/api/system/diagnostics")
+def system_diagnostics(user=Depends(require_user)):
+    """Everything we would ask for to diagnose a box, in one zip, secrets removed."""
+    name, data = DIAG.build()
+    SY.component("Logs").info("Diagnostics downloaded (%d KB)", len(data) // 1024)
+    return Response(content=data, media_type="application/zip",
+                    headers={"Content-Disposition": 'attachment; filename="%s"' % name})
 
 
 @app.delete("/api/system/logs")

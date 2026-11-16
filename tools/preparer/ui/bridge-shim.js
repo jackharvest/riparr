@@ -73,6 +73,21 @@
     return new Promise((r) => setTimeout(r, 50)).then(() => method(name, tries - 1));
   }
 
+  /* Errors in the page go to the Preparer's log file too, when the bridge is there to
+     carry them. A blank window says nothing; preparer-log.txt can. */
+  const report = (msg) => {
+    const api = window.pywebview && window.pywebview.api;
+    if (api && typeof api.log === 'function') {
+      try { api.log(String(msg)); } catch (_) { /* logging must not become the failure */ }
+    }
+  };
+  window.addEventListener('error', (e) =>
+    report('error: ' + (e.message || e) + (e.filename ? ' at ' + e.filename + ':' + e.lineno : '')));
+  window.addEventListener('unhandledrejection', (e) =>
+    report('unhandled: ' + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason)));
+  ready.then(() => report('bridge connected'),
+             (e) => setTimeout(() => report('bridge failed: ' + e.message), 0));
+
   window.riparr = new Proxy({}, {
     get: (_, name) => (...args) =>
       ready.then(() => method(name, 40)).then((fn) => fn(...args)),
