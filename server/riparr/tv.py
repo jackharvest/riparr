@@ -1476,6 +1476,35 @@ def build_plan(found, season=None, first_episode=1, series=None, episode_list=No
     }
 
 
+# How close a title's length must be to a guide special's runtime to be filed as it.
+SPECIAL_RUNTIME_TOLERANCE = 0.12
+
+
+def specials_for(found, episode_list):
+    """{title index: the guide's Season 0 entry} for each odd-length title in the
+    play-all that matches exactly one special by runtime.
+
+    A long episode the guide numbers as a special -- half an hour among seven-minute
+    episodes -- is part of the season as it aired, and a library that goes by the guide
+    finds it only at the special's own number. Season 0 only, which is where TMDB, and
+    so Jellyfin, keeps them; a guide that puts specials inside a season numbers them in
+    a way the library won't read back. Two specials of that length is a guess, so
+    neither is taken.
+    """
+    specials = [e for e in episode_list or []
+                if e.get("special") and e.get("season") == 0 and e.get("runtime")]
+    out = {}
+    for t in found.get("extras") or []:
+        if t["index"] not in (found.get("odd_in_play_all") or []):
+            continue
+        minutes = t["seconds"] / 60.0
+        near = [e for e in specials
+                if abs(minutes - e["runtime"]) <= SPECIAL_RUNTIME_TOLERANCE * e["runtime"]]
+        if len(near) == 1:
+            out[t["index"]] = near[0]
+    return out
+
+
 def plan_warnings(plan, found, episode_list=None):
     """Everything about this plan a person would want to be told before it runs.
 
@@ -1515,9 +1544,18 @@ def plan_warnings(plan, found, episode_list=None):
                    "placed by where %s on the disc, which continues the same order."
                    % (n, "" if n == 1 else "s", "is" if n == 1 else "are",
                       "it sits" if n == 1 else "they sit"))
+    matched = specials_for(found, episode_list)
     for idx in found.get("odd_in_play_all") or []:
         secs = next((x.get("seconds", 0) for x in found.get("extras") or []
                      if x["index"] == idx), 0)
+        sp = matched.get(idx)
+        if sp:
+            out.append("Title %d is part of the “play all” but runs %d min, unlike "
+                       "the other episodes. The guide has it as a special, so it's filed "
+                       "as S00E%02d%s, which is where Plex and Jellyfin look for it."
+                       % (idx, round(secs / 60.0), sp["number"],
+                          " (“%s”)" % sp["name"] if sp.get("name") else ""))
+            continue
         out.append("Title %d is part of the “play all” but runs %d min, unlike "
                    "the other episodes — probably a special or a long episode the "
                    "guide numbers separately. It's ticked under extras; rename it or "

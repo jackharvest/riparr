@@ -1948,10 +1948,18 @@ def _identify_season(job, s, d, titles, remembered):
                                 else "Extra %d" % n), "state": "pending"}
                       for n, t in enumerate(found["extras"], 1)]
     odd = set(found.get("odd_in_play_all") or [])
+    specials = tv.specials_for(found, episode_list)
     for x in plan["extras"]:
         # Part of the play-all, so part of the season: ticked, so it isn't lost.
         if s.get("tv_extras") == "all" or x["title_index"] in odd:
             x["include"] = True
+        sp = specials.get(x["title_index"])
+        if sp:
+            # Filed at the guide's special number, not in Featurettes. It stays an extra
+            # row so that renumbering the season, and the next disc's carry-over, never
+            # count it among the season's own episodes.
+            x["special"] = {"season": 0, "episode": int(sp["number"])}
+            x["name"] = sp.get("name") or x["name"]
     for row in plan["episodes"]:
         row["state"] = "pending"
         row["include"] = True
@@ -2997,6 +3005,8 @@ EXTRAS_FOLDER = "Featurettes"
 
 def episode_label(row):
     """`S01E03`, or `S01E03-E04` for a two-episode file. For progress lines and logs."""
+    if row.get("extra") and row.get("special"):
+        return "S%02dE%02d" % (int(row["special"]["season"]), int(row["special"]["episode"]))
     if row.get("extra"):
         return row.get("name") or "an extra"
     season = row.get("season")
@@ -3435,6 +3445,12 @@ def _episode_name(job, s, plan, row):
     off a rendered episode path rather than assumed, so a custom template moves the
     extras with the episodes.
     """
+    if row.get("extra") and row.get("special"):
+        sp = row["special"]
+        return _episode_name(job, s, plan, dict(
+            season=int(sp["season"]), episode=int(sp["episode"]),
+            episode_last=int(sp["episode"]), episode_title=row.get("name") or "",
+            extra=False))
     if row.get("extra"):
         probe = dict(season=plan.get("season") if plan.get("season") is not None else 1,
                      episode=1, episode_last=1, episode_title="", extra=False)

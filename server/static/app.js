@@ -1262,7 +1262,9 @@ function seasonPrompt(j) {
             ${extrasShown.map(x => `
               <div class="ep-row ep-extra${x.include ? "" : " dropped"}" data-xi="${x.title_index}">
                 <input type="checkbox" class="ep-keep" ${x.include ? "checked" : ""}>
-                <span class="ep-num muted">Extra</span>
+                <span class="ep-num muted">${x.special
+                  ? esc(`S${String(x.special.season).padStart(2, "0")}E${String(x.special.episode).padStart(2, "0")}`)
+                  : "Extra"}</span>
                 <span class="ep-dur">${esc(duration(x.seconds))}</span>
                 <input class="ep-title" value="${esc(x.name || "")}" placeholder="What is it?">
                 <span class="ep-src muted">Title ${x.title_index}</span>

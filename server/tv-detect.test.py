@@ -191,6 +191,19 @@ check("is a season, not a film with featurettes",
 check("and the long one is explained",
       any("Title 24 is part of" in w for w in tv.plan_warnings(
           tv.build_plan(f_odd, season=1, first_episode=1), f_odd)), True)
+GUIDE_SP = [{"season": 1, "number": n, "name": "Ep %d" % n, "runtime": 7, "special": False}
+            for n in range(1, 24)] + [
+    {"season": 0, "number": 5, "name": "A Long One", "runtime": 28, "special": True},
+    {"season": 0, "number": 6, "name": "A Short One", "runtime": 7, "special": True}]
+check("the long one is filed as the guide's special of its length",
+      {k: v["number"] for k, v in tv.specials_for(f_odd, GUIDE_SP).items()}, {24: 5})
+check("and the warning says where it went",
+      any("S00E05" in w and "A Long One" in w for w in tv.plan_warnings(
+          tv.build_plan(f_odd, season=1, first_episode=1), f_odd, GUIDE_SP)), True)
+TWO_SP = GUIDE_SP + [{"season": 0, "number": 9, "name": "Another", "runtime": 29,
+                      "special": True}]
+check("two specials of that length is a guess, so neither", tv.specials_for(f_odd, TWO_SP), {})
+check("no special that long, nothing taken", tv.specials_for(f_odd, GUIDE_SP[:-2]), {})
 OFF = [dvd(0, int(PA_SUM * 1.12), ",".join(str(n) for n in range(1, 31)), 30)] + SHORT_EPS + [LONG_ONE]
 check("but not when it's well off the sum", tv.analyse(OFF, FLOOR) is None or
       tv.analyse(OFF, FLOOR)["odd_in_play_all"] == [], True)
