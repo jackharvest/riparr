@@ -1473,7 +1473,10 @@ function bootDone() {
   setTimeout(() => b.remove(), 220);
 }
 
-init().then(bootDone).catch((e) => {
+/* Into preparer-log.txt. Fire and forget: a log line must never become the failure. */
+const logLine = (msg) => { try { Promise.resolve(riparr.log(msg)).catch(() => {}); } catch (_) {} };
+
+init().then(() => { bootDone(); logLine("ready"); }).catch((e) => {
   bootDone();
   const box = document.createElement("div");
   box.style.cssText =
@@ -1485,8 +1488,10 @@ init().then(bootDone).catch((e) => {
     '<div style="font-size:17px;color:#fff;margin-bottom:10px">Riparr Preparer could not start</div>' +
     '<div style="color:#8b8598">' + String((e && e.message) || e) + "</div>" +
     '<div style="color:#6d6880;margin-top:16px">Quit and open it again. If it keeps ' +
-    "happening, that is a bug worth reporting.</div></div>";
+    "happening, please send us <b>preparer-log.txt</b> from the <b>riparr-build</b> " +
+    "folder in your home folder.</div></div>";
   document.body.appendChild(box);
+  logLine("could not start: " + ((e && e.stack) || e));
 });
 
 function mkvSummary() {

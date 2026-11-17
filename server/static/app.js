@@ -1922,10 +1922,14 @@ settingsPages.library = async (s) => {
           : lib.mounted
             ? `${icon("circle-check", "ok")} Mounted at <code>${esc(lib.mount)}</code>,
                so <b>Straight to your library</b> works for this one.`
-            : `${icon("circle-info")} <b>Not connected.</b> Rips will finish on the
-               SD card and be copied across afterwards — nothing is lost, it is just
-               slower and uses card space. Nothing here needs changing.
+            : `${icon("circle-info")} <b>Not connected.</b> ${lib.reason
+                 ? `${esc(lib.reason)} Until then, rips finish on the SD card and are
+                    copied across afterwards, so nothing is lost.`
+                 : `Rips will finish on the SD card and be copied across afterwards —
+                    nothing is lost, it is just slower and uses card space.`}
                <button class="btn tiny" data-remount>Reconnect</button>
+               ${lib.reason ? `<a class="btn tiny" href="/api/system/diagnostics"
+                  download>Download diagnostics</a>` : ""}
                <span class="test-out" data-remount-out></span>`}
         </div>
       </div>`;
@@ -3455,11 +3459,16 @@ systemPages.logs = async () => {
     <div class="toolbar">
       <button class="tool" id="lg-refresh"><span class="ti">${icon("arrows-rotate")}</span>Refresh</button>
       <button class="tool" id="lg-delete"><span class="ti">${icon("trash-can")}</span>Delete</button>
+      <a class="tool" href="/api/system/diagnostics" download><span class="ti">${icon("download")}</span>Download diagnostics</a>
     </div>
-    <div class="alert">Log files are in <code>${esc(l.path)}</code>.
-      <br><code>riparr.txt</code> is the ordinary record; <code>riparr.debug.txt</code>
-      keeps everything and is the one to send if you are asking for help. Each is capped
-      at 1 MB and rotated five times, because every write is a write to the SD card.</div>
+    <div class="alert"><b>Asking for help?</b> Send the <b>Download diagnostics</b> file.
+      It has the logs, what happened each time a share tried to connect, and whether
+      this box can reach your NAS. Passwords, keys and tokens are taken out first, and
+      nothing is sent anywhere until you send it.
+      <br><br>Log files are in <code>${esc(l.path)}</code>. <code>riparr.txt</code> is
+      the ordinary record, <code>riparr.debug.txt</code> keeps everything, and
+      <code>mount.txt</code> records each attempt to connect a share. Each is capped,
+      because every write is a write to the SD card.</div>
     <div class="section"><h2>Files</h2>
       <table>
         <thead><tr><th>Filename</th><th>Size</th><th>Last Write Time</th>
@@ -4745,6 +4754,10 @@ document.addEventListener("click", async (e) => {
     const r = await api.post("/api/shares/remount", {});
     say(r.message, r.ok ? "ok" : "warn");
     if (r.ok) { toast("Reconnected", "ok"); route(); return; }
+    if (r.diagnostics && out && !out.querySelector("a")) {
+      out.insertAdjacentHTML("beforeend", ` <a href="${r.diagnostics}" download>Download
+        diagnostics</a> to send if you need help.`);
+    }
   } catch (err) {
     // 503 means this box has no remount bridge yet -- offer the old lever rather than
     // leaving somebody with a button that only ever fails.

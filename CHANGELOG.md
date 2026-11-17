@@ -8,6 +8,39 @@ bother updating.
 
 ---
 
+## 0.7.1
+
+**Shares on older NASes now connect.** Riparr used to try SMB 3.1.1, 3.0 and 2.1 when
+connecting a share, and nothing older. NASes running an older Samba (Buffalo
+LinkStations, older WD and Zyxel units) speak SMB 2.0 at most, so the share's **Test**
+passed while the share itself never connected, and the page said the NAS was "probably
+asleep". Riparr now tries down to SMB 2.0, and SMB 1 as a last resort.
+
+**Data discs get their own share connected.** If data discs went to a different share
+from your films, that share was never connected, and data discs always went to the SD
+card first.
+
+**When a share won't connect, the page says why.** A wrong password, a share name the
+NAS doesn't have, an SMB version mismatch, or a NAS that isn't answering each get their
+own message under the share. Before, they all read "probably asleep". **Reconnect** also
+no longer says "Reconnected" while some of your shares are still down.
+
+**Download diagnostics.** One file to send when you need help, from **System → Log
+Files** or from under a share that won't connect. It has the logs, every attempt to
+connect a share with the NAS's own error, and whether the box can reach your NAS by name
+and on which ports. Passwords, keys and tokens are taken out before it's written, and
+nothing is sent anywhere unless you send it.
+
+**Preparer:**
+
+- **Linux: the window no longer opens blank.** On some machines (older Intel and NVIDIA
+  graphics especially) the Preparer showed its title bar and nothing inside. It now
+  turns off the two graphics features in the system's web view that cause that.
+- **The Preparer keeps a log.** `preparer-log.txt` in your `riparr-build` folder, with
+  the previous run kept beside it. If the Preparer won't start, that is the file to send.
+
+---
+
 ## 0.7.0
 
 **TV seasons on Blu-ray, tested on real discs.** The first fidelity tests with real
