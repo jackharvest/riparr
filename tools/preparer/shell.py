@@ -55,6 +55,119 @@ if len(sys.argv) > 3 and sys.argv[1] == WIFI_KEY_FLAG:
         _f.write(_pw or "")
     sys.exit(0 if _pw else 1)
 
+# ── a log file, before anything else can fail ──
+#
+# A windowed app has nowhere to print. On Windows sys.stderr is None, on Linux a launch
+# from the file manager sends it to nowhere anyone looks, and the web view's own C-level
+# complaints ("Failed to create GBM buffer", EGL errors) never touch Python at all. So
+# the reports that came back were "the header shows and the app never loads", with
+# nothing to go on. Everything now lands in the build folder, beside the password file
+# people already know how to find: `preparer-log.txt`. The previous run is kept as
+# `preparer-log.1.txt`, so reopening the app to "try again" does not erase the evidence.
+#
+# Only the GUI run logs. The elevated children above run as root and must not leave a
+# root-owned file in somebody's home folder.
+LOG_PATH = None
+
+
+def _start_log():
+    global LOG_PATH
+    folder = os.path.expanduser("~/riparr-build")
+    for i, a in enumerate(sys.argv):
+        if a == "--assets" and i + 1 < len(sys.argv):
+            folder = os.path.abspath(os.path.expanduser(sys.argv[i + 1]))
+    try:
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "preparer-log.txt")
+        if os.path.exists(path):
+            os.replace(path, os.path.join(folder, "preparer-log.1.txt"))
+        f = open(path, "a", buffering=1, encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    LOG_PATH = path
+    if getattr(sys, "frozen", False):
+        # The whole process's stderr, not just Python's: that is where WebKitGTK and
+        # WebView2 say why the window is blank.
+        try:
+            if sys.__stderr__ is not None:
+                sys.__stderr__.write("Riparr Preparer: logging to %s\n" % path)
+                sys.__stderr__.flush()
+        except Exception:
+            pass
+        try:
+            os.dup2(f.fileno(), 2)
+        except OSError:
+            pass
+        sys.stdout = sys.stderr = f
+    else:
+        # From a checkout there is a terminal worth keeping: write to both.
+        class _Tee:
+            def __init__(self, *outs):
+                self.outs = [o for o in outs if o is not None]
+
+            def write(self, data):
+                for o in self.outs:
+                    try:
+                        o.write(data)
+                    except Exception:
+                        pass
+                return len(data)
+
+            def flush(self):
+                for o in self.outs:
+                    try:
+                        o.flush()
+                    except Exception:
+                        pass
+
+        sys.stdout = _Tee(sys.__stdout__, f)
+        sys.stderr = _Tee(sys.__stderr__, f)
+    import faulthandler
+    import platform as _plat
+    import time as _t
+    try:
+        faulthandler.enable(f)
+    except Exception:
+        pass
+    f.write("=== Riparr Preparer %s ===\n" % _t.strftime("%Y-%m-%d %H:%M:%S"))
+    f.write("system:   %s %s (%s)\n" % (_plat.system(), _plat.release(), _plat.machine()))
+    f.write("python:   %s, frozen=%s\n" % (_plat.python_version(),
+                                            bool(getattr(sys, "frozen", False))))
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/etc/os-release") as osr:
+                pretty = [l.split("=", 1)[1].strip().strip('"') for l in osr
+                          if l.startswith("PRETTY_NAME=")]
+            f.write("distro:   %s\n" % (pretty[0] if pretty else "?"))
+        except OSError:
+            pass
+        for v in ("XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP", "WAYLAND_DISPLAY", "DISPLAY"):
+            f.write("%-9s %s\n" % (v + ":", os.environ.get(v, "")))
+
+
+_start_log()
+
+
+def note(*parts):
+    """One line in the log. Never raises: logging must not become the failure."""
+    try:
+        print(*parts, flush=True)
+    except Exception:
+        pass
+
+
+# Linux: WebKitGTK's GPU paths, which leave a window that draws its titlebar and nothing
+# inside it -- no error on screen, because the error screen is drawn by the same web view.
+# The DMABUF renderer (WebKitGTK 2.42+) does this on a long list of older Intel, NVIDIA
+# and virtual GPUs; compositing mode does it on others. Reported on Zorin and Mint, on a
+# Getac and a Compaq: exactly that hardware. This window is a form, not a game, so the
+# software path costs nothing anybody can see. setdefault, so anyone who needs the GPU
+# path back can set either to 0.
+if sys.platform.startswith("linux"):
+    for _v in ("WEBKIT_DISABLE_DMABUF_RENDERER", "WEBKIT_DISABLE_COMPOSITING_MODE"):
+        os.environ.setdefault(_v, "1")
+        note("%s=%s" % (_v, os.environ[_v]))
+
 # DPI awareness, declared before anything makes a window.
 #
 # Without it Windows treats the app as a 96-DPI program and bitmap-stretches it, so the
@@ -257,7 +370,14 @@ def main(argv=None):
     os.makedirs(assets, exist_ok=True)
 
     shell, window = build(assets, a.shot, a.eval)
-    webview.start(debug=a.debug, private_mode=True)
+    note("pywebview %s, assets %s" % (getattr(webview, "__version__", "?"), assets))
+    try:
+        webview.start(debug=a.debug, private_mode=True)
+    except BaseException:
+        import traceback
+        note("webview.start failed:\n" + traceback.format_exc())
+        raise
+    note("window closed")
     # The scratch directory holds custom.toml -- the derived Wi-Fi key among it. Only the
     # superseded app.py ever removed it, so since the move to pywebview every session
     # left one behind in the temp folder.

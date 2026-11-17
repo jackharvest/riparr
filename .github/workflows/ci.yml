@@ -176,6 +176,15 @@ jobs:
         run: |
           python server/choose-title.test.py
 
+      # The real mount script against a fake NAS. A LinkStation speaks SMB 2.0 at most,
+      # and the script stopped at 2.1: smbclient's Test passed, the mount failed every
+      # boot, and the page blamed a sleeping NAS. Also: data discs were never mounted,
+      # a wrong password must not be retried five times, and the diagnostics zip people
+      # email to us must not carry a single password, key or token.
+      - name: Shares mount on old NASes, and diagnostics carry no secrets
+        run: |
+          python server/mount-diagnostics.test.py
+
       # A backup is a folder of a few hundred files, and the pipeline was built for one
       # job making one file. This runs every stage -- staged and direct, resume after a
       # power cut, verify, purge, the never-overwrite rule, the DVD-tools fallback --
