@@ -715,6 +715,72 @@ def library_mounted(share=None):
     return os.access(mount, os.W_OK)
 
 
+# What tools/mount-library.sh last said about each share, written by root after every
+# mount attempt: id, ok, epoch, SMB version, address, error. Next to the database
+# because that is where the script finds the database.
+MOUNT_STATUS = os.path.join(
+    os.path.dirname(os.environ.get("RIPARR_DB", "/var/lib/riparr/riparr.db")),
+    "mount-status.tsv")
+
+
+def mount_status():
+    """{share_id: {ok, at, smb, addr, error}} from the last mount attempt, or {}.
+
+    {} on a box whose mount script predates the file, which reads as "no reason known"
+    -- the honest answer there, and the same thing the page said before this existed.
+    """
+    out = {}
+    try:
+        with open(MOUNT_STATUS, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = (line.split("\t") + [""] * 6)[:6]
+        try:
+            sid = int(parts[0])
+        except ValueError:
+            continue
+        out[sid] = {"ok": parts[1] == "1",
+                    "at": int(parts[2]) if parts[2].isdigit() else None,
+                    "smb": parts[3] or None, "addr": parts[4] or None,
+                    "error": parts[5] or None}
+    return out
+
+
+# mount.cifs speaks in errno numbers. These are the ones a home network produces, said
+# the way somebody standing next to their NAS can act on. Order matters: the first match
+# wins, and "Host is down" from the kernel usually means "no dialect in common", not a
+# machine that is off -- the LinkStation case.
+_MOUNT_REASONS = (
+    (("could not find",),
+     "Riparr could not find that machine by name. Try its IP address instead of its name."),
+    (("error(13)", "Permission denied"),
+     "The NAS turned down the username or password when Riparr tried to connect the share. "
+     "Check the account can open this share, and re-enter the password if it changed."),
+    (("error(2)", "No such file"),
+     "The NAS says there is no share by that name. Check the first part of the path after "
+     "the machine name — that part must be a share the NAS offers, not a folder inside one."),
+    (("error(95)", "error(112)", "Dialect", "Operation not supported", "Host is down"),
+     "The NAS answered, but it and Riparr could not agree on a version of Windows file "
+     "sharing (SMB). If the NAS has an SMB setting, turn on SMB 2 or 3."),
+    (("error(110)", "error(115)", "error(113)", "timed out", "No route"),
+     "The NAS did not answer. It may be asleep, off, or on a different network."),
+    (("error(111)", "Connection refused"),
+     "The NAS refused the connection. Windows file sharing (SMB) may be turned off on it."),
+)
+
+
+def mount_reason(error):
+    """A sentence for a mount.cifs error, or None when there is nothing to explain."""
+    if not error:
+        return None
+    for needles, sentence in _MOUNT_REASONS:
+        if any(n in error for n in needles):
+            return sentence
+    return "The share would not connect: " + error.strip()
+
+
 def library_status(share=None):
     """What the interface needs to say about direct-to-library writing."""
     mount = library_mount(share)
@@ -726,7 +792,15 @@ def library_status(share=None):
             free = st.f_bavail * st.f_frsize
         except OSError:
             free = None
-    return {"mount": mount, "mounted": mounted, "free_bytes": free}
+    out = {"mount": mount, "mounted": mounted, "free_bytes": free}
+    last = mount_status().get(int(share["id"])) if share and share.get("id") else None
+    if last:
+        out["smb"] = last["smb"]
+        out["checked_at"] = last["at"]
+        if not mounted:
+            out["error"] = last["error"]
+            out["reason"] = mount_reason(last["error"])
+    return out
 
 
 # ─────────────────────── how fast is this card, really? ───────────────────────

@@ -34,7 +34,7 @@ import hostos
 # against releases tagged v0.1.x, which made every update check answer "you are up to
 # date" for ever -- a self-update that never fires is indistinguishable from one that
 # was never built. release.yml now fails if these three ever drift apart.
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI = os.path.join(HERE, "ui")
@@ -171,7 +171,18 @@ class Bridge:
         self.nosleep = NoSleep()
 
     # ── initial state ──
+    def log(self, message):
+        """A line from the window, for preparer-log.txt.
+
+        The page reports its own errors here, and that it booted. When somebody says the
+        window is blank, the difference between "JavaScript never ran", "it ran and
+        threw", and "it ran fine and nothing was drawn" is the whole diagnosis.
+        """
+        print("ui: %s" % str(message)[:2000], flush=True)
+        return True
+
     def boot(self):
+        print("boot: asked", flush=True)
         pw, generated = core.ensure_password(self.assets)
         # Generate the box's SSH keypair now if it does not exist, so both the card
         # write (which embeds the public half) and the setup-over-SSH path (which needs
