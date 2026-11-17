@@ -197,7 +197,9 @@ def delete_log_files():
     Deleting the live files out from under an open RotatingFileHandler leaves it writing
     to an unlinked inode, and the log silently stops appearing on disk.
     """
-    live = {"riparr.txt", "riparr.debug.txt"}
+    # mount.txt is root's, trimmed by the mount script itself, and the one log that says
+    # why a share will not connect -- not a rotation to tidy away.
+    live = {"riparr.txt", "riparr.debug.txt", "mount.txt"}
     n = 0
     for f in log_files():
         if f["name"] in live:
