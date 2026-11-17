@@ -358,6 +358,25 @@ DEFAULTS = {
     "smtp_password": "",
     "smtp_from": "",
     "smtp_to": "",
+    # MQTT: the box's state on a broker, continuously, for Home Assistant and friends.
+    # Off until a broker is named; see mqtt.py for the topics.
+    "mqtt_enabled": False,
+    "mqtt_host": "",
+    "mqtt_port": 1883,
+    "mqtt_tls": False,
+    "mqtt_tls_insecure": False,
+    "mqtt_username": "",
+    "mqtt_password": "",
+    # Empty means riparr/<hostname>, so two boxes on one broker do not collide.
+    "mqtt_base_topic": "",
+    "mqtt_discovery": True,
+    "mqtt_discovery_prefix": "homeassistant",
+    # How long job/state says "done" after a rip finishes, before it goes back to
+    # "idle". A new disc ends it sooner. 0 skips "done" altogether.
+    "mqtt_done_seconds": 600,
+    # The prefix Home Assistant discovery was last announced under, so it can be
+    # taken back. Written by mqtt.py, not by a person.
+    "mqtt_discovery_published": "",
     "makemkv_key": "",
     # Resolved from whichever source answered, and only ever the expiry of the key this
     # box actually holds -- see makemkv._record_expiry. Durable, so the countdown keeps
@@ -467,6 +486,18 @@ def init():
         c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
                   ("on_season_disc", json.dumps("unsure")))
     c.commit()
+
+
+# State about *this* box that a backup or an export from another moment must not
+# overwrite. The cookie key is one. What is retained on the MQTT broker is another: put
+# back an older value and the box forgets entities it announced, and can never delete them.
+NOT_RESTORED = ("session_secret", "mqtt_discovery_published")
+
+# Left out of a backup and of an export, like the share passwords are: both are files
+# that get downloaded and mailed around. With the Mosquitto add-on the broker login is a
+# Home Assistant account, which is more than a file like that should be carrying. It is
+# typed in again after a restore.
+NOT_BACKED_UP = ("mqtt_password",)
 
 
 def get(key, default=None):

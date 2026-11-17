@@ -301,6 +301,77 @@ settings.
 enable above still posts to the channel; only these light up your phone. *A rip
 finished* is off by default because it is good news, and good news can wait.
 
+## MQTT
+
+*Settings → Connect → MQTT*
+
+Notifications tell you something happened. MQTT says what the box is doing, all the
+time, to a broker — so Home Assistant, Node-RED or a script of your own can decide what
+that is worth: a phone notification when the tray opens, a light while a disc is being
+read, a dashboard tile with the progress.
+
+| Setting | Notes |
+|---|---|
+| **Publish to an MQTT broker** | Off by default. Nothing is sent until this is on and a broker is named |
+| **Broker**, **Port** | A name or IP address. 1883 normally, 8883 with TLS |
+| **Username**, **Password** | Only if your broker asks for them. The password is left out of backups and exports, and is entered again after a restore |
+| **Use TLS** | Encrypts the connection. **Accept a self-signed certificate** is for a broker with a certificate of its own making — still encrypted, but its identity is not checked |
+| **Base topic** | Everything is published beneath it. Empty means `riparr/<hostname>`. With more than one box on a broker, give each its own |
+| **Home Assistant discovery** | On by default. The box appears in Home Assistant by itself as one device. Turning it off removes the entities again |
+| **Discovery prefix** | `homeassistant`, unless you changed it in Home Assistant |
+| **Show "done" for (seconds)** | How long `job/state` reads `done` after a rip finishes, before it goes back to `idle`. 600 by default. A new disc ends it sooner; 0 skips `done` |
+
+**Save and test the connection** saves what is on screen, connects once and tells you
+what the broker said — a wrong password and a wrong port give different answers. The
+badge beside the heading says whether the box is connected right now. A broker that
+goes away is retried by itself.
+
+### What is published
+
+Every value has its own topic, and all of them are retained: a client sees the current
+state the moment it subscribes. A value with nothing to report is the word `None`.
+
+| Topic | Value |
+|---|---|
+| `availability` | `online`, or `offline` — also if the box loses power |
+| `job/state` | `idle`, `queued`, `identifying`, `ripping`, `transferring`, `verifying`, `needs_input`, `done`, `failed` |
+| `job/title` | What is being ripped |
+| `job/progress` | 0–100, through the current stage. 0 when idle, 100 when done |
+| `job/attributes` | JSON: the job's id, kind, phase, time remaining and error, and how many earlier rips are still uploading |
+| `autorip/state` | `ON` or `OFF` |
+| `drive/detected`, `drive/disc_present` | `ON` or `OFF` |
+| `drive/disc_type` | `dvd`, `bluray`, `uhd` or `cd` |
+| `drive/attributes` | JSON: the drive's vendor and model, the tray's state, the disc's label |
+| `system/health` | `ok`, `warning` or `error` — the Health table on System → Status. `system/attributes` lists the problems |
+| `system/cpu_temperature` | °C |
+| `storage/free`, `storage/total` | GiB on the card |
+| `library/state` | `ready`, `error` or `not_configured`. `library/attributes` says which share and what is wrong |
+| `library/free` | GiB free on the share, when it is mounted |
+| `network/connected`, `network/ssid`, `network/signal`, `network/ip` | The Wi-Fi link |
+| `update/available` | `ON` when a newer Riparr is published. `update/state` carries both version numbers |
+
+`done` stays on `job/state` for the time set above, then gives way to `idle`. `failed`
+stays until the next disc goes in, so an automation that looks
+a minute late still sees it. The job in the drive is the one reported; a rip that has
+given its disc back and is still uploading is reported once the drive is free.
+
+### What it listens for
+
+| Topic | Send | Does |
+|---|---|---|
+| `autorip/set` | `ON` or `OFF` | The Auto Rip switch. `ON` is refused, exactly as on the page, while Auto Rip's checklist has a red row |
+| `drive/eject` | anything | Opens the tray — unless a rip is using the disc |
+
+Anybody who may publish to your broker can send these. Retained messages are ignored,
+so a command left behind on the broker is not obeyed again on every reconnect.
+
+### In Home Assistant
+
+With discovery on there is nothing to configure: a **Riparr** device appears under
+*Settings → Devices & services → MQTT* with a sensor for each topic above, an **Auto
+Rip** switch, an **Eject disc** button and an update entity. An automation for "the
+disc is out, put the next one in" is a trigger on the **Disc** sensor turning off.
+
 ## History
 
 Every attempt, newest first — one row per try, not one per film. If a disc took five
