@@ -132,14 +132,12 @@ if ! id -u "$RIPARR_USER" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir /var/lib/"$RIPARR_USER" \
           --shell /usr/sbin/nologin "$RIPARR_USER"
 fi
-# The optical drive is root:cdrom, vcgencmd (temperature, throttling) needs video, and
-# the status LED writes to /dev/spidev* which is root:spi. Each group is added only if
-# it exists: `spi` is absent until SPI is enabled in the device tree, and a box with no
-# LED must still install cleanly.
+# The optical drive is root:cdrom, and vcgencmd (temperature, throttling) needs video.
+# Each group is added only if it exists.
 # netdev is new: wpa_supplicant's control socket is GROUP=netdev, and without it the
 # service cannot scan for networks or ask the supplicant to re-read its config. It
 # still cannot *write* the config -- that goes through the root bridge below.
-for g in cdrom video spi gpio netdev; do
+for g in cdrom video gpio netdev; do
   getent group "$g" >/dev/null && usermod -aG "$g" "$RIPARR_USER"
 done
 install -d -o "$RIPARR_USER" -g "$RIPARR_USER" "$DATA_DIR"

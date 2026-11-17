@@ -1407,7 +1407,7 @@ code.block {
 .test-out { font-size: 12.5px; color: var(--fg-muted); }
 .test-out.ok { color: var(--ok); }
 .test-out.bad { color: var(--bad); }
-/* "There is no LED wired up" is neither success nor failure — it is the answer. */
+/* "Not installed yet" is neither success nor failure — it is the answer. */
 .test-out.warn { color: var(--warn); }
 .warn-text { color: var(--warn); }
 .btn.sm { font-size: 11.5px; padding: 4px 10px; }
