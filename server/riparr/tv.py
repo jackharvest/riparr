@@ -92,6 +92,14 @@ PLAY_ALL_RATIO = 2.5
 # so they come in somewhat short; a film is nowhere near the sum of its featurettes.
 PLAY_ALL_SUM_LOW, PLAY_ALL_SUM_HIGH = 0.80, 1.10
 
+# A play-all that adds up only once a title or two of another length are counted in --
+# a half-hour special among seven-minute episodes. Tighter than the band above, and
+# only for a real season's worth of episodes, because counting extra titles in is
+# exactly how a film and its featurettes could add up by chance. See `_odd_in_play_all`.
+ODD_SUM_LOW, ODD_SUM_HIGH = 0.95, 1.05
+ODD_MIN_EPISODES = 4
+ODD_MAX_TITLES = 2
+
 # Past this, one title is not one film. See `looks_like_blob`.
 BLOB_MIN_SECONDS = 12600
 
@@ -370,6 +378,36 @@ def _really_plays_all(play_all, episodes, by_length=True):
                             <= PLAY_ALL_SUM_HIGH * total)
 
 
+def _odd_in_play_all(play_all, rough, candidates):
+    """Indices of the few odd-length titles that make up a DVD play-all's missing length.
+
+    A season disc can carry one long episode or special beside its normal ones: 23
+    seven-minute episodes and one of half an hour, with a play-all that runs all 24.
+    Measured against the cluster alone, that play-all came out 17% long, so the disc
+    read as a film with featurettes, and every title was filed as a bonus feature.
+    Counting the odd one in, the sum matched to the second.
+
+    Only for a disc with no segment map (a Blu-ray says what its play-all holds), only
+    for a real cluster and a title or two beside it, and only for a close match: a film
+    beside its featurettes can land within the loose band by chance, and much less often
+    within this one. Empty when any of that doesn't hold.
+    """
+    if not play_all or _dedup_signal(candidates) or len(rough) < ODD_MIN_EPISODES:
+        return []
+    if _really_plays_all(play_all, rough):
+        return []
+    inside = {t["index"] for t in rough}
+    odd = [t for t in candidates
+           if t["index"] != play_all["index"] and t["index"] not in inside
+           and t["seconds"] < play_all["seconds"]]
+    if not odd or len(odd) > ODD_MAX_TITLES:
+        return []
+    total = sum(t["seconds"] for t in rough) + sum(t["seconds"] for t in odd)
+    if not ODD_SUM_LOW * total <= play_all["seconds"] <= ODD_SUM_HIGH * total:
+        return []
+    return [t["index"] for t in odd]
+
+
 def _order_by_segments(episodes, play_all):
     """Order the episodes the way the play-all plays them, or None if it can't say.
 
@@ -515,7 +553,8 @@ def analyse(titles, min_seconds=120):
     if len(rough) < MIN_EPISODES:
         return None
     play_all = _find_play_all(candidates, _median([t["seconds"] for t in rough]))
-    if play_all and not _really_plays_all(play_all, _dedup(rough)):
+    odd = _odd_in_play_all(play_all, rough, candidates)
+    if play_all and not odd and not _really_plays_all(play_all, _dedup(rough)):
         # Something long that is not the episodes strung together. Longer than every
         # "episode" put together, it is the reason the disc exists -- a film, and the
         # cluster is its featurettes. Shorter, it is a bonus feature sitting on a real
@@ -666,6 +705,9 @@ def analyse(titles, min_seconds=120):
     chosen = {t["index"] for t in ordered}
     if play_all:
         chosen.add(play_all["index"])
+    # Titles that accounted for the play-all's missing length must not come back as
+    # numbered episodes -- the guide doesn't count them -- so they stay extras.
+    odd = [i for i in odd if i not in chosen]
     # Duplicate playlists and compilations are the episodes again, not extras. Listed
     # as extras, the six "without the trailer" copies of a season appeared as six
     # forty-minute bonus features -- harmless while extras could only be looked at, and
@@ -688,6 +730,7 @@ def analyse(titles, min_seconds=120):
         "doubles": [t["index"] for t in doubles],
         "unsure_doubles": unsure_doubles,
         "outside_play_all": [t["index"] for t in outside],
+        "odd_in_play_all": odd,
         "beyond_play_all": beyond,
         "order_source": order_source,
         "confidence": confidence or ORDER_TRUST[order_source],
@@ -1472,6 +1515,13 @@ def plan_warnings(plan, found, episode_list=None):
                    "placed by where %s on the disc, which continues the same order."
                    % (n, "" if n == 1 else "s", "is" if n == 1 else "are",
                       "it sits" if n == 1 else "they sit"))
+    for idx in found.get("odd_in_play_all") or []:
+        secs = next((x.get("seconds", 0) for x in found.get("extras") or []
+                     if x["index"] == idx), 0)
+        out.append("Title %d is part of the “play all” but runs %d min, unlike "
+                   "the other episodes — probably a special or a long episode the "
+                   "guide numbers separately. It's ticked under extras; rename it or "
+                   "untick it there." % (idx, round(secs / 60.0)))
     for idx in found.get("outside_play_all") or []:
         secs = next((x.get("seconds", 0) for x in found.get("extras") or []
                      if x["index"] == idx), 0)

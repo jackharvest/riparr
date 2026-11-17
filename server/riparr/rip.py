@@ -1928,6 +1928,7 @@ def _identify_season(job, s, d, titles, remembered):
     # A neighbour that had to be renumbered by hand says the set isn't in guide order,
     # so counting on from it is a guess: hold this disc too.
     carried = (bool(neighbour) and continued and not found.get("unsure_doubles")
+               and not found.get("odd_in_play_all")
                and not _renumbered_by_hand(neighbour))
     if moved_from is not None:
         plan["warnings"].insert(0, (
@@ -1946,8 +1947,10 @@ def _identify_season(job, s, d, titles, remembered):
                        "name": ("Season %d Extra %d" % (season, n) if season is not None
                                 else "Extra %d" % n), "state": "pending"}
                       for n, t in enumerate(found["extras"], 1)]
-    if s.get("tv_extras") == "all":
-        for x in plan["extras"]:
+    odd = set(found.get("odd_in_play_all") or [])
+    for x in plan["extras"]:
+        # Part of the play-all, so part of the season: ticked, so it isn't lost.
+        if s.get("tv_extras") == "all" or x["title_index"] in odd:
             x["include"] = True
     for row in plan["episodes"]:
         row["state"] = "pending"

@@ -178,6 +178,26 @@ check("a DVD premiere and two episodes are not a film",
 f_d2 = tv.analyse(DVD_FOUR, FLOOR)
 check("a four-episode DVD keeps all four episodes",
       ([e["index"] for e in f_d2["episodes"]], f_d2["duplicates"]), ([0, 1, 2, 3], []))
+print("a DVD play-all that adds up only with one long episode counted in")
+SHORT_EPS = [dvd(i, 440 + (31 if i == 5 else 63 if i == 9 else 0), "1,2", 2) for i in range(1, 24)]
+LONG_ONE = dvd(24, 1781, "1-6,7", 7)
+PA_SUM = sum(e["seconds"] for e in SHORT_EPS) + LONG_ONE["seconds"]
+DVD_ODD = [dvd(0, PA_SUM, ",".join(str(n) for n in range(1, 31)), 30)] + SHORT_EPS + [LONG_ONE]
+f_odd = tv.analyse(DVD_ODD, FLOOR)
+check("is a season, not a film with featurettes",
+      f_odd and ([e["index"] for e in f_odd["episodes"]], f_odd["play_all"]["index"],
+                 f_odd["odd_in_play_all"], [x["index"] for x in f_odd["extras"]]),
+      (list(range(1, 24)), 0, [24], [24]))
+check("and the long one is explained",
+      any("Title 24 is part of" in w for w in tv.plan_warnings(
+          tv.build_plan(f_odd, season=1, first_episode=1), f_odd)), True)
+OFF = [dvd(0, int(PA_SUM * 1.12), ",".join(str(n) for n in range(1, 31)), 30)] + SHORT_EPS + [LONG_ONE]
+check("but not when it's well off the sum", tv.analyse(OFF, FLOOR) is None or
+      tv.analyse(OFF, FLOOR)["odd_in_play_all"] == [], True)
+FILM_FEATS = [dvd(0, 5640, "1,2,3,4,5,6,7,8,9,10,11,12", 12)] + [
+    dvd(i, 900 + i * 7, "1,2", 2) for i in range(1, 4)] + [dvd(9, 1500, "1,2,3", 3)]
+check("and a film with a few featurettes stays a film", tv.analyse(FILM_FEATS, FLOOR), None)
+
 check("the disc's own label is read", tv.season_from_label("EXS1D1"), (1, 1))
 check("and the show's name kept", tv.series_name_from_label("EXS1D1"), "Ex")
 check("a lone S1 inside a word is not a season", tv.season_from_label("CLASS1"), (None, None))
