@@ -1702,7 +1702,13 @@ def _identify_season(job, s, d, titles, remembered):
     named_season, named_disc = tv.season_from_label(disc_name)
     season = season if season is not None else named_season
     disc_no = disc_no if disc_no is not None else named_disc
-    if remembered.get("season") is not None:
+    # A remembered season is a correction only once the disc was filed with it. The rip
+    # itself records the season it proposed, before anyone has answered, so a disc that
+    # was misread and then skipped remembered the misreading: a season disc sent to the
+    # Season 0 safety net once came back as Season 0 every time after, over a label that
+    # said Season 3. An answer always ends in a filing, which is what sets `ripped_at`.
+    if remembered.get("season") is not None and (
+            season is None or remembered.get("ripped_at")):
         season = remembered["season"]
 
     # Another disc of this box set, already filed, has settled what this show is. The

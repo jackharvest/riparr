@@ -831,6 +831,14 @@ db.record_disc("fp-CARRY_SHOW_S01_D03", series_id=79, season=1, series_name="Car
 c3 = run_all(new_job("CARRY_SHOW_S01_D03"))
 check("a memory that agrees is carried, not held",
       (c3["state"], db.episode_plan(c3)["episodes"][0]["episode"]), ("done", last2 + 1))
+last3 = max(e["episode_last"] for e in db.episode_plan(c3)["episodes"])
+# What a rip records on its own: the season it proposed, never filed (no ripped_at).
+db.record_disc("fp-CARRY_SHOW_S01_D04", series_id=79, season=0, series_name="Carry Show",
+               first_episode=40)
+c4 = run_all(new_job("CARRY_SHOW_S01_D04"))
+p4 = db.episode_plan(c4)
+check("an unfiled remembered season gives way to the label's",
+      (p4["season"], p4["episodes"][0]["episode"]), (1, last3 + 1))
 (rip.tv.search_series, rip.tv.episodes, rip.tv.dvd_order) = _saved
 os.environ.pop("RIPARR_MOCK_DISC")
 db.set("tv_metadata", False)
