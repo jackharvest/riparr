@@ -408,6 +408,47 @@ def _odd_in_play_all(play_all, rough, candidates):
     return [t["index"] for t in odd]
 
 
+# A DVD title's output name is its title set and program chain: "C6_t02.mkv" is the
+# sixth programme of title set C. Cell numbers are shared within a title set.
+_DVD_PGC = re.compile(r"^([A-Z]+)(\d+)_t\d+\.mkv$")
+# A repeat is a cut of an episode, not a play-all of several: no more than this much
+# shorter than the episode it is cut from.
+REPEAT_MAX_RATIO = 1.5
+
+
+def _dvd_repeats(titles, floor):
+    """{index: index of the episode it repeats} for DVD titles that play part of another
+    title's cells -- the same episode again, cut down.
+
+    `analyse` drops DVD cell maps because they don't compare across titles. They do
+    within a title set: a season set put each episode in its own title set, then a
+    shorter second copy of three of them (no title card, a few scenes cut) beside them,
+    playing cells 4-12 of the episode's 1-12. With nothing to say so, each copy was
+    numbered as the next episode, and every number after it was one too high.
+
+    Only a strict subset that starts past the set's first cell counts. Episodes that
+    each have their own VOB all read "1,2" in one title set -- a cell number names a
+    cell within its VOB -- and must not be taken for copies of each other.
+    """
+    sets = {}
+    for t in titles:
+        m = _DVD_PGC.match(t.get("file") or "")
+        cells = set(parse_segments(t.get("segments")))
+        if m and cells and not t.get("source") and t.get("seconds", 0) >= floor:
+            sets.setdefault(m.group(1), []).append((t, cells))
+    out = {}
+    for members in sets.values():
+        for t, cells in members:
+            if min(cells) <= 1:
+                continue
+            for o, ocells in members:
+                if (o is not t and cells < ocells and o["seconds"] > t["seconds"]
+                        and o["seconds"] <= REPEAT_MAX_RATIO * t["seconds"]):
+                    out[t["index"]] = o["index"]
+                    break
+    return out
+
+
 def _order_by_segments(episodes, play_all):
     """Order the episodes the way the play-all plays them, or None if it can't say.
 
@@ -522,10 +563,14 @@ def analyse(titles, min_seconds=120):
     # ones and "overlaps" the rest, which collapsed a premiere-and-two-episodes disc into
     # a film and a four-episode disc into two episodes. So those maps are
     # dropped here and the disc is treated as having told us nothing.
+    floor = max(int(min_seconds or 0), SHORT_EPISODE_MIN_SECONDS)
+    # Except within one title set, where they show a cut-down copy of an episode. Read
+    # before the maps go; a copy is left out of the episodes and offered as an extra.
+    repeats = _dvd_repeats(titles, floor)
     titles = [dict(t, segments="") if t.get("segments") and not t.get("source") else t
               for t in titles]
-    floor = max(int(min_seconds or 0), SHORT_EPISODE_MIN_SECONDS)
-    candidates = [t for t in titles if t.get("seconds", 0) >= floor]
+    candidates = [t for t in titles if t.get("seconds", 0) >= floor
+                  and t["index"] not in repeats]
     if len(candidates) < MIN_EPISODES:
         return None
     # Segments every other title starts with -- a studio logo, a one-second bumper --
@@ -731,6 +776,7 @@ def analyse(titles, min_seconds=120):
         "unsure_doubles": unsure_doubles,
         "outside_play_all": [t["index"] for t in outside],
         "odd_in_play_all": odd,
+        "repeats": repeats,
         "beyond_play_all": beyond,
         "order_source": order_source,
         "confidence": confidence or ORDER_TRUST[order_source],
@@ -1545,6 +1591,10 @@ def plan_warnings(plan, found, episode_list=None):
                    % (n, "" if n == 1 else "s", "is" if n == 1 else "are",
                       "it sits" if n == 1 else "they sit"))
     matched = specials_for(found, episode_list)
+    for idx, of in sorted((found.get("repeats") or {}).items()):
+        out.append("Title %d is a shorter copy of title %d: it plays part of the same "
+                   "scenes. It's left out of the episodes and offered, unticked, under "
+                   "extras." % (idx, of))
     for idx in found.get("odd_in_play_all") or []:
         secs = next((x.get("seconds", 0) for x in found.get("extras") or []
                      if x["index"] == idx), 0)

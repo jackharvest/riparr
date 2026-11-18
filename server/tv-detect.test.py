@@ -211,6 +211,42 @@ FILM_FEATS = [dvd(0, 5640, "1,2,3,4,5,6,7,8,9,10,11,12", 12)] + [
     dvd(i, 900 + i * 7, "1,2", 2) for i in range(1, 4)] + [dvd(9, 1500, "1,2,3", 3)]
 check("and a film with a few featurettes stays a film", tv.analyse(FILM_FEATS, FLOOR), None)
 
+print("a shorter copy of an episode in the same DVD title set is a repeat (real discs)")
+def pgc(i, seconds, file, segments, chapters=7):
+    return dict(dvd(i, seconds, segments, chapters), file=file)
+# Two discs of one set: each episode in its own title set, and three of them followed
+# by a cut-down copy (no title card, a few scenes gone) playing part of its cells.
+REP3 = [pgc(0, 1513, "B1_t00.mkv", "1-8,9"), pgc(1, 1592, "C1_t01.mkv", "1-11,12"),
+        pgc(2, 1485, "C6_t02.mkv", "4-11,12", 4), pgc(3, 1590, "D1_t03.mkv", "1-10,11"),
+        pgc(4, 403, "D6_t04.mkv", "8-10,11", 3), pgc(5, 1574, "E1_t05.mkv", "1-11,12"),
+        pgc(6, 1608, "F1_t06.mkv", "1-10,11"), pgc(7, 219, "F7_t07.mkv", "9-10,11", 2),
+        pgc(8, 1566, "G1_t08.mkv", "1-8,9"),
+        pgc(9, 6269, "A1_t09.mkv", "1-8,9-19,20-29,30-40,41", 26),
+        pgc(10, 156, "M1_t10.mkv", "1-3,4", 4)]
+REP4 = [pgc(0, 1568, "B1_t00.mkv", "1-11,12"), pgc(1, 1540, "B7_t01.mkv", "3-11,12", 5),
+        pgc(2, 1573, "C1_t02.mkv", "1-10,11"), pgc(3, 1343, "C7_t03.mkv", "4-10,11", 4),
+        pgc(4, 1571, "D1_t04.mkv", "1-11,12"), pgc(5, 307, "D6_t05.mkv", "10-11,12", 2),
+        pgc(6, 1558, "E1_t06.mkv", "1-9,10"), pgc(7, 1570, "F1_t07.mkv", "1-9,10"),
+        pgc(8, 1556, "G1_t08.mkv", "1-11,12"), pgc(9, 360, "G7_t09.mkv", "9-11,12", 2),
+        pgc(10, 4712, "A1_t10.mkv", "1-11,12-21,22-32,33", 21)]
+f_r3, f_r4 = tv.analyse(REP3, FLOOR), tv.analyse(REP4, FLOOR)
+check("the copy isn't an episode",
+      ([e["index"] for e in f_r3["episodes"]], f_r3["repeats"]), ([0, 1, 3, 5, 6, 8], {2: 1}))
+check("two copies on one disc",
+      ([e["index"] for e in f_r4["episodes"]], f_r4["repeats"]),
+      ([0, 2, 4, 6, 7, 8], {1: 0, 3: 2}))
+check("a copy is offered as an extra", 2 in [x["index"] for x in f_r3["extras"]], True)
+check("and the warning names what it copies",
+      any("Title 2 is a shorter copy of title 1" in w for w in tv.plan_warnings(
+          tv.build_plan(f_r3, season=1, first_episode=1), f_r3)), True)
+# Episodes that each have their own VOB all read "1,2" in one title set: a cell number
+# names a cell within its VOB, so equal or nested maps there are not copies.
+SAME_SET = [pgc(i, 440 + i, "C%d_t%02d.mkv" % (i + 1, i), "1,2", 2) for i in range(6)] + [
+    pgc(6, 470, "C7_t06.mkv", "1-3,4", 3)]
+f_ss = tv.analyse(SAME_SET, FLOOR)
+check("episodes sharing a title set aren't copies of each other",
+      (len(f_ss["episodes"]), f_ss["repeats"]), (7, {}))
+
 check("the disc's own label is read", tv.season_from_label("EXS1D1"), (1, 1))
 check("and the show's name kept", tv.series_name_from_label("EXS1D1"), "Ex")
 check("a lone S1 inside a word is not a season", tv.season_from_label("CLASS1"), (None, None))

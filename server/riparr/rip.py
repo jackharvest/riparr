@@ -1980,6 +1980,7 @@ def _identify_season(job, s, d, titles, remembered):
     # so counting on from it is a guess: hold this disc too.
     carried = (bool(neighbour) and continued and not found.get("unsure_doubles")
                and not found.get("odd_in_play_all")
+                   and not found.get("repeats")
                and not _renumbered_by_hand(neighbour))
     if moved_from is not None:
         plan["warnings"].insert(0, (
