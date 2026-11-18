@@ -1313,6 +1313,8 @@ function episodeRow(e, i, total) {
              placeholder="${span ? "Two episodes in one file" : "No name"}">
       <span class="ep-src muted">${esc(e.source || `Title ${e.title_index}`)}</span>
       <span class="ep-move">
+        <button class="btn tiny" data-special="${e.title_index}"
+                title="File as a special (Season 00), outside the numbering">S00</button>
         <button class="btn tiny" data-up="${e.title_index}" ${i === 0 ? "disabled" : ""}
                 title="Move earlier">↑</button>
         <button class="btn tiny" data-down="${e.title_index}"
@@ -4282,6 +4284,12 @@ function wireContent(section, sub) {
       return;
     }
     const picked = ($("#ep-series") || {}).value;
+    const specials = {};
+    rows.forEach(r => {
+      if (r.dataset.special && r.querySelector(".ep-keep").checked) {
+        specials[r.dataset.ti] = Number(r.dataset.special);
+      }
+    });
     const extras = {};
     $$("#ep-extras .ep-extra").forEach(r => {
       if (r.querySelector(".ep-keep").checked) {
@@ -4291,7 +4299,7 @@ function wireContent(section, sub) {
     const body = {
       season: Number(season),
       first_episode: Number(($("#ep-first") || {}).value || 1),
-      include, order, episode_titles: titles, extras,
+      include, order, episode_titles: titles, extras, specials,
       name: (($("#ep-name") || {}).value || "").trim(),
     };
     if (picked) body.series_id = Number(picked);
@@ -4334,7 +4342,7 @@ function wireContent(section, sub) {
     const covered = Object.keys(dvd).length && (() => {
       let p = n;
       return all.every(r => {
-        if (!r.querySelector(".ep-keep").checked) return true;
+        if (!r.querySelector(".ep-keep").checked || r.dataset.special) return true;
         const sp = r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
         const ok = [...Array(sp).keys()].every(k => dvd[p + k]);
         p += sp;
@@ -4347,6 +4355,10 @@ function wireContent(section, sub) {
       const cell = r.querySelector(".ep-num");
       r.classList.toggle("dropped", !keep);
       if (!keep) { cell.textContent = "—"; }
+      else if (r.dataset.special) {
+        // Outside the numbering: the episodes after it keep their own numbers.
+        cell.textContent = `S00E${String(r.dataset.special).padStart(2, "0")}`;
+      }
       else {
         const a = covered && dvd[n], b = covered && dvd[n + span - 1];
         const input = r.querySelector(".ep-title");
@@ -4367,6 +4379,29 @@ function wireContent(section, sub) {
       r.querySelector("[data-down]").disabled = i === all.length - 1;
     });
   };
+  /* A pilot or unaired episode on a season disc is a special. Counted as an episode it
+     moves every number after it one along -- and the next disc with them. */
+  $$("[data-special]").forEach(b => b.onclick = () => {
+    const r = b.closest(".ep-row");
+    const t = r.querySelector(".ep-title");
+    if (r.dataset.special) {
+      delete r.dataset.special;
+      b.classList.remove("on");
+      if (t.value === t.dataset.orig) { t.value = ""; t.dataset.orig = ""; }
+    } else {
+      const n = prompt("File this title as which special? (Season 00 episode number)", "1");
+      if (n === null) return;
+      if (!/^\d+$/.test(n.trim()) || Number(n) < 1) {
+        toast("A special's number is a whole number from 1.", "bad");
+        return;
+      }
+      r.dataset.special = String(Number(n));
+      b.classList.add("on");
+      // Untouched, the box names it from the guide's Season 00.
+      if (t.value === t.dataset.orig) { t.value = ""; t.dataset.orig = ""; }
+    }
+    renumberRows();
+  });
   $$("[data-up]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.up), -1));
   $$("[data-down]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.down), 1));
   $$("#ep-rows .ep-keep").forEach(c => c.onchange = renumberRows);

@@ -1393,6 +1393,7 @@ class DiscAnswer(BaseModel):
     episode_titles: Dict[str, str] = None   # title index -> a name typed by hand
     order: List[int] = None             # title indexes, in the order they should go
     extras: Dict[str, str] = None       # extras to rip: title index -> what to call it
+    specials: Dict[str, int] = None     # episode rows filed as specials: index -> S00 number
     as_film: bool = False               # a held season plan, filed as a film instead
 
 
@@ -1407,7 +1408,8 @@ def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
                              season=body.season, first_episode=body.first_episode,
                              series_id=body.series_id, include=body.include,
                              episode_titles=body.episode_titles, order=body.order,
-                             extras=body.extras, as_film=body.as_film)
+                             extras=body.extras, as_film=body.as_film,
+                             specials=body.specials)
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"ok": True, "message": message}

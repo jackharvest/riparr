@@ -437,7 +437,7 @@ def cancel(job_id):
 
 def answer(job_id, title_index=None, name=None, skip=False, season=None,
            first_episode=None, series_id=None, include=None, episode_titles=None,
-           order=None, extras=None, as_film=False):
+           order=None, extras=None, as_film=False, specials=None):
     """Resolve a `needs_input` job -- the other half of `on_unknown_disc: ask`.
 
     The answer is written to the disc record as well as the job, because the whole
@@ -478,7 +478,7 @@ def answer(job_id, title_index=None, name=None, skip=False, season=None,
         proposed = plan.get("series") or ""
         plan, message = _apply_season_answer(job, plan, season, first_episode,
                                              series_id, include, episode_titles, order,
-                                             extras)
+                                             extras, specials)
         if message:
             return False, message
         # The page always sends the folder-name box. Edited, it is the folder; unedited
@@ -524,7 +524,7 @@ def answer(job_id, title_index=None, name=None, skip=False, season=None,
 
 
 def _apply_season_answer(job, plan, season, first_episode, series_id, include,
-                         episode_titles, order, extras=None):
+                         episode_titles, order, extras=None, specials=None):
     """Fold a human's corrections into a stored season plan. Returns (plan, error).
 
     Renumbering happens *after* reordering and after the inclusion list is applied, so
@@ -602,10 +602,6 @@ def _apply_season_answer(job, plan, season, first_episode, series_id, include,
     # by the numbers just assigned. That is what makes "the disc doesn't start where
     # the guide does" a one-control fix: shift the start, and every episode picks up
     # the name that belongs to its new number.
-    start = int(first_episode) if first_episode is not None else None
-    if start is None:
-        kept = [r for r in rows if r.get("include", True)]
-        start = db.row_span(kept[0])[0] if kept else 1
     for r in rows:
         if not r.get("include", True):
             r["state"] = "skipped"
@@ -618,6 +614,13 @@ def _apply_season_answer(job, plan, season, first_episode, series_id, include,
     episode_list, numbering = (_guide(plan["series_id"], db.get("tmdb_api_key"))
                                if plan.get("series_id") and plan.get("season") is not None
                                else ([], ""))
+    if specials:
+        rows = _rows_to_specials(plan, rows, specials, episode_list, typed)
+        plan["episodes"] = rows
+    start = int(first_episode) if first_episode is not None else None
+    if start is None:
+        kept = [r for r in rows if r.get("include", True)]
+        start = db.row_span(kept[0])[0] if kept else 1
     if numbering:
         plan["numbering"] = numbering
     plan["guide_names"] = tv.guide_names(episode_list, plan.get("season"))
@@ -634,6 +637,46 @@ def _apply_season_answer(job, plan, season, first_episode, series_id, include,
                           typed=keep_names, fit_runtimes=numbering == "tmdb")
     plan["dvd_map"] = {str(k): v for k, v in dvd_map.items()} if used else {}
     return plan, None
+
+
+def _rows_to_specials(plan, rows, specials, episode_list, typed):
+    """Move the episode rows somebody marked as specials ({title index: S00 number})
+    out of the numbering and into the extras, as Season 00 episodes. Returns the rows
+    that are still episodes.
+
+    The case is a pilot or an unaired episode at the front of a season disc: counted as
+    an episode, it pushes every number after it one along, and the next disc with them.
+    Extras are what every piece of numbering already steps around, and an extra with a
+    `special` is filed as that S00 episode, so that is where the row goes. A name typed
+    on the row stays; otherwise the guide's name for that special, if it has one.
+    """
+    marked = {}
+    for k, v in specials.items():
+        try:
+            if int(v) >= 1:
+                marked[int(k)] = int(v)
+        except (TypeError, ValueError):
+            continue
+    guide = {int(e["number"]): e for e in episode_list or []
+             if e.get("season") == 0}
+    keep = []
+    for r in rows:
+        ti = int(r["title_index"])
+        if ti not in marked:
+            keep.append(r)
+            continue
+        n = marked[ti]
+        name = (r.get("episode_title") if ti in typed else "") \
+            or (guide.get(n) or {}).get("name") or "Special %d" % n
+        state = r.get("state") if r.get("state") in ("ripped", "done") else "pending"
+        x = {"title_index": ti, "seconds": r.get("seconds"), "bytes": r.get("bytes") or 0,
+             "extra": True, "include": True, "name": name, "state": state,
+             "special": {"season": 0, "episode": n}}
+        if r.get("path"):
+            x["path"] = r["path"]
+        plan["extras"] = [e for e in plan.get("extras") or []
+                          if int(e["title_index"]) != ti] + [x]
+    return keep
 
 
 # ────────────────────────── what this drive can do with this disc ──────────────────────────

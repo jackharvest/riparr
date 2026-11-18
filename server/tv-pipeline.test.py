@@ -641,6 +641,22 @@ _held, _err = rip._apply_season_answer({}, _held, 1, 1, 101, None,
 check("a new series renames what wasn't typed and keeps what was",
       (_err, _held["episodes"][0]["episode_title"], _held["episodes"][1]["episode_title"]),
       (None, "Typed By Hand", "EX 2"))
+# A pilot at the front of the disc, marked as a special: it leaves the numbering, so
+# the first real episode is E01, and it is filed as S00E01.
+_held = copy.deepcopy(p1)
+_t0, _n = _held["episodes"][0]["title_index"], len(_held["episodes"])
+_held, _err = rip._apply_season_answer({}, _held, 1, 1, 101, None, None, None,
+                                       specials={str(_t0): 1})
+_sp = [x for x in _held["extras"] if x["title_index"] == _t0]
+check("a row marked as a special leaves the numbering",
+      (_err, len(_held["episodes"]), _held["episodes"][0]["episode"],
+       _held["episodes"][0]["episode_title"]),
+      (None, _n - 1, 1, "EX 1"))
+check("and is filed as that special",
+      (_sp[0]["special"], _sp[0]["include"], _sp[0]["name"]),
+      ({"season": 0, "episode": 1}, True, "Special 1"))
+contains("named as S00E01",
+         rip._episode_name(d1, rip._settings(), _held, _sp[0]), " - S00E01 - Special 1.mkv")
 check("and filed under it, with its names",
       (send(d1["id"])["state"], db.episode_plan(db.get_job(d1["id"]))["series"],
        db.episode_plan(db.get_job(d1["id"]))["episodes"][0]["episode_title"]),
