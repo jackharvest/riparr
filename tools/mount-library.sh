@@ -220,7 +220,10 @@ PYEOF
   # `soft` so a NAS that goes away returns an error instead of wedging the rip in
   # uninterruptible sleep -- D4 says the cable gets pulled, and a hung mount is the one
   # state this appliance cannot recover from on its own.
-  BASE="credentials=$CRED,uid=$UID_R,gid=$GID_R,file_mode=0664,dir_mode=0775,soft,noatime"
+  # iocharset=utf8 because the kernel's default is often iso8859-1: a name with an
+  # accent was then written double-encoded ("SÃ©ance") -- right through this mount,
+  # wrong on the NAS and in every media server reading it.
+  BASE="credentials=$CRED,uid=$UID_R,gid=$GID_R,file_mode=0664,dir_mode=0775,soft,noatime,iocharset=utf8"
   ADDR=$(resolve "$HOST")
   if [ -z "$ADDR" ]; then
     log "could not find $HOST by DNS or by network name — rips bound for it will stage on the card instead"

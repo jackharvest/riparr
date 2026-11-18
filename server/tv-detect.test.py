@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from riparr import tv  # noqa: E402
-from riparr.rip import _mock_titles  # noqa: E402
+from riparr.rip import _mock_titles, _renumbered_by_hand  # noqa: E402
 
 GB = 2 ** 30
 FLOOR = 120                       # the shipped min_title_seconds
@@ -155,7 +155,102 @@ f_two = tv.analyse(TWO, FLOOR)
 check("two episodes", [e["index"] for e in f_two["episodes"]], [0, 1])
 check("and the 2x title is the play-all", f_two["play_all"]["index"], 2)
 TWO_DVD = [t(0, 44), t(1, 43.3), t(2, 85)]
-check("on a DVD too, by adding up", len(tv.analyse(TWO_DVD, FLOOR)["episodes"]), 2)
+f_two_dvd = tv.analyse(TWO_DVD, FLOOR)
+check("on a DVD length can't say, so the 2x title is kept rather than lost",
+      ([e["index"] for e in f_two_dvd["episodes"]], f_two_dvd["play_all"],
+       f_two_dvd["doubles"], f_two_dvd["unsure_doubles"]), ([0, 1, 2], None, [2], [2]))
+
+print("a DVD's segment maps are per title and say nothing across titles (real discs)")
+def dvd(i, seconds, segments, chapters=8):
+    return {"index": i, "seconds": seconds, "bytes": 2 * 10**9, "name": "", "file": "",
+            "source": "", "segments": segments, "chapters": chapters, "audio": 2}
+DVD_PREMIERE = [dvd(0, 5429, "1,2,3,4,5-7,8,9,10-12,13-14,15-16,17,18-19,20-22,23-24,25", 18),
+          dvd(1, 2718, "1,2-3,4-5,6-7,8,9,10-11,12,13"),
+          dvd(2, 2715, "1,2-3,4-5,6-7,8-9,10-11,12-13,14-15,16")]
+DVD_FOUR = [dvd(0, 2714, "1,2,3-4,5-6,7-9,10-11,12-13,14,15"),
+          dvd(1, 2716, "1,2,3-4,5-7,8-9,10-11,12-14,15,16"),
+          dvd(2, 2721, "1,2,3-5,6-7,8-10,11-12,13-14,15,16"),
+          dvd(3, 2709, "1,2,3-5,6-7,8,9-11,12-14,15,16")]
+f_d1 = tv.analyse(DVD_PREMIERE, FLOOR)
+check("a DVD premiere and two episodes are not a film",
+      ([e["index"] for e in f_d1["episodes"]], f_d1["play_all"], f_d1["doubles"], f_d1["duplicates"]),
+      ([0, 1, 2], None, [0], []))
+f_d2 = tv.analyse(DVD_FOUR, FLOOR)
+check("a four-episode DVD keeps all four episodes",
+      ([e["index"] for e in f_d2["episodes"]], f_d2["duplicates"]), ([0, 1, 2, 3], []))
+print("a DVD play-all that adds up only with one long episode counted in")
+SHORT_EPS = [dvd(i, 440 + (31 if i == 5 else 63 if i == 9 else 0), "1,2", 2) for i in range(1, 24)]
+LONG_ONE = dvd(24, 1781, "1-6,7", 7)
+PA_SUM = sum(e["seconds"] for e in SHORT_EPS) + LONG_ONE["seconds"]
+DVD_ODD = [dvd(0, PA_SUM, ",".join(str(n) for n in range(1, 31)), 30)] + SHORT_EPS + [LONG_ONE]
+f_odd = tv.analyse(DVD_ODD, FLOOR)
+check("is a season, not a film with featurettes",
+      f_odd and ([e["index"] for e in f_odd["episodes"]], f_odd["play_all"]["index"],
+                 f_odd["odd_in_play_all"], [x["index"] for x in f_odd["extras"]]),
+      (list(range(1, 24)), 0, [24], [24]))
+check("and the long one is explained",
+      any("Title 24 is part of" in w for w in tv.plan_warnings(
+          tv.build_plan(f_odd, season=1, first_episode=1), f_odd)), True)
+GUIDE_SP = [{"season": 1, "number": n, "name": "Ep %d" % n, "runtime": 7, "special": False}
+            for n in range(1, 24)] + [
+    {"season": 0, "number": 5, "name": "A Long One", "runtime": 28, "special": True},
+    {"season": 0, "number": 6, "name": "A Short One", "runtime": 7, "special": True}]
+check("the long one is filed as the guide's special of its length",
+      {k: v["number"] for k, v in tv.specials_for(f_odd, GUIDE_SP).items()}, {24: 5})
+check("and the warning says where it went",
+      any("S00E05" in w and "A Long One" in w for w in tv.plan_warnings(
+          tv.build_plan(f_odd, season=1, first_episode=1), f_odd, GUIDE_SP)), True)
+TWO_SP = GUIDE_SP + [{"season": 0, "number": 9, "name": "Another", "runtime": 29,
+                      "special": True}]
+check("two specials of that length is a guess, so neither", tv.specials_for(f_odd, TWO_SP), {})
+check("no special that long, nothing taken", tv.specials_for(f_odd, GUIDE_SP[:-2]), {})
+OFF = [dvd(0, int(PA_SUM * 1.12), ",".join(str(n) for n in range(1, 31)), 30)] + SHORT_EPS + [LONG_ONE]
+check("but not when it's well off the sum", tv.analyse(OFF, FLOOR) is None or
+      tv.analyse(OFF, FLOOR)["odd_in_play_all"] == [], True)
+FILM_FEATS = [dvd(0, 5640, "1,2,3,4,5,6,7,8,9,10,11,12", 12)] + [
+    dvd(i, 900 + i * 7, "1,2", 2) for i in range(1, 4)] + [dvd(9, 1500, "1,2,3", 3)]
+check("and a film with a few featurettes stays a film", tv.analyse(FILM_FEATS, FLOOR), None)
+
+print("a shorter copy of an episode in the same DVD title set is a repeat (real discs)")
+def pgc(i, seconds, file, segments, chapters=7):
+    return dict(dvd(i, seconds, segments, chapters), file=file)
+# Two discs of one set: each episode in its own title set, and three of them followed
+# by a cut-down copy (no title card, a few scenes gone) playing part of its cells.
+REP3 = [pgc(0, 1513, "B1_t00.mkv", "1-8,9"), pgc(1, 1592, "C1_t01.mkv", "1-11,12"),
+        pgc(2, 1485, "C6_t02.mkv", "4-11,12", 4), pgc(3, 1590, "D1_t03.mkv", "1-10,11"),
+        pgc(4, 403, "D6_t04.mkv", "8-10,11", 3), pgc(5, 1574, "E1_t05.mkv", "1-11,12"),
+        pgc(6, 1608, "F1_t06.mkv", "1-10,11"), pgc(7, 219, "F7_t07.mkv", "9-10,11", 2),
+        pgc(8, 1566, "G1_t08.mkv", "1-8,9"),
+        pgc(9, 6269, "A1_t09.mkv", "1-8,9-19,20-29,30-40,41", 26),
+        pgc(10, 156, "M1_t10.mkv", "1-3,4", 4)]
+REP4 = [pgc(0, 1568, "B1_t00.mkv", "1-11,12"), pgc(1, 1540, "B7_t01.mkv", "3-11,12", 5),
+        pgc(2, 1573, "C1_t02.mkv", "1-10,11"), pgc(3, 1343, "C7_t03.mkv", "4-10,11", 4),
+        pgc(4, 1571, "D1_t04.mkv", "1-11,12"), pgc(5, 307, "D6_t05.mkv", "10-11,12", 2),
+        pgc(6, 1558, "E1_t06.mkv", "1-9,10"), pgc(7, 1570, "F1_t07.mkv", "1-9,10"),
+        pgc(8, 1556, "G1_t08.mkv", "1-11,12"), pgc(9, 360, "G7_t09.mkv", "9-11,12", 2),
+        pgc(10, 4712, "A1_t10.mkv", "1-11,12-21,22-32,33", 21)]
+f_r3, f_r4 = tv.analyse(REP3, FLOOR), tv.analyse(REP4, FLOOR)
+check("the copy isn't an episode",
+      ([e["index"] for e in f_r3["episodes"]], f_r3["repeats"]), ([0, 1, 3, 5, 6, 8], {2: 1}))
+check("two copies on one disc",
+      ([e["index"] for e in f_r4["episodes"]], f_r4["repeats"]),
+      ([0, 2, 4, 6, 7, 8], {1: 0, 3: 2}))
+check("a copy is offered as an extra", 2 in [x["index"] for x in f_r3["extras"]], True)
+check("and the warning names what it copies",
+      any("Title 2 is a shorter copy of title 1" in w for w in tv.plan_warnings(
+          tv.build_plan(f_r3, season=1, first_episode=1), f_r3)), True)
+# Episodes that each have their own VOB all read "1,2" in one title set: a cell number
+# names a cell within its VOB, so equal or nested maps there are not copies.
+SAME_SET = [pgc(i, 440 + i, "C%d_t%02d.mkv" % (i + 1, i), "1,2", 2) for i in range(6)] + [
+    pgc(6, 470, "C7_t06.mkv", "1-3,4", 3)]
+f_ss = tv.analyse(SAME_SET, FLOOR)
+check("episodes sharing a title set aren't copies of each other",
+      (len(f_ss["episodes"]), f_ss["repeats"]), (7, {}))
+
+check("the disc's own label is read", tv.season_from_label("EXS1D1"), (1, 1))
+check("and the show's name kept", tv.series_name_from_label("EXS1D1"), "Ex")
+check("a lone S1 inside a word is not a season", tv.season_from_label("CLASS1"), (None, None))
+check("nor a name ending in a D number", tv.season_from_label("APOLLO13D1"), (None, None))
 
 print("eleven-minute cartoons are episodes, not extras")
 CARTOONS = [t(i, 11 + (i % 3) * 0.2, 0.6, "%05d.mpls" % (800 + i), str(i)) for i in range(20)] + [
@@ -327,6 +422,93 @@ check("a missing season is called out",
           tv.plan_warnings(tv.build_plan(f7, season=None), f7)), True)
 check("the play-all exclusion is explained",
       any("play all" in x for x in tv.plan_warnings(plan, f6)), False)
+
+print("a film with a storyboard cut is a film, not a two-episode season")
+FILM_ALT = [
+    {"index": 0, "seconds": 5598, "bytes": 11331532800, "source": "00200.mpls",
+     "segments": "1010", "chapters": 12, "audio": 1},
+    {"index": 1, "seconds": 240, "bytes": 702658560, "source": "00020.mpls",
+     "segments": "29,30", "chapters": 3, "audio": 1},
+    {"index": 2, "seconds": 5643, "bytes": 29728260096, "source": "00800.mpls",
+     "segments": "1001,1002,1003,1004,1005", "chapters": 12, "audio": 5},
+    {"index": 3, "seconds": 5643, "bytes": 29742747648, "source": "00801.mpls",
+     "segments": "1001,1006,1003,1007,1005", "chapters": 12, "audio": 5},
+    {"index": 4, "seconds": 475, "bytes": 1854523392, "source": "00201.mpls",
+     "segments": "1011,1012,1013,1014", "chapters": 4, "audio": 1},
+]
+check("film + alternate presentation: not a season", tv.analyse(FILM_ALT, FLOOR), None)
+TWO_PART = [{"index": i, "seconds": s_, "bytes": int(s_ * 5.2e6), "source": "0080%d.mpls" % i,
+             "segments": "10%d1,10%d2" % (i, i), "chapters": 12, "audio": 3}
+            for i, s_ in enumerate((5520, 5730))]
+check("two parts authored alike still read as episodes",
+      len((tv.analyse(TWO_PART, FLOOR) or {}).get("episodes") or []), 2)
+
+print("a typed name that is a guide episode takes that episode's number")
+GUIDE = ([{"season": 1, "number": n, "name": nm, "special": False, "runtime": 50}
+          for n, nm in enumerate(["Story A Part 1", "Story A Part 2", "Story B Part 1",
+                                  "Story B Part 2", "Story C"], 1)])
+
+
+def rows3():
+    return [{"title_index": 0, "seconds": 6000, "span": 2},
+            {"title_index": 1, "seconds": 3000, "span": 1},
+            {"title_index": 2, "seconds": 3000, "span": 1}]
+
+
+r = rows3()
+tv.number_rows(r, 1, 1, GUIDE)
+check("untyped: counted from the start", [(x["episode"], x["episode_last"]) for x in r],
+      [(1, 2), (3, 3), (4, 4)])
+r = rows3()
+r[0]["episode_title"], r[1]["episode_title"], r[2]["episode_title"] = (
+    "Story C Part 1 & Part 2", "story b, part 1", "Story B Part 2")
+tv.number_rows(r, 1, 1, GUIDE, typed={0, 1, 2})
+check("typed: each row takes its guide number",
+      [(x["episode"], x["episode_last"]) for x in r], [(5, 5), (3, 3), (4, 4)])
+check("typed names are kept on the files", r[0]["episode_title"], "Story C Part 1 & Part 2")
+check("positions still count the disc", [x["position"] for x in r], [1, 3, 4])
+r = rows3()
+r[1]["episode_title"] = "Story A Part 1"
+tv.number_rows(r, 1, 1, GUIDE, typed={1})
+check("a pin that would collide with a counted row is not applied",
+      [(x["episode"], x["episode_last"]) for x in r], [(1, 2), (3, 3), (4, 4)])
+r = rows3()
+r[1]["episode_title"] = "Something else entirely"
+tv.number_rows(r, 1, 1, GUIDE, typed={1})
+check("a typed name the guide doesn't know keeps the counted number", r[1]["episode"], 3)
+
+print("a typed name can be an episode of another season")
+TWO = ([{"season": 1, "number": n, "name": nm, "special": False, "runtime": 50}
+        for n, nm in enumerate(["Story A", "Story B Part 1", "Story B Part 2"], 1)]
+       + [{"season": 2, "number": n, "name": nm, "special": False, "runtime": 50}
+          for n, nm in enumerate(["Story C", "Story D"], 1)])
+r = rows3()
+r[0]["span"] = 1
+r[0]["episode_title"], r[1]["episode_title"], r[2]["episode_title"] = (
+    "Story D", "Story B Part 1", "Story B Part 2")
+tv.number_rows(r, 2, 1, TWO, typed={0, 1, 2})
+check("each row takes its own season and number",
+      [(x["season"], x["episode"]) for x in r], [(2, 2), (1, 2), (1, 3)])
+r = rows3()
+r[1]["episode_title"] = "Story B Part 1"
+tv.number_rows(r, None, 1, TWO, typed={1})
+check("with no season known, a typed name still finds its episode",
+      (r[1]["season"], r[1]["episode"]), (1, 2))
+
+import json  # noqa: E402
+print("a disc renumbered by hand stops the next disc from carrying on unseen")
+check("counted in order: carry on",
+      _renumbered_by_hand({"episode_plan": json.dumps({"episodes": [
+          {"position": 1, "episode": 1}, {"position": 2, "episode": 2}]})}), False)
+check("a row moved off its position: hold the next disc",
+      _renumbered_by_hand({"episode_plan": json.dumps({"episodes": [
+          {"position": 1, "episode": 5}, {"position": 2, "episode": 2}]})}), True)
+check("an unticked row doesn't count",
+      _renumbered_by_hand({"episode_plan": json.dumps({"episodes": [
+          {"position": 1, "episode": 5, "include": False}]})}), False)
+check("a DVD order is the guide's, not a correction",
+      _renumbered_by_hand({"episode_plan": json.dumps({"dvd_map": {"1": {}}, "episodes": [
+          {"position": 1, "episode": 5}]})}), False)
 
 print("")
 if failures:
