@@ -1199,7 +1199,7 @@ function seasonPrompt(j) {
         <label class="f"><span>Series</span>
           ${opts.length ? `
             <select id="ep-series">
-              ${opts.map(o => `<option value="${o.id}"
+              ${opts.map(o => `<option value="${o.id}" data-name="${esc(o.name || "")}"
                 ${o.id === plan.series_id ? "selected" : ""}>${esc(o.name)}${
                   o.year ? ` (${esc(o.year)})` : ""}${
                   o.network ? ` — ${esc(o.network)}` : ""}</option>`).join("")}
@@ -4267,7 +4267,10 @@ function wireContent(section, sub) {
       const ti = Number(r.dataset.ti);
       order.push(ti);
       if (r.querySelector(".ep-keep").checked) include.push(ti);
-      titles[String(ti)] = r.querySelector(".ep-title").value || "";
+      // Only names somebody edited. The rest follow the guide, which the box fills in
+      // from the numbers it assigns.
+      const t = r.querySelector(".ep-title");
+      if (t.value !== t.dataset.orig) titles[String(ti)] = t.value || "";
     });
     if (!include.length) {
       toast("Tick at least one episode, or skip the disc.", "bad");
@@ -4382,9 +4385,56 @@ function wireContent(section, sub) {
   });
   $$("#ep-rows .ep-keep").forEach(c => c.addEventListener("change", ripLabel));
   ripLabel();
+  /* A different series or season is a different list of names. Fetch it and rename
+     every row nobody has typed into, so the page shows what accepting will file --
+     before this, the box re-fetched them only on accept, and the page kept showing
+     the old show's names. */
+  let guideAsk = 0, guideTimer = null;
+  const refreshGuide = async () => {
+    const box = $("#ep-rows");
+    const sid = ($("#ep-series") || {}).value;
+    const seasonRaw = ($("#ep-season") || {}).value;
+    if (!box || !sid || seasonRaw === "") return;
+    const ask = ++guideAsk;
+    let g;
+    try {
+      g = await api.get(`/api/tv/guide?series_id=${encodeURIComponent(sid)}` +
+                        `&season=${encodeURIComponent(seasonRaw)}`);
+    } catch (e) { toast(e.message, "bad"); return; }
+    if (ask !== guideAsk || !document.body.contains(box)) return;   // overtaken
+    box.dataset.names = JSON.stringify(g.names || {});
+    box.dataset.dvd = JSON.stringify(g.dvd_map || {});
+    box.dataset.season = seasonRaw;
+    // Untouched rows are blanked first, so a season the guide doesn't list shows no
+    // names rather than the previous show's.
+    $$("#ep-rows .ep-title").forEach(t => {
+      if (t.value === t.dataset.orig) { t.value = ""; t.dataset.orig = ""; }
+    });
+    renumberRows();
+  };
+  const series = $("#ep-series");
+  if (series) {
+    let was = series.selectedOptions[0];
+    series.onchange = () => {
+      const opt = series.selectedOptions[0];
+      const name = $("#ep-name");
+      // The folder box follows the pick unless somebody typed their own name in it.
+      if (name && opt && opt.dataset.name
+          && (!was || name.value === (was.dataset.name || name.defaultValue))) {
+        name.value = opt.dataset.name;
+      }
+      was = opt;
+      refreshGuide();
+    };
+  }
   ["ep-season", "ep-first"].forEach(id => {
     const el = $("#" + id);
     if (el) el.oninput = renumberRows;
+  });
+  const seasonBox = $("#ep-season");
+  if (seasonBox) seasonBox.addEventListener("input", () => {
+    clearTimeout(guideTimer);
+    guideTimer = setTimeout(refreshGuide, 400);
   });
 
   $$("[data-film]").forEach(b => b.onclick = async () => {

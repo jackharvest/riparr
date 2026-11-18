@@ -631,6 +631,16 @@ check("TVmaze's pick and Wikidata's are both offered",
 ok, _msg = rip.answer(d1["id"], season=1, first_episode=1, series_id=101,
                       name=p1["series"])
 check("picking Wikidata's is accepted", ok, True)
+# The page renames untouched rows itself and sends only the names typed by hand. A
+# different series must re-fetch the rest, and keep the typed one.
+import copy
+_held = copy.deepcopy(p1)
+_t0, _t1 = (_held["episodes"][0]["title_index"], _held["episodes"][1]["title_index"])
+_held, _err = rip._apply_season_answer({}, _held, 1, 1, 101, None,
+                                       {str(_t0): "Typed By Hand"}, None)
+check("a new series renames what wasn't typed and keeps what was",
+      (_err, _held["episodes"][0]["episode_title"], _held["episodes"][1]["episode_title"]),
+      (None, "Typed By Hand", "EX 2"))
 check("and filed under it, with its names",
       (send(d1["id"])["state"], db.episode_plan(db.get_job(d1["id"]))["series"],
        db.episode_plan(db.get_job(d1["id"]))["episodes"][0]["episode_title"]),

@@ -587,10 +587,12 @@ def _apply_season_answer(job, plan, season, first_episode, series_id, include,
         if chosen:
             plan["series"] = chosen.get("name") or plan.get("series")
             plan["series_year"] = chosen.get("year")
-        typed = set()
+        # A name typed by hand stays: the page sends only the names somebody edited,
+        # and it renames the rest from the new show's guide as soon as it is picked.
         if not plan.get("bonus"):
             for r in rows:
-                r["episode_title"] = ""
+                if int(r["title_index"]) not in typed:
+                    r["episode_title"] = ""
 
     if season is not None:
         plan["season"] = int(season)

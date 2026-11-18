@@ -1434,6 +1434,18 @@ def tv_episode_list(series_id: int, season: int = None, user=Depends(require_use
     return {"episodes": eps, "credit": "TVmaze"}
 
 
+@app.get("/api/tv/guide")
+def tv_guide(series_id: int, season: int, user=Depends(require_user)):
+    """One season's names by number, from the guide the plan numbers from (TMDB when
+    there is a key, else TVmaze), and its DVD order when that differs. The episode
+    prompt renames its rows from this the moment a different series or season is
+    picked, so what is on screen is what accepting will file."""
+    listed, numbering = RIP._guide(series_id, db.get("tmdb_api_key"))
+    dvd = TV.dvd_map_for(TV.dvd_order(series_id), season) if listed else {}
+    return {"names": TV.guide_names(listed, season), "numbering": numbering,
+            "dvd_map": {str(k): v for k, v in dvd.items()}}
+
+
 @app.post("/api/discs/{fingerprint}/rerip")
 def disc_rerip(fingerprint: str, user=Depends(require_user)):
     """Re-rip a disc Riparr already knows.
