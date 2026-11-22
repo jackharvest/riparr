@@ -683,6 +683,18 @@ def analyse(titles, min_seconds=120):
             unsure_doubles.append(t["index"])
     episodes = sorted(cluster + doubles, key=lambda t: t["index"])
 
+    # A film-length title that is none of the above and outruns every "episode" put
+    # together is the reason the disc exists, and the episodes are its featurettes. The
+    # play-all test further up only catches this when the film is taken for the
+    # play-all; The Circle's Blu-ray also carries a "play all extras" playlist, which
+    # holds the featurettes and so won the play-all, and the 110-minute film was listed
+    # as an extra beside two six-minute "episodes".
+    in_season = {t["index"] for t in episodes} | {(play_all or {}).get("index")}
+    if any(t["seconds"] >= BONUS_FILM_SECONDS
+           and t["seconds"] > sum(e["seconds"] for e in episodes)
+           for t in unique if t["index"] not in in_season):
+        return None
+
     # The play-all also says which titles are the season. An episode-length title with
     # a segment map and none of it in the play-all is something else the disc carries --
     # a bonus episode, a pilot, a 21-minute documentary -- so it is offered as an extra
