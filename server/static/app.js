@@ -1328,7 +1328,7 @@ function identifyPrompt(j) {
           <div class="ni-label">Which title is the film?</div>
           ${titles.map(t => `
             <label class="ni-title">
-              <input type="radio" name="ni-title" value="${t.index}"
+              <input type="radio" name="ni-title-${j.id}" value="${t.index}"
                      ${t.index === j.chosen_title ? "checked" : ""}>
               <span class="ni-dur">${esc(duration(t.seconds))}</span>
               <span class="ni-name">${esc(t.name || `Title ${t.index}`)}</span>
@@ -4202,8 +4202,18 @@ function wireContent(section, sub) {
     }
   });
 
+  /* Every waiting disc has its own form on the page, and the forms share their ids --
+     three discs held for a name made three #ep-season boxes, and the first disc's
+     button read the third disc's empty one. So each handler looks only inside the
+     form its button sits in. */
+  const inForm = el => {
+    const form = el.closest(".job") || document;
+    return [sel => form.querySelector(sel), sel => [...form.querySelectorAll(sel)]];
+  };
+
   $$("[data-answer]").forEach(b => b.onclick = async () => {
-    const picked = $('input[name="ni-title"]:checked');
+    const [$, $$] = inForm(b);
+    const picked = $('.ni-titles input[type="radio"]:checked');
     const body = { name: ($("#ni-name") || {}).value || "" };
     if (picked) body.title_index = Number(picked.value);
     if (!body.name.trim() && !picked) {
@@ -4220,119 +4230,120 @@ function wireContent(section, sub) {
      the DOM at submit time rather than tracked in a model: the panel is redrawn from
      the server on every poll, so a model would have to be reconciled with it, and the
      reconciliation is more code than the read. */
-  $$("[data-answer-season]").forEach(b => b.onclick = async () => {
-    const rows = $$("#ep-rows .ep-row");
-    const include = [], titles = {}, order = [];
-    rows.forEach(r => {
-      const ti = Number(r.dataset.ti);
-      order.push(ti);
-      if (r.querySelector(".ep-keep").checked) include.push(ti);
-      titles[String(ti)] = r.querySelector(".ep-title").value || "";
-    });
-    if (!include.length) {
-      toast("Tick at least one episode, or skip the disc.", "bad");
-      return;
-    }
-    const season = ($("#ep-season") || {}).value;
-    if (season === "") {
-      toast("Give it a season number — the files need one.", "bad");
-      return;
-    }
-    const picked = ($("#ep-series") || {}).value;
-    const extras = {};
-    $$("#ep-extras .ep-extra").forEach(r => {
-      if (r.querySelector(".ep-keep").checked) {
-        extras[r.dataset.xi] = r.querySelector(".ep-title").value.trim() || "Extra";
-      }
-    });
-    const body = {
-      season: Number(season),
-      first_episode: Number(($("#ep-first") || {}).value || 1),
-      include, order, episode_titles: titles, extras,
-      name: (($("#ep-name") || {}).value || "").trim(),
-    };
-    if (picked) body.series_id = Number(picked);
-    b.disabled = true;
-    try { await api.post(`/api/queue/${b.dataset.answerSeason}/answer`, body); }
-    catch (e) { toast(e.message, "bad"); b.disabled = false; return; }
-    route();
-  });
-
-  /* Reordering is done in the page and renumbered as it goes, so the numbers on screen
-     always describe what would be written if the button were pressed now. Sending a
-     move to the server and redrawing would work too and would cost a round trip per
-     click on a box that is busy reading a disc. */
-  const moveRow = (ti, delta) => {
-    const box = $("#ep-rows");
-    if (!box) return;
-    const rows = $$("#ep-rows .ep-row");
-    const i = rows.findIndex(r => Number(r.dataset.ti) === ti);
-    const to = i + delta;
-    if (i < 0 || to < 0 || to >= rows.length) return;
-    // Keep what the user has typed or unticked: the nodes are moved, not re-rendered.
-    if (delta < 0) box.insertBefore(rows[i], rows[to]);
-    else box.insertBefore(rows[to], rows[i]);
-    renumberRows();
-  };
-  const renumberRows = () => {
-    const seasonRaw = ($("#ep-season") || {}).value;
-    const season = seasonRaw === "" ? null : Number(seasonRaw);
-    let n = Number(($("#ep-first") || {}).value || 1);
-    // A show whose DVD order differs is named by the broadcast number each disc
-    // position holds -- the same mapping the box applies (tv.number_rows).
-    let dvd = {};
-    try { dvd = JSON.parse(($("#ep-rows") || {}).dataset.dvd || "{}"); } catch (e) {}
-    const all = $$("#ep-rows .ep-row");
-    const covered = Object.keys(dvd).length && (() => {
-      let p = n;
-      return all.every(r => {
-        if (!r.querySelector(".ep-keep").checked) return true;
-        const sp = r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
-        const ok = [...Array(sp).keys()].every(k => dvd[p + k]);
-        p += sp;
-        return ok;
+  $$("[data-answer-season]").forEach(b => {
+    const [$, $$] = inForm(b);
+    b.onclick = async () => {
+      const rows = $$("#ep-rows .ep-row");
+      const include = [], titles = {}, order = [];
+      rows.forEach(r => {
+        const ti = Number(r.dataset.ti);
+        order.push(ti);
+        if (r.querySelector(".ep-keep").checked) include.push(ti);
+        titles[String(ti)] = r.querySelector(".ep-title").value || "";
       });
-    })();
-    all.forEach((r, i) => {
-      const keep = r.querySelector(".ep-keep").checked;
-      const span = r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
-      const cell = r.querySelector(".ep-num");
-      r.classList.toggle("dropped", !keep);
-      if (!keep) { cell.textContent = "—"; }
-      else {
-        const a = covered && dvd[n], b = covered && dvd[n + span - 1];
-        cell.textContent = a
-          ? episodeCode({ season: a.season, episode: a.number,
-                          episode_last: b && b.number === a.number + span - 1
-                            ? b.number : a.number })
-          : episodeCode({ season, episode: n, episode_last: n + span - 1 });
-        n += span;
+      if (!include.length) {
+        toast("Tick at least one episode, or skip the disc.", "bad");
+        return;
       }
-      r.querySelector("[data-up]").disabled = i === 0;
-      r.querySelector("[data-down]").disabled = i === all.length - 1;
+      const season = ($("#ep-season") || {}).value;
+      if (season === "") {
+        toast("Give it a season number — the files need one.", "bad");
+        return;
+      }
+      const picked = ($("#ep-series") || {}).value;
+      const extras = {};
+      $$("#ep-extras .ep-extra").forEach(r => {
+        if (r.querySelector(".ep-keep").checked) {
+          extras[r.dataset.xi] = r.querySelector(".ep-title").value.trim() || "Extra";
+        }
+      });
+      const body = {
+        season: Number(season),
+        first_episode: Number(($("#ep-first") || {}).value || 1),
+        include, order, episode_titles: titles, extras,
+        name: (($("#ep-name") || {}).value || "").trim(),
+      };
+      if (picked) body.series_id = Number(picked);
+      b.disabled = true;
+      try { await api.post(`/api/queue/${b.dataset.answerSeason}/answer`, body); }
+      catch (e) { toast(e.message, "bad"); b.disabled = false; return; }
+      route();
+    };
+
+    /* Reordering is done in the page and renumbered as it goes, so the numbers on screen
+       always describe what would be written if the button were pressed now. Sending a
+       move to the server and redrawing would work too and would cost a round trip per
+       click on a box that is busy reading a disc. */
+    const moveRow = (ti, delta) => {
+      const box = $("#ep-rows");
+      if (!box) return;
+      const rows = $$("#ep-rows .ep-row");
+      const i = rows.findIndex(r => Number(r.dataset.ti) === ti);
+      const to = i + delta;
+      if (i < 0 || to < 0 || to >= rows.length) return;
+      // Keep what the user has typed or unticked: the nodes are moved, not re-rendered.
+      if (delta < 0) box.insertBefore(rows[i], rows[to]);
+      else box.insertBefore(rows[to], rows[i]);
+      renumberRows();
+    };
+    const renumberRows = () => {
+      const seasonRaw = ($("#ep-season") || {}).value;
+      const season = seasonRaw === "" ? null : Number(seasonRaw);
+      let n = Number(($("#ep-first") || {}).value || 1);
+      // A show whose DVD order differs is named by the broadcast number each disc
+      // position holds -- the same mapping the box applies (tv.number_rows).
+      let dvd = {};
+      try { dvd = JSON.parse(($("#ep-rows") || {}).dataset.dvd || "{}"); } catch (e) {}
+      const all = $$("#ep-rows .ep-row");
+      const covered = Object.keys(dvd).length && (() => {
+        let p = n;
+        return all.every(r => {
+          if (!r.querySelector(".ep-keep").checked) return true;
+          const sp = r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
+          const ok = [...Array(sp).keys()].every(k => dvd[p + k]);
+          p += sp;
+          return ok;
+        });
+      })();
+      all.forEach((r, i) => {
+        const keep = r.querySelector(".ep-keep").checked;
+        const span = r.querySelector(".ep-title").placeholder.startsWith("Two") ? 2 : 1;
+        const cell = r.querySelector(".ep-num");
+        r.classList.toggle("dropped", !keep);
+        if (!keep) { cell.textContent = "—"; }
+        else {
+          const a = covered && dvd[n], b = covered && dvd[n + span - 1];
+          cell.textContent = a
+            ? episodeCode({ season: a.season, episode: a.number,
+                            episode_last: b && b.number === a.number + span - 1
+                              ? b.number : a.number })
+            : episodeCode({ season, episode: n, episode_last: n + span - 1 });
+          n += span;
+        }
+        r.querySelector("[data-up]").disabled = i === 0;
+        r.querySelector("[data-down]").disabled = i === all.length - 1;
+      });
+    };
+    $$("[data-up]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.up), -1));
+    $$("[data-down]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.down), 1));
+    $$("#ep-rows .ep-keep").forEach(c => c.onchange = renumberRows);
+    // The button says what it will do, extras included, so ticking one is visibly taken.
+    const ripLabel = () => {
+      const n = $$("#ep-rows .ep-keep").filter(c => c.checked).length;
+      const x = $$("#ep-extras .ep-keep").filter(c => c.checked).length;
+      b.textContent = `${b.dataset.verb || "Rip"} ${n} episode${n === 1 ? "" : "s"}` +
+        (x ? ` and ${x} extra${x === 1 ? "" : "s"}` : "");
+    };
+    $$("#ep-extras .ep-keep").forEach(c => c.onchange = () => {
+      c.closest(".ep-row").classList.toggle("dropped", !c.checked);
+      ripLabel();
     });
-  };
-  $$("[data-up]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.up), -1));
-  $$("[data-down]").forEach(b => b.onclick = () => moveRow(Number(b.dataset.down), 1));
-  $$("#ep-rows .ep-keep").forEach(c => c.onchange = renumberRows);
-  // The button says what it will do, extras included, so ticking one is visibly taken.
-  const ripLabel = () => {
-    const b = $("[data-answer-season]");
-    if (!b) return;
-    const n = $$("#ep-rows .ep-keep").filter(c => c.checked).length;
-    const x = $$("#ep-extras .ep-keep").filter(c => c.checked).length;
-    b.textContent = `${b.dataset.verb || "Rip"} ${n} episode${n === 1 ? "" : "s"}` +
-      (x ? ` and ${x} extra${x === 1 ? "" : "s"}` : "");
-  };
-  $$("#ep-extras .ep-keep").forEach(c => c.onchange = () => {
-    c.closest(".ep-row").classList.toggle("dropped", !c.checked);
+    $$("#ep-rows .ep-keep").forEach(c => c.addEventListener("change", ripLabel));
     ripLabel();
-  });
-  $$("#ep-rows .ep-keep").forEach(c => c.addEventListener("change", ripLabel));
-  ripLabel();
-  ["ep-season", "ep-first"].forEach(id => {
-    const el = $("#" + id);
-    if (el) el.oninput = renumberRows;
+    ["ep-season", "ep-first"].forEach(id => {
+      const el = $("#" + id);
+      if (el) el.oninput = renumberRows;
+    });
   });
 
   $$("[data-skip]").forEach(b => b.onclick = async () => {
