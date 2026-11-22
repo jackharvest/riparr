@@ -13,9 +13,12 @@ at any moment sees the whole picture without waiting for the next change:
                                    | verifying | needs_input | done | failed
                                    (done lasts mqtt_done_seconds after a finished rip,
                                    then idle; a new disc replaces it at once)
+                                   (one job, by what most needs somebody: failed, then
+                                   the drive at work, then needs_input, then an upload,
+                                   then done, then idle)
     <base>/job/title               what is being ripped
     <base>/job/progress            0-100, through the current stage (0 when idle, 100 when done)
-    <base>/job/attributes          JSON: id, kind, phase, eta, error ...
+    <base>/job/attributes          JSON: id, kind, phase, eta, error, sending, waiting ...
     <base>/autorip/state           ON | OFF
     <base>/drive/detected          ON | OFF
     <base>/drive/disc_present      ON | OFF
@@ -305,36 +308,43 @@ def _standing_failure(finals, active):
 
 
 def _job_values():
+    """One job for the topics, picked by what most needs somebody: a failure, then the
+    drive at work, then a disc waiting for an answer, then an upload, then a finished
+    rip, then nothing. Newest first within each.
+
+    It used to be whichever drive job started last, so three Pippi Langstrumpf discs held
+    for a name read "ripping" while the fourth was read and nothing once it was done,
+    and a failure behind a held disc was not shown at all.
+    """
     active = db.list_jobs(states=db.ACTIVE_STATES)
-    # The disc in the drive is the job somebody is watching. One that has given its
-    # disc back and is crossing the network comes second, and is counted either way.
+    finals = db.list_jobs(states=db.FINAL_STATES, limit=10)
     sending = [j for j in active if j["state"] in db.SENDING_STATES]
-    drive = next((j for j in active if j["state"] not in db.SENDING_STATES), None)
-    job = drive or (sending[0] if sending else None)
-    state = job["state"] if job else "idle"
-    if not drive:
-        # A failure stays on the topic until the next disc replaces it. "idle" a
-        # second after a rip died would be true and would hide the only thing an
-        # automation is watching for. An earlier rip still uploading does not replace
-        # it either: the disc that just failed is the news, not the upload behind it.
-        finals = db.list_jobs(states=db.FINAL_STATES, limit=10)
-        failure = _standing_failure(finals, active)
-        if failure:
-            job, state = failure, "failed"
-        elif not job:
-            # A finished rip reads "done" for a while, then "idle". Newest by finish time,
-            # not start: an upload that outlived the next rip's start is the later "done".
-            # A new disc needs no code here: its job is active, so this is never reached.
-            dones = [j for j in finals if j["state"] == "done" and j.get("finished_at")]
-            last = max(dones, key=lambda j: j["finished_at"], default=None)
-            if last and 0 <= time.time() - last["finished_at"] < _done_seconds():
-                job, state = last, "done"
+    waiting = [j for j in active if j["state"] == "needs_input"]
+    working = [j for j in active if j["state"] not in db.SENDING_STATES
+               and j["state"] != "needs_input"]
+    # A failure stays on the topic until the next disc replaces it. "idle" a second
+    # after a rip died would be true and would hide the only thing an automation is
+    # watching for. Nothing started before it ended replaces it either: the disc that
+    # just failed is the news, not the upload or the held disc behind it.
+    failure = _standing_failure(finals, active)
+    job, state = failure, "failed"
+    if not job:
+        job = next(iter(working + waiting + sending), None)
+        state = job["state"] if job else "idle"
+    if not job:
+        # A finished rip reads "done" for a while, then "idle". Newest by finish time,
+        # not start: an upload that outlived the next rip's start is the later "done".
+        # A new disc needs no code here: its job is active, so this is never reached.
+        dones = [j for j in finals if j["state"] == "done" and j.get("finished_at")]
+        last = max(dones, key=lambda j: j["finished_at"], default=None)
+        if last and 0 <= time.time() - last["finished_at"] < _done_seconds():
+            job, state = last, "done"
 
     pct = None
     if state == "idle":
         pct = 0.0           # a gauge with nothing to do reads 0, not unknown
-    elif job and state == "done":
-        pct = 100.0
+    elif job and (state == "done" or (state == "needs_input" and job.get("local_path"))):
+        pct = 100.0         # read and held for a name: nothing left to do but answer
     elif job and state != "failed":
         if isinstance(job.get("stage_pct"), (int, float)):
             pct = job["stage_pct"] * 100
@@ -343,7 +353,7 @@ def _job_values():
         if pct is not None:
             pct = round(max(0.0, min(100.0, pct)), 1)
 
-    attrs = {"sending": len(sending)}
+    attrs = {"sending": len(sending), "waiting": len(waiting)}
     if job:
         for k in ("id", "kind", "phase", "disc_label", "disc_family", "eta_seconds",
                   "error", "warning"):

@@ -139,6 +139,39 @@ check("after which the failure is not brought back", MQ._job_values()["job/state
 db.conn().execute("DELETE FROM jobs")
 db.conn().commit()
 
+print("Discs waiting for an answer")
+now = int(time.time())
+held = [db.create_job(title="Pippi %d" % n, state="needs_input", started_at=now - 900 + n)
+        for n in (1, 2, 3)]
+rip = db.create_job(title="Pippi 4", state="ripping", started_at=now - 100)
+v = MQ._job_values()
+check("the drive at work outranks the discs waiting",
+      (v["job/state"], v["job/title"]), ("ripping", "Pippi 4"))
+check("and they are counted", v["job/attributes"]["waiting"], 3)
+db.update_job(rip, state="done", finished_at=now - 5)
+db.update_job(held[2], local_path="/srv/library/.riparr-incoming/job-3", stage_pct=0.981)
+v = MQ._job_values()
+check("once it is read, the wait is the state, not done",
+      (v["job/state"], v["job/title"]), ("needs_input", "Pippi 3"))
+check("a disc read and held is at 100 percent", v["job/progress"], 100.0)
+up = db.create_job(title="Upload", state="transferring", started_at=now - 50)
+check("a wait outranks an upload", MQ._job_values()["job/state"], "needs_input")
+bad = db.create_job(title="Bad disc", state="failed", started_at=now - 40,
+                    finished_at=now - 30, error="Read error")
+v = MQ._job_values()
+check("a failure outranks a wait", (v["job/state"], v["job/title"]), ("failed", "Bad disc"))
+check("which is still counted", v["job/attributes"]["waiting"], 3)
+db.update_job(bad, started_at=now - 2000, finished_at=now - 1950)
+check("a failure before the discs went in is not news",
+      MQ._job_values()["job/state"], "needs_input")
+for j in held:
+    db.update_job(j, state="done", finished_at=now - 1)
+check("answered, the upload is the job", MQ._job_values()["job/state"], "transferring")
+db.update_job(up, state="done", finished_at=now)
+check("then done", MQ._job_values()["job/state"], "done")
+db.conn().execute("DELETE FROM jobs")
+db.conn().commit()
+
 print("Health, derived once")
 fine = dict(clock={"plausible": True, "synced": True, "now": time.time()},
             mk={"installed": True, "days_left": 20}, drives=[{"present": False}],
