@@ -437,6 +437,22 @@ FILM_ALT = [
      "segments": "1011,1012,1013,1014", "chapters": 4, "audio": 1},
 ]
 check("film + alternate presentation: not a season", tv.analyse(FILM_ALT, FLOOR), None)
+
+print("a film beside a play-all of its extras is a film")
+# The Circle (2017), Blu-ray: the film, a "play all extras" playlist and the featurettes
+# it strings together. The extras playlist won the play-all, two of the featurettes
+# clustered at five-to-six minutes, and the film was listed as an extra.
+CIRCLE = [
+    {"index": 0, "seconds": 131, "bytes": 173561856, "source": "00000.mpls", "segments": "0,1"},
+    {"index": 1, "seconds": 6590, "bytes": 35791730688, "source": "00005.mpls", "segments": "7"},
+    {"index": 2, "seconds": 1535, "bytes": 7077844992, "source": "00014.mpls",
+     "segments": "9,10,11,12,13,14,15,16"},
+] + [{"index": i, "seconds": s_, "bytes": int(s_ * 4.6e6), "source": "%05d.m2ts" % n,
+      "segments": str(n)}
+     for i, (n, s_) in enumerate([(9, 359), (10, 221), (12, 160), (13, 153), (14, 315),
+                                  (16, 125), (20, 144), (21, 141), (22, 152), (24, 137)],
+                                 start=3)]
+check("film + extras play-all: not a season", tv.analyse(CIRCLE, FLOOR), None)
 TWO_PART = [{"index": i, "seconds": s_, "bytes": int(s_ * 5.2e6), "source": "0080%d.mpls" % i,
              "segments": "10%d1,10%d2" % (i, i), "chapters": 12, "audio": 3}
             for i, s_ in enumerate((5520, 5730))]
