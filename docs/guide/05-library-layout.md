@@ -58,6 +58,7 @@ so stick with MKV if Plex is your player. A backup always files as a film, box s
 included — it's the disc, not its episodes.
 
 With **One ISO file** the folder holds `Film (Year).iso` instead of `BDMV` or `VIDEO_TS`.
+It is the same disc in one file, menus and extras included.
 With **Main title and full disc backup** the MKV goes where it always does and the backup
 goes under `Disc Backups/`, so your media server doesn't list the film twice.
 

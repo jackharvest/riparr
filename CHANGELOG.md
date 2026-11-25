@@ -17,7 +17,8 @@ nothing comes out silent.
 
 **The film and the whole disc, from one insert.** Set Titles to **Main title and full disc
 backup** and Riparr rips the film or season, then backs up the disc, then ejects. Backups
-can also be saved as **one ISO file**.
+can also be saved as **one ISO file**. Either way it's the whole disc: menus, extras and
+all, with the copy protection removed.
 
 **Updating from the web page works again when it stopped with "Permission denied:
 '/opt/riparr/packaging'".** It could also leave the box half updated while saying nothing
