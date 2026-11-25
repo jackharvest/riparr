@@ -348,13 +348,77 @@ def test_forget_host_keys():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_update_survives_exit():
+    """The app's scratch folder is deleted as the window closes. The Linux and Windows
+    swappers kept the download and the script in it, so the update was deleted before it
+    could install, with nothing said (#8)."""
+    group("self-update outlives the app")
+    import os
+    import shutil
+    import tarfile
+    import tempfile
+    import time
+    top = tempfile.mkdtemp(prefix="riparr-selftest-")
+    try:
+        rundir = os.path.join(top, "run")
+        os.mkdir(rundir)
+        exe = os.path.join(top, "app.exe")
+        open(exe, "w").close()
+        dl = os.path.join(rundir, "new.exe")
+        open(dl, "w").close()
+        started = []
+        real = subprocess.Popen
+        subprocess.Popen = lambda argv, **k: started.append(argv)
+        try:
+            ok, _ = windows.swap_and_relaunch(dl, exe, 1, rundir)
+        finally:
+            subprocess.Popen = real
+        check("windows: swap armed", ok, True)
+        script = started[0][-1]
+        check("windows: script is outside the scratch folder", script.startswith(rundir), False)
+        check("windows: nothing left in the scratch folder", os.listdir(rundir), [])
+        with open(script) as f:
+            check("windows: script doesn't read the scratch folder", rundir in f.read(), False)
+        shutil.rmtree(os.path.dirname(script), ignore_errors=True)
+
+        if os.name == "nt":
+            return
+        # The real script, against a real archive, with the scratch folder deleted first.
+        # The names are the shipped ones -- the space broke the relaunch -- in a folder
+        # somebody has renamed.
+        target = os.path.join(top, "my riparr")
+        os.mkdir(target)
+        src = os.path.join(top, "release")
+        os.mkdir(src)
+        marker = os.path.join(top, "started")
+        with open(os.path.join(src, "Riparr Preparer"), "w") as f:
+            f.write("#!/bin/sh\ntouch '%s'\n" % marker)
+        os.chmod(os.path.join(src, "Riparr Preparer"), 0o755)
+        archive = os.path.join(rundir, "riparr.tar.gz")
+        with tarfile.open(archive, "w:gz") as t:
+            t.add(src, arcname="Riparr Preparer")
+        app = real(["sleep", "1"])
+        ok, log = linux.swap_and_relaunch(archive, target, app.pid, rundir)
+        shutil.rmtree(rundir)
+        app.wait()
+        for _ in range(100):
+            if os.path.exists(marker):
+                break
+            time.sleep(0.1)
+        check("linux: the new version was installed and started", os.path.exists(marker), True)
+        check("linux: the swap kept a log", os.path.exists(log), True)
+        shutil.rmtree(os.path.dirname(log), ignore_errors=True)
+    finally:
+        shutil.rmtree(top, ignore_errors=True)
+
+
 def main():
     print("Riparr Preparer selftest — host is %s, card writing %s"
           % (hostos.NAME, "supported" if hostos.CAN_WRITE else "not supported"))
     for fn in (test_contract, test_device_ids, test_partition_names,
                test_mount_matching, test_cmdline, test_sink_blocking,
                test_partition_layout, test_cloud_init, test_boards,
-               test_forget_host_keys):
+               test_forget_host_keys, test_update_survives_exit):
         fn()
     print()
     if FAILED:

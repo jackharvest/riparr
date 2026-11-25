@@ -21,7 +21,9 @@ import ctypes
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 
 try:
@@ -949,7 +951,13 @@ def swap_and_relaunch(archive, target, pid, rundir):
                        "writable by you.\n\nMove it somewhere you own, or download the "
                        "new version yourself." % parent)
 
-    script = os.path.join(rundir, "update.ps1")
+    # Not in rundir, which shell.py deletes as the window closes -- taking the downloaded
+    # .exe with it. See the Linux swapper, where that was reported (#8).
+    work = tempfile.mkdtemp(prefix="riparr-update-")
+    moved = os.path.join(work, os.path.basename(archive))
+    shutil.move(archive, moved)
+    archive = moved
+    script = os.path.join(work, "update.ps1")
     ps = r'''
 $ErrorActionPreference = "Stop"
 $pidToWait = %(pid)d

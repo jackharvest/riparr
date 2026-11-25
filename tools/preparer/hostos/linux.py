@@ -682,10 +682,20 @@ def swap_and_relaunch(archive, target, pid, rundir):
                        "writable by you.\n\nMove it somewhere you own, or download the "
                        "new version yourself." % parent)
 
-    script = os.path.join(rundir, "update.sh")
-    name = os.path.basename(target)
+    # Not in rundir: shell.py deletes that directory as the window closes, which took the
+    # archive with it before tar ever ran -- no update ever installed on Linux (#8). Same
+    # rule as the macOS swapper: what outlives this process does not live in its folder.
+    work = tempfile.mkdtemp(prefix="riparr-update-")
+    moved = os.path.join(work, os.path.basename(archive))
+    shutil.move(archive, moved)
+    archive = moved
+    script = os.path.join(work, "update.sh")
+    log = os.path.join(work, "update.log")
     with open(script, "w") as f:
         f.write("""#!/bin/sh
+# Logged: this runs after the app has gone and has nowhere else to report a failure.
+exec >>%(log)s 2>&1
+set -x
 n=0
 while kill -0 %(pid)d 2>/dev/null && [ $n -lt 200 ]; do sleep 0.3; n=$((n+1)); done
 
@@ -695,20 +705,23 @@ tar xzf %(archive)s -C "$tmp" || { rm -rf "$tmp"; exit 1; }
 # assuming, so a rename upstream does not break updating.
 new=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d -print -quit)
 [ -n "$new" ] || { rm -rf "$tmp"; exit 1; }
-[ -x "$new/%(name)s" ] || { rm -rf "$tmp"; exit 1; }
+# A onedir build names its binary after its folder. Asked of the new one, because the
+# installed folder may have been renamed, and quoted, because it is "Riparr Preparer".
+name=$(basename "$new")
+[ -x "$new/$name" ] || { rm -rf "$tmp"; exit 1; }
 
 rm -rf %(target)s.old
 mv %(target)s %(target)s.old 2>/dev/null
 mv "$new" %(target)s || { mv %(target)s.old %(target)s; rm -rf "$tmp"; exit 1; }
 rm -rf %(target)s.old "$tmp" %(archive)s
 
-exec %(target)s/%(name)s
-""" % {"pid": pid, "archive": shlex.quote(archive),
-       "target": shlex.quote(target), "name": name})
+exec %(target)s/"$name"
+""" % {"pid": pid, "archive": shlex.quote(archive), "log": shlex.quote(log),
+       "target": shlex.quote(target)})
     os.chmod(script, 0o700)
     subprocess.Popen(["/bin/sh", script], start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True, ""
+    return True, log
 
 
 # ─────────────────────── Location, and why there is none ───────────────────────
