@@ -401,6 +401,15 @@ def run(family, device, dest, cancel_ev, total_bytes=0, on_progress=None,
         # after skipping blocks it was told to skip). Only the proof file counts for it.
         raise BackupFailed(_failure(family, rc, text))
     warning = None
+    if family != "dvd":
+        lost, hashes = makemkv_losses(text)
+        if lost:
+            raise BackupFailed(_lost_message(lost, text))
+        if hashes:
+            warning = ("%d file%s on this disc didn't match the disc's own checksums. "
+                       "That can be a mark on the disc, or a disc that was pressed that "
+                       "way. Check that the film plays through."
+                       % (hashes, "" if hashes == 1 else "s"))
     if family == "dvd":
         skipped = len(re.findall(r"(?im)^.*(?:skipp|read error|unable to read).*$", text))
         if skipped:
@@ -411,6 +420,46 @@ def run(family, device, dest, cancel_ev, total_bytes=0, on_progress=None,
     if log:
         log.info("Backup finished in %ds: %s", int(time.time() - started), folder)
     return folder, warning
+
+
+_MSG_CODE = re.compile(r'^MSG:(\d+),\d+,\d+,"(.*?)","')
+_LOST = re.compile(r"Failed to save title (\S+) to file")
+_HASHES = re.compile(r"(\d+) files? failed hash check")
+
+
+def makemkv_losses(text):
+    """(files a MakeMKV backup gave up on, files that failed their hash check).
+
+    MakeMKV's exit status is 0 either way. Found on a real Blu-ray: the library stalled
+    nine gigabytes into the film, MakeMKV deleted that file, carried on with the other
+    three hundred, said "Backup done but 1 files failed hash check" and exited 0. The
+    folder had its index.bdmv, so it passed as a finished backup -- without the film.
+    """
+    lost, hashes = [], 0
+    for line in (text or "").splitlines():
+        m = _MSG_CODE.match(line.strip())
+        if not m:
+            continue
+        code, msg = m.groups()
+        if code == "5003":
+            f = _LOST.search(msg)
+            name = f.group(1) if f else msg
+            if name not in lost:
+                lost.append(name)
+        elif code == "5079":
+            h = _HASHES.search(msg)
+            hashes = max(hashes, int(h.group(1)) if h else 1)
+    return lost, hashes
+
+
+def _lost_message(lost, text):
+    names = ", ".join(os.path.basename(n) for n in lost[:3]) + (
+        " and %d more" % (len(lost) - 3) if len(lost) > 3 else "")
+    if re.search(r"occurred while writing data", text or ""):
+        return ("%s couldn't be written: the library (or the card) stopped accepting "
+                "data partway through. Put the disc back in to try again." % names)
+    return ("%s couldn't be read. If the disc is dirty or scratched, clean it and put "
+            "it back in." % names)
 
 
 def _read(path):

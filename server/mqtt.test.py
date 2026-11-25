@@ -346,10 +346,9 @@ if not target and shutil.which("mosquitto"):
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
     s.close()
-    conf = os.path.join(_tmp, "mosquitto.conf")
-    with open(conf, "w") as f:
-        f.write("listener %d 127.0.0.1\nallow_anonymous true\n" % port)
-    broker = subprocess.Popen(["mosquitto", "-c", conf], stdout=subprocess.DEVNULL,
+    # No config file: Ubuntu confines mosquitto with AppArmor and it cannot read one from
+    # /tmp. Started this way it listens on this machine only and lets anybody in.
+    broker = subprocess.Popen(["mosquitto", "-p", str(port)], stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL)
     target = "127.0.0.1:%d" % port
     for _ in range(50):

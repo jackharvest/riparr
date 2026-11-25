@@ -131,6 +131,20 @@ bv = BK.iso_command("/a/disc", "/a/x.iso", "bluray", "")
 check("a Blu-ray's big files are allowed", "-allow-limited-size" in bv, True)
 check("a disc with no label still gets one", bv[bv.index("-V") + 1], "DISC")
 
+print("a backup that lost a file is not a backup")
+# Word for word from a real Blu-ray. MakeMKV exited 0 after this.
+LOG = '''MSG:2018,0,3,"Error 'Internal error - Operation result is incorrect (178)' occurred while writing data to '/x/disc/BDMV/STREAM/00001.m2ts' at offset '9294577664'","Error '%1' occurred while writing data to '%2' at offset '%3'","a","b","c"
+MSG:5003,0,2,"Failed to save title /BDMV/STREAM/00001.m2ts to file /x/disc/BDMV/STREAM/00001.m2ts","Failed to save title %1 to file %2","a","b"
+MSG:5079,128,1,"Backup done but 1 files failed hash check","Backup done but %1 files failed hash check","1"
+'''
+check("the lost file is found", BK.makemkv_losses(LOG), (["/BDMV/STREAM/00001.m2ts"], 1))
+contains("and named, with why", BK._lost_message(["/BDMV/STREAM/00001.m2ts"], LOG),
+         "00001.m2ts couldn't be written")
+check("a hash mismatch alone loses nothing",
+      BK.makemkv_losses(LOG.splitlines()[2]), ([], 1))
+check("a clean backup says nothing", BK.makemkv_losses(
+    'MSG:5070,260,0,"Backup done","Backup done"'), ([], 0))
+
 print("each family gets the tool that can actually back it up")
 dvd = BK.command("dvd", "/dev/sr0", "/x")
 check("a DVD goes through dvdbackup's mirror mode", dvd[:2], ["dvdbackup", "-M"])
