@@ -8,6 +8,62 @@ bother updating.
 
 ---
 
+## 0.8.0
+
+**Choose which languages a rip keeps.** The four Tracks settings now work: audio
+languages, subtitle languages, forced subtitles and commentary. Out of the box every track
+is still kept. A disc with none of the languages you asked for keeps all its audio, so
+nothing comes out silent.
+
+**The film and the whole disc, from one insert.** Set Titles to **Main title and full disc
+backup** and Riparr rips the film or season, then backs up the disc, then ejects. Backups
+can also be saved as **one ISO file**.
+
+**Updating from the web page works again when it stopped with "Permission denied:
+'/opt/riparr/packaging'".** It could also leave the box half updated while saying nothing
+had changed. A failed update now puts everything back. *If you're seeing that error, the
+old updater can't fix itself: update once with the Preparer's "Set up a box that's already
+running".*
+
+**A Blu-ray backup that lost a file now fails instead of passing.** If the library stopped
+answering partway through, MakeMKV dropped that file and said it had finished.
+
+**The wrong title with a changed minimum length.** With **Minimum title length** set above
+120 seconds, a rip could take a different title from the one chosen.
+
+**DVD box sets are read properly.** Premieres aren't mistaken for a play-all, cut-down
+copies aren't numbered as episodes, bonus discs and finale discs go where they belong, and
+a film that looked like two episodes is a film. A disc MakeMKV can't read stops with the
+reason instead of becoming an ISO of zeros. An optional TMDB key matches Jellyfin's and
+Plex's episode numbers. Thanks to JKutac.
+
+**On the episode plan:** changing the first episode, season or show renames the episodes
+too, any disc can be **filed as a film** instead, and a row can be marked as a special.
+Names you typed stay.
+
+**MQTT and Home Assistant.** Settings, Connect, MQTT. Job, progress, drive, library,
+temperature and health, plus an Auto Rip switch and an eject button. Off until you name a
+broker. Thanks to Maxklos.
+
+**Eject closes the tray too.** With the tray open the button reads **Close tray**. Thanks to
+Maxklos.
+
+**The Status LED section is gone.** It was left over from hardware that was never built.
+Thanks to Maxklos.
+
+**Older NASes:** a share that refuses the usual options ("Invalid argument") is tried again
+with plainer ones.
+
+**A guide for external USB drives,** and clearer advice when a drive isn't found.
+
+**Preparer:**
+
+- **Windows: "Access is denied" on a card that's been used before.** You don't have to wipe
+  the card first any more. Settings are also written when Windows gives the card no drive
+  letter.
+
+---
+
 ## 0.7.2
 
 **Accented names reach your library intact.** Umlauts and other accented letters came

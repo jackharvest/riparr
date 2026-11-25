@@ -205,6 +205,7 @@ jobs:
       # 2026-10-12, which is how a film with two featurettes reading as a season shipped.
       - name: Season discs are read and ripped as seasons
         run: |
+          python server/notitles-guard.test.py
           python server/tv-detect.test.py
           python server/tv-realdisc.test.py
           python server/tv-pipeline.test.py
