@@ -32,7 +32,7 @@ from . import system as SY
 # so a setting added later with "token" or "password" in its name is covered without
 # anyone remembering this file exists.
 _SECRET_KEY = re.compile(
-    r"pass|token|secret|webhook|^makemkv_key$|^smtp_(username|from|to)$|_url$|email",
+    r"pass|token|secret|webhook|^makemkv_key$|api_key$|^smtp_(username|from|to)$|_url$|email",
     re.I)
 REDACTED = "[redacted]"
 

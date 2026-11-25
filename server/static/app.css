@@ -1192,6 +1192,8 @@ tr.hist.cancelled > td.stat { color: var(--fg-muted); }
 .ep-src { font-size: 11.5px; white-space: nowrap; }
 .ep-move { display: flex; gap: 3px; }
 .ep-move .btn.tiny { padding: 2px 7px; line-height: 1.2; }
+.ep-move .btn.tiny[data-special] { font-size: 10.5px; }
+.ep-move .btn.tiny[data-special].on { background: var(--accent); color: var(--accent-fg, #fff); }
 .ep-credit { font-size: 11.5px; }
 .ep-credit a { color: inherit; }
 .season-tag {

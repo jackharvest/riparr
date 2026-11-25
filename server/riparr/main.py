@@ -798,7 +798,7 @@ def autorip_set(body: AutoRip, user=Depends(require_user)):
 # back the same way when untouched, which is what makes "save" on a page you did not
 # retype your SMTP password into not wipe it. `list_shares` established the precedent
 # of never returning a stored password at all; these follow it.
-SECRET_SETTINGS = ("smtp_password", "ntfy_token")
+SECRET_SETTINGS = ("smtp_password", "ntfy_token", "tmdb_api_key")
 SECRET_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 
 
@@ -1388,6 +1388,8 @@ class DiscAnswer(BaseModel):
     episode_titles: Dict[str, str] = None   # title index -> a name typed by hand
     order: List[int] = None             # title indexes, in the order they should go
     extras: Dict[str, str] = None       # extras to rip: title index -> what to call it
+    specials: Dict[str, int] = None     # episode rows filed as specials: index -> S00 number
+    as_film: bool = False               # a held season plan, filed as a film instead
 
 
 @app.post("/api/queue/{job_id}/answer")
@@ -1401,7 +1403,8 @@ def rip_answer(job_id: int, body: DiscAnswer, user=Depends(require_user)):
                              season=body.season, first_episode=body.first_episode,
                              series_id=body.series_id, include=body.include,
                              episode_titles=body.episode_titles, order=body.order,
-                             extras=body.extras)
+                             extras=body.extras, as_film=body.as_film,
+                             specials=body.specials)
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"ok": True, "message": message}
@@ -1426,6 +1429,18 @@ def tv_episode_list(series_id: int, season: int = None, user=Depends(require_use
     if season is not None:
         eps = [e for e in eps if e["season"] == season]
     return {"episodes": eps, "credit": "TVmaze"}
+
+
+@app.get("/api/tv/guide")
+def tv_guide(series_id: int, season: int, user=Depends(require_user)):
+    """One season's names by number, from the guide the plan numbers from (TMDB when
+    there is a key, else TVmaze), and its DVD order when that differs. The episode
+    prompt renames its rows from this the moment a different series or season is
+    picked, so what is on screen is what accepting will file."""
+    listed, numbering = RIP._guide(series_id, db.get("tmdb_api_key"))
+    dvd = TV.dvd_map_for(TV.dvd_order(series_id), season) if listed else {}
+    return {"names": TV.guide_names(listed, season), "numbering": numbering,
+            "dvd_map": {str(k): v for k, v in dvd.items()}}
 
 
 @app.post("/api/discs/{fingerprint}/rerip")

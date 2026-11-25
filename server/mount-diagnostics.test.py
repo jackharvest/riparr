@@ -61,6 +61,8 @@ case "$MODE:$*" in
   badpw:*) echo "mount error(13): Permission denied"; exit 32 ;;
   nocharset:*iocharset=utf8*) echo "mount error(79): Can not access a needed shared library"; exit 79 ;;
   nocharset:*) exit 0 ;;
+  einval:*noatime*) echo "mount error(22): Invalid argument"; exit 32 ;;
+  einval:*nobrl*) exit 0 ;;
   gone:*) echo "mount error(115): Operation now in progress"; exit 32 ;;
 esac
 '''
@@ -130,6 +132,12 @@ def main():
               len(rows) == 3 and all(r[1] == "1" and r[3] == "3.1.1" for r in rows.values()),
               str(rows))
 
+        out, calls, rows = run_script(tmp, "einval")
+        check("invalid argument: mounts with plainer options",
+              all(r[1] == "1" for r in rows.values()) and len(rows) == 3, str(rows))
+        check("without noatime, still UTF-8",
+              all("noatime" not in c and "iocharset=utf8" in c
+                  for c in calls if "nobrl" in c), str(calls[-1:]))
         out, calls, rows = run_script(tmp, "gone")
         check("unreachable: one try per share", len(calls) == 3, "%d calls" % len(calls))
 
@@ -165,6 +173,7 @@ def main():
             check("folder %r" % (typed,), db.destination("movie")[1] == want,
                   repr(db.destination("movie")[1]))
         db.set("makemkv_key", "T-" + "x" * 64)
+        db.set("tmdb_api_key", "tmdbkey1234567890")
         db.set("discord_webhook", "https://discord.com/api/webhooks/1/TOKENVALUE123")
         name, data = D.build()
         z = zipfile.ZipFile(io.BytesIO(data))
@@ -172,7 +181,7 @@ def main():
         check("zip has summary and mount log",
               {"riparr-diagnostics/summary.txt", "riparr-diagnostics/mount.txt"}
               <= set(z.namelist()), str(z.namelist()))
-        for secret in ("pw-one-secret", "TOKENVALUE123", "x" * 64):
+        for secret in ("pw-one-secret", "TOKENVALUE123", "x" * 64, "tmdbkey1234567890"):
             check("no %s… in the zip" % secret[:8], secret not in text)
         check("scrub catches password=… in free text",
               "hunter22" not in D.scrub("mount -o password=hunter22,user=a", []))

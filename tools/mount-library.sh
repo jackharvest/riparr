@@ -275,6 +275,23 @@ PYEOF
       *"error(110)"*|*"error(113)"*|*"error(115)"*|*"error(111)"*) break ;;
     esac
   done
+
+  # "Invalid argument" is about the options, not the NAS: some kernel and NAS pairs refuse
+  # noatime, or want the owner forced and byte-range locks left alone, and every version
+  # above then fails the same way. Found on a Buffalo LinkStation (#16), where mounting
+  # by hand with these worked. So once more, plainly: first letting the two ends agree a
+  # version between themselves, then the oldest ones by name.
+  if [ "$DONE" = 0 ] && [[ "$ERRS" == *"error(22)"* ]]; then
+    PLAIN="${BASE/,noatime/},forceuid,forcegid,nobrl"
+    for TRY in "" ",vers=2.0" ",vers=1.0"; do
+      if ERR=$(mount -t cifs "//$HOST/$SHARE" "$TARGET" -o "$PLAIN$CS$TRY" 2>&1); then
+        DONE=1; USED=${TRY#,vers=}; USED=${USED:-negotiated}
+        log "//$HOST/$SHARE refused the usual options; mounted without noatime, with forceuid,forcegid,nobrl"
+        break
+      fi
+      ERRS+="plain${TRY}: ${ERR//$'\n'/ }; "
+    done
+  fi
   if [ "$DONE" = "1" ]; then
     log "mounted //$HOST/$SHARE at $TARGET (SMB $USED, $ADDR)"
     [ "$USED" = "1.0" ] && log "//$HOST only speaks SMB 1. It works, but SMB 1 is old and insecure; turning on SMB 2 or 3 on the NAS is worth doing"
