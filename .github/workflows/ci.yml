@@ -176,6 +176,12 @@ jobs:
         run: |
           python server/choose-title.test.py
 
+      # Which audio and subtitles a rip keeps. Above all: no combination of settings may
+      # leave a film without sound.
+      - name: Track selection never silences a film
+        run: |
+          python server/tracks.test.py
+
       # The real mount script against a fake NAS. A LinkStation speaks SMB 2.0 at most,
       # and the script stopped at 2.1: smbclient's Test passed, the mount failed every
       # boot, and the page blamed a sleeping NAS. Also: data discs were never mounted,
@@ -304,3 +310,35 @@ jobs:
           done
           curl -fsS http://127.0.0.1:9797/api/status | head -c 200; echo
           curl -fsS http://127.0.0.1:9797/api/setup/state
+
+  # A used card: one volume with a drive letter and a mounted one without. The second is
+  # what "Access is denied" was (#7), and nothing but a real Windows can refuse it.
+  windows-card:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: The Windows writer writes over a used card
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP "used.vhdx"
+          @"
+          create vdisk file="$vhd" maximum=256 type=fixed
+          attach vdisk
+          create partition primary size=100
+          format fs=ntfs quick label=LETTER
+          assign
+          create partition primary
+          format fs=fat32 quick label=NOLETTER
+          assign mount=$env:RUNNER_TEMP\mnt
+          list volume
+          "@ | Set-Content dp.txt
+          mkdir $env:RUNNER_TEMP\mnt | Out-Null
+          diskpart /s dp.txt | Out-Host
+          "hello" | Set-Content $env:RUNNER_TEMP\mnt\file.txt
+          $n = (Get-DiskImage -ImagePath $vhd | Get-Disk).Number
+          Get-Partition -DiskNumber $n | Format-Table | Out-Host
+          python packaging/windows/test-used-card.py $n
+          exit $LASTEXITCODE

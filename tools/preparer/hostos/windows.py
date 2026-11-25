@@ -292,13 +292,15 @@ def keep_awake_command(pid):
 #
 # So the sequence is fixed and it is not optional:
 #
-#   1. find every volume sitting on this physical disk        (by device number, exactly)
+#   1. find every volume sitting on this physical disk        (by device number, exactly,
+#                                                              drive letter or not)
 #   2. FSCTL_LOCK_VOLUME each one                             (fails if anything has a file open)
 #   3. FSCTL_DISMOUNT_VOLUME each one                         (the filesystem lets go)
 #   4. hold those handles open for the whole write            (closing one remounts it)
 #   5. FSCTL_ALLOW_EXTENDED_DASD_IO on the disk handle        (best effort; see _WinSink)
-#   6. write whole sectors, out of page-aligned memory
-#   7. IOCTL_DISK_UPDATE_PROPERTIES                           (re-read the partition table)
+#   6. IOCTL_DISK_DELETE_DRIVE_LAYOUT                         (no partitions, so no volumes)
+#   7. write whole sectors, out of page-aligned memory
+#   8. IOCTL_DISK_UPDATE_PROPERTIES                           (re-read the partition table)
 #
 # Step 4 is the one that is easy to get wrong: the lock is a property of the handle, not
 # of the volume, so a `with` block that tidies up early hands the card back to Windows
@@ -317,6 +319,7 @@ FSCTL_UNLOCK_VOLUME = 0x0009001C
 FSCTL_DISMOUNT_VOLUME = 0x00090020
 FSCTL_ALLOW_EXTENDED_DASD_IO = 0x00090083
 IOCTL_DISK_UPDATE_PROPERTIES = 0x00070140
+IOCTL_DISK_DELETE_DRIVE_LAYOUT = 0x0007C100
 IOCTL_STORAGE_EJECT_MEDIA = 0x002D4808
 IOCTL_STORAGE_GET_DEVICE_NUMBER = 0x002D1080
 
@@ -365,6 +368,12 @@ def _bind():
     k.FlushFileBuffers.argtypes = [wintypes.HANDLE]
     k.GetLogicalDrives.restype = wintypes.DWORD
     k.GetLogicalDrives.argtypes = []
+    k.FindFirstVolumeW.restype = wintypes.HANDLE
+    k.FindFirstVolumeW.argtypes = [wintypes.LPWSTR, wintypes.DWORD]
+    k.FindNextVolumeW.restype = wintypes.BOOL
+    k.FindNextVolumeW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD]
+    k.FindVolumeClose.restype = wintypes.BOOL
+    k.FindVolumeClose.argtypes = [wintypes.HANDLE]
     k.VirtualAlloc.restype = ctypes.c_void_p
     k.VirtualAlloc.argtypes = [ctypes.c_void_p, ctypes.c_size_t, wintypes.DWORD,
                                wintypes.DWORD]
@@ -505,25 +514,79 @@ def _volumes_on(number):
     return out
 
 
+def _all_volumes_on(number):
+    r"""Every volume on physical disk `number`, as ("\\?\Volume{guid}", partition).
+
+    By volume name rather than by drive letter, because a mounted volume does not need a
+    letter. A card with a second partition, one Windows chose not to letter, or any card
+    at all on a machine with automount off, has volumes `_volumes_on` cannot see -- and
+    Windows guards their sectors just the same. The write was then refused with "Access
+    is denied", as administrator, until the card was wiped by hand (#7).
+    """
+    k, out = _k32(), []
+    name = ctypes.create_unicode_buffer(512)
+    find = k.FindFirstVolumeW(name, len(name))
+    if not find or find == _invalid_handle():
+        return out
+    try:
+        while True:
+            path = name.value.rstrip("\\")         # with the slash, it is the root folder
+            try:
+                h = _open(path, 0)                  # 0: asks about it without reading it
+            except OSError:
+                h = None
+            if h:
+                try:
+                    raw = _ioctl(h, IOCTL_STORAGE_GET_DEVICE_NUMBER,
+                                 ctypes.sizeof(_StorageDeviceNumber))
+                    sdn = _StorageDeviceNumber.from_buffer_copy(raw)
+                    if sdn.DeviceNumber == number:
+                        out.append((path, sdn.PartitionNumber))
+                except OSError:
+                    pass                            # spans disks, or is not on one
+                finally:
+                    _close(h)
+            if not k.FindNextVolumeW(find, name, len(name)):
+                break
+    finally:
+        k.FindVolumeClose(find)
+    return out
+
+
 class _LockedVolumes:
     """Locked and dismounted volumes, held open for as long as this object lives."""
+
+    # A lock is refused while anything has a file open, and on a card that was just
+    # plugged in something usually has for a second or two: the indexer, the antivirus,
+    # an AutoPlay window reading the label.
+    TRIES = 12
 
     def __init__(self, number):
         self.handles = []
         self.failed = []
-        for letter, _partno in _volumes_on(number):
+        letters = {p: l for l, p in _volumes_on(number)}
+        for path, partno in _all_volumes_on(number):
+            shown = letters.get(partno) or "partition %d" % partno
             try:
-                h = _open(r"\\.\%s" % letter, GENERIC_READ | GENERIC_WRITE)
+                h = _open(path, GENERIC_READ | GENERIC_WRITE)
             except OSError as e:
-                self.failed.append((letter, str(e)))
+                self.failed.append((shown, str(e)))
                 continue
+            for attempt in range(self.TRIES):
+                try:
+                    _ioctl(h, FSCTL_LOCK_VOLUME)
+                    break
+                except OSError:
+                    time.sleep(0.25)
             try:
-                _ioctl(h, FSCTL_LOCK_VOLUME)
+                # Without the lock too. A dismount on its own takes the filesystem away
+                # from whatever is still holding a file, which on a card that is about to
+                # be overwritten end to end is the intention.
                 _ioctl(h, FSCTL_DISMOUNT_VOLUME)
                 self.handles.append(h)
             except OSError as e:
                 _close(h)
-                self.failed.append((letter, str(e)))
+                self.failed.append((shown, str(e)))
 
     def release(self):
         for h in self.handles:
@@ -593,6 +656,15 @@ class _WinSink:
                 _ioctl(self.handle, FSCTL_ALLOW_EXTENDED_DASD_IO)
             except OSError:
                 pass
+            # Forget the partitions before overwriting them. With no partitions there are
+            # no volumes, so nothing can be remounted under the write or guard its
+            # sectors from it -- what wiping the card by hand did for people. Best
+            # effort: a card with no partition table has nothing to delete.
+            for code in (IOCTL_DISK_DELETE_DRIVE_LAYOUT, IOCTL_DISK_UPDATE_PROPERTIES):
+                try:
+                    _ioctl(self.handle, code)
+                except OSError:
+                    pass
             self.scratch = _Aligned(CHUNK)
         except BaseException:
             self._teardown()
@@ -781,21 +853,29 @@ def mount_boot(dev, partno):
         for letter, part in _volumes_on(number):
             if part == partno:
                 return letter + "\\", (lambda: None), ""
+        if attempt >= 4:
+            # No letter, but mounted all the same: with automount off, or no letters left,
+            # Windows never hands one out. The volume's own name is a path like any other.
+            for path, part in _all_volumes_on(number):
+                if part == partno and os.path.isdir(path + "\\"):
+                    return path + "\\", (lambda: None), ""
         if attempt == 4:
             rescan_partitions(dev)
         time.sleep(1.5)
     return None, (lambda: None), (
-        "Windows never gave the card's boot partition a drive letter. Unplug and "
-        "replug the card, then use Apply settings only.")
+        "Windows never mounted the card's boot partition. Unplug and replug the card, "
+        "then use Apply settings only.")
 
 
 def explain_write_error(err, xerr, rc, dev):
     blob = (str(err) + " " + str(xerr)).lower()
     if "access is denied" in blob or "denied" in blob:
         return ("Windows denied access to %s.\n\n"
-                "Writing a card needs Administrator rights, and the elevation prompt "
-                "either did not appear or was dismissed. Antivirus software that "
-                "guards removable drives also produces this.\n\n%s"
+                "If you approved the administrator prompt, something on this computer "
+                "is guarding the card: antivirus that protects removable drives, or a "
+                "backup or sync program. Close it and try again. If the prompt never "
+                "appeared, start the Preparer with right-click, Run as "
+                "administrator.\n\n%s"
                 % (dev, err or "(no detail)"))
     if "in use" in blob or "being used" in blob or "sharing violation" in blob:
         return ("%s is still in use.\n\nClose any Explorer window showing the card, "
