@@ -261,10 +261,13 @@ DEFAULTS = {
     # prefers a descriptive name over S00E01 when the metadata does not know the
     # special. Both read this folder as season zero.
     "tv_specials_folder": "Season 00",
-    "audio_languages": ["eng"],
-    "subtitle_languages": ["eng"],
+    # Which tracks go in the MKV (tracks.py). Empty is every language, and these four
+    # together are "keep everything", which is what every rip did while they were only
+    # saved. Dropping tracks is something a person asks for.
+    "audio_languages": [],
+    "subtitle_languages": [],
     "keep_forced_subtitles": True,
-    "keep_commentary": False,
+    "keep_commentary": True,
     "min_title_seconds": 120,
     "rip_mode": "main",
     # "auto" | "burst" | "stream" | "direct". Direct points MakeMKV at the library
@@ -466,6 +469,18 @@ def init():
                   ("auto_tv", json.dumps("show")))
         c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?, ?)",
                   ("on_season_disc", json.dumps("unsure")))
+    # The track settings did nothing until 0.8.0, and the page saves every box on it, so
+    # the old defaults -- English only, no commentary -- are stored on boxes where nobody
+    # chose them. Left alone, updating would have started dropping the German from German
+    # films. Once, and only a value equal to the old default: a list somebody typed is
+    # kept, and starts working.
+    if not c.execute("SELECT 1 FROM settings WHERE key='tracks_live'").fetchone():
+        for key, old in (("audio_languages", ["eng"]), ("subtitle_languages", ["eng"]),
+                         ("keep_commentary", False)):
+            row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            if row and json.loads(row["value"]) == old:
+                c.execute("DELETE FROM settings WHERE key=?", (key,))
+        c.execute("INSERT INTO settings(key, value) VALUES ('tracks_live', 'true')")
     c.commit()
 
 

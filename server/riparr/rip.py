@@ -38,7 +38,7 @@ import threading
 import time
 
 from . import db, tv, notify, platform as P, shares as SH, system as SY
-from . import backup as BK, music as MU, wikidata as WD
+from . import backup as BK, music as MU, tracks as TR, wikidata as WD
 
 log = SY.component("Rip")
 
@@ -897,7 +897,8 @@ def read_titles(device, disc=None, on_progress=None):
     # makemkvcon emits PRGV throughout `info`; it was being thrown away, which is why
     # reading an encrypted disc looked like nine minutes of nothing happening.
     proc = subprocess.Popen(
-        [binary, "-r", "--cache=1", "info", _disc_arg(device)],
+        [binary, "-r", "--cache=1", "--minlength=%d" % scan_minlength(), "info",
+         _disc_arg(device)],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     out_lines = []
     found = [0]
@@ -979,8 +980,10 @@ def parse_info(text):
             t["chapters"] = int(value or 0)
     # The disc's own name, carried on every title so it survives the scan cache and
     # the job's stored title list without a column of its own.
+    found = TR.parse(text)
     for t in titles.values():
         t["disc_name"] = disc_name
+        t["tracks"] = found.get(t["index"]) or {}
     return [titles[k] for k in sorted(titles)]
 
 
@@ -2345,6 +2348,40 @@ def _file_film_extras(job, s, transport, name, kind="movie"):
              "" if len(extras) == 1 else "s")
 
 
+def scan_minlength():
+    """The shortest title MakeMKV is told to list, in the scan and in the rip alike.
+
+    The same for both, because it decides the *numbering*: MakeMKV numbers the titles
+    that pass, so a rip that filtered at 600 seconds after a scan that filtered at 120
+    asked for title 1 and got a different title 1. On a real Blu-ray that was a 21-minute
+    featurette instead of the film. Riparr does its own filtering on the setting; this
+    only has to be low enough not to hide anything the setting allows.
+    """
+    return min(DEFAULT_MIN_TITLE, int(_settings().get("min_title_seconds")
+                                      or DEFAULT_MIN_TITLE))
+
+
+def _apply_tracks(job, s, title_index):
+    """Tell MakeMKV which of this title's tracks to keep. Never fails a rip: the worst
+    a problem here may do is keep too much."""
+    from . import makemkv as MK
+    try:
+        title = next((t for t in _titles_cache["titles"] or []
+                      if int(t["index"]) == int(title_index)), None)
+        rules, said = TR.selection((title or {}).get("tracks"), s)
+        MK.set_selection(rules)
+        if rules or said:
+            log.info("Job %d: tracks for title %s: %s", job["id"], title_index,
+                     "; ".join(x for x in (rules, said) if x))
+    except Exception:
+        log.exception("Job %d: couldn't set which tracks to keep; keeping all of them",
+                      job["id"])
+        try:
+            MK.set_selection("")
+        except Exception:
+            pass
+
+
 def _run_makemkv(job, s, title_index, out_dir, cancel_ev, total_bytes,
                  on_progress=None, on_first_byte=None):
     """One `makemkvcon` run for one title. Returns the .mkv it wrote.
@@ -2356,8 +2393,9 @@ def _run_makemkv(job, s, title_index, out_dir, cancel_ev, total_bytes,
     """
     binary = shutil.which("makemkvcon") or "/usr/local/bin/makemkvcon"
     cmd = [binary, "-r", "--progress=-same",
-           "--minlength=%d" % s["min_title_seconds"],
+           "--minlength=%d" % scan_minlength(),
            "mkv", _disc_arg(job.get("_device")), str(title_index), out_dir]
+    _apply_tracks(job, s, title_index)
     log.info("Job %d: %s", job["id"], " ".join(cmd))
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

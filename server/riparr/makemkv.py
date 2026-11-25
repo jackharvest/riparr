@@ -978,6 +978,7 @@ def dismiss_renewal_notice():
 
 
 SETTINGS_CONF = "~/.MakeMKV/settings.conf"
+_conf_lock = threading.Lock()
 
 
 def settings_conf_path():
@@ -1008,37 +1009,50 @@ def apply_key(key):
         return True, "Simulated: would write app_Key to %s" % path
 
     try:
+        _write_conf(path, "app_Key", key)
+    except OSError as e:
+        return False, ("Saved, but MakeMKV could not be registered: %s could not be "
+                       "written (%s)." % (path, e))
+    return True, ("Registered." if key else "Key cleared.")
+
+
+def _write_conf(path, name, value):
+    """Set one line of MakeMKV's settings.conf, or take it out when value is empty.
+
+    Replaced rather than appended: MakeMKV reads the file top to bottom and the last
+    assignment wins, so a second line would work by luck and the file would grow by one
+    every save. Written to a temporary file in the same directory and renamed, so a power
+    cut leaves the old settings.conf rather than half of a new one.
+    """
+    with _conf_lock:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         lines = []
         if os.path.exists(path):
             with open(path) as f:
                 lines = f.read().splitlines()
-
-        # Replace the existing app_Key rather than appending a second one: MakeMKV reads
-        # the file top to bottom and the last assignment wins, so an appended key would
-        # work by luck and a duplicated file would grow by one line per save.
-        out = [l for l in lines if not re.match(r"\s*app_Key\s*=", l)]
-        if key:
-            out.append('app_Key = "%s"' % key.replace('\\', '\\\\').replace('"', '\\"'))
-        body = "\n".join(out).rstrip("\n") + "\n"
-
-        # Written via a temporary file in the same directory and renamed, so a power cut
-        # mid-write leaves the old settings.conf rather than half of a new one.
+        out = [l for l in lines if not re.match(r"\s*%s\s*=" % re.escape(name), l)]
+        if value:
+            out.append('%s = "%s"' % (name, value.replace('\\', '\\\\')
+                                      .replace('"', '\\"')))
+        if out == lines:
+            return
         d = os.path.dirname(path)
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".settings.conf.")
         try:
             with os.fdopen(fd, "w") as f:
-                f.write(body)
+                f.write("\n".join(out).rstrip("\n") + "\n")
             os.chmod(tmp, 0o600)
             os.replace(tmp, path)
         except Exception:
             if os.path.exists(tmp):
                 os.unlink(tmp)
             raise
-    except OSError as e:
-        return False, ("Saved, but MakeMKV could not be registered: %s could not be "
-                       "written (%s)." % (path, e))
-    return True, ("Registered." if key else "Key cleared.")
+
+
+def set_selection(rules):
+    """The tracks the next `makemkvcon mkv` keeps (tracks.py); "" for MakeMKV's own."""
+    if not P.MOCK or "~" not in SETTINGS_CONF:
+        _write_conf(settings_conf_path(), "app_DefaultSelectionString", rules)
 
 
 def key_is_registered():

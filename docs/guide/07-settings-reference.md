@@ -135,15 +135,15 @@ row says.
 
 ## Track selection
 
-**The two language settings, forced subtitles and commentary tracks don't change a rip
-yet.** They're saved, but every rip keeps the tracks MakeMKV selects by default.
+Out of the box every track is kept. These apply to films and TV saved as MKV; a full disc
+backup is the whole disc.
 
 | Setting | Default |
 |---|---|
-| **Audio languages** | Your locale language + original |
-| **Subtitle languages** | Your locale language |
-| **Keep forced subtitles** | On — these are the subtitles for alien/foreign dialogue |
-| **Keep commentary tracks** | Off |
+| **Audio languages** | Empty — every language. List the ones you want as codes or names (`eng, fra` or `English, French`). A disc with none of them keeps all its audio, so nothing comes out silent |
+| **Subtitle languages** | Empty — every language. `none` for no subtitles |
+| **Keep forced subtitles** | On — these are the subtitles for alien/foreign dialogue. Kept in your audio languages as well as your subtitle languages |
+| **Keep commentary tracks** | On. Off leaves out the tracks the disc marks as commentary. DVDs usually mark them; most Blu-rays don't, and those stay |
 | **Minimum title length** | 120 seconds — filters menus and logo stings |
 | **Rip mode** | Main title *(default)* / All titles / **Full disc backup** — the whole disc as a `VIDEO_TS` or `BDMV` folder, menus and all. DVDs need two extra tools, which install by themselves; until they have, DVDs are ripped as MKV and the job says so |
 | **When Riparr can't tell which title is the film** | **Use the most likely one** *(default)* / Ask me |

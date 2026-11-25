@@ -2261,17 +2261,21 @@ settingsPages.ripping = async (s) => {
   <div class="section"><h2>Tracks
     <span class="grow"></span>
     <span class="badge warn">Not working yet</span></h2><div>
-    <p class="muted">These four settings are saved but don't change a rip yet. Every rip
-      keeps the tracks MakeMKV selects by default.</p>
+    <p class="muted">For films and TV saved as MKV. A full disc backup keeps everything.</p>
     <label class="f"><span>Audio languages</span>
-      <input data-set="audio_languages" data-list value="${esc((s.audio_languages || []).join(", "))}">
-      <span class="help">Comma separated ISO codes, e.g. eng, fra.</span></label>
+      <input data-set="audio_languages" data-list placeholder="All languages"
+             value="${esc((s.audio_languages || []).join(", "))}">
+      <span class="help">Leave it empty to keep every language, or list the ones you want:
+        <code>eng, fra</code> or <code>English, French</code>. A disc with none of them keeps
+        all its audio.</span></label>
     <label class="f"><span>Subtitle languages</span>
-      <input data-set="subtitle_languages" data-list value="${esc((s.subtitle_languages || []).join(", "))}"></label>
+      <input data-set="subtitle_languages" data-list placeholder="All languages"
+             value="${esc((s.subtitle_languages || []).join(", "))}">
+      <span class="help">The same, or <code>none</code> for no subtitles.</span></label>
     ${sw("keep_forced_subtitles", "Keep forced subtitles", s.keep_forced_subtitles,
-        "The subtitles for alien or foreign dialogue. Almost always wanted.")}
+        "The subtitles for alien or foreign dialogue. Almost always wanted. Kept in your audio languages too.")}
     ${sw("keep_commentary", "Keep commentary tracks", s.keep_commentary,
-        "Keeping every language and commentary can roughly double file size.")}
+        "Off leaves out the tracks a disc marks as commentary. DVDs usually mark them; most Blu-rays don't, and those stay.")}
   </div></div>
 
   <div class="section"><h2>Transfer</h2><div>
