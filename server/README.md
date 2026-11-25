@@ -20,6 +20,7 @@ is exercisable on a laptop. `IS_APPLIANCE` is the only switch.
 | `riparr/platform.py` | **Everything that differs between the appliance and a Mac.** Nothing else shells out. |
 | `riparr/db.py` | SQLite. Settings are typed key/value; WAL, because the cable gets yanked (D4) |
 | `riparr/shares.py` | SMB discovery, and the write test that proves a share works |
+| `riparr/mqtt.py` | State on an MQTT broker, two commands back, Home Assistant discovery |
 | `riparr/updater.py` | Update check and install against the official repository |
 | `static/` | The web UI |
 | `static/themes/` | theme.park palettes (MIT), plus `servarr.css` |

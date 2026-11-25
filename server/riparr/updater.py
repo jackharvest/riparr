@@ -30,8 +30,21 @@ def current_version():
     return __version__
 
 
+# The last check that got an answer. MQTT publishes "is there an update" every thirty
+# seconds, and that must be a look at this rather than thirty-second calls to GitHub.
+last_result = None
+
+
 def check(repo=REPO, timeout=8):
     """Never raises. A box with no internet still has to run."""
+    global last_result
+    r = _check(repo, timeout)
+    if r.get("status") in ("update", "current"):
+        last_result = r
+    return r
+
+
+def _check(repo, timeout):
     url = "%s/repos/%s/releases/latest" % (GITHUB_API, repo)
     req = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
