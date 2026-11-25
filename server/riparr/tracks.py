@@ -20,9 +20,11 @@ import re
 ALL = "all"
 NONE = "none"
 
-# The disc uses the three-letter terminology codes ("deu"). People type "de", "ger" or
-# "German", and all four should mean the same thing. Codes not listed pass through as
-# typed, if they look like a code.
+# One language has several codes and discs don't agree on which: MakeMKV reports French
+# as "fra" on a Blu-ray and "fre" on a DVD. People type "fr" or "French". All of them mean
+# the same thing, so both sides go through this before they are compared, and the rules
+# are written in the disc's own spelling. Codes not listed pass through as typed, if they
+# look like a code.
 _NAMES = {
     "ara": "ar arabic", "bul": "bg bulgarian", "cat": "ca catalan",
     "ces": "cs cze czech", "dan": "da danish", "deu": "de ger german deutsch",
@@ -46,7 +48,8 @@ for _code, _words in _NAMES.items():
         _LOOKUP[_w] = _code
 
 # Stream attribute 22 in robot output, MakeMKV's AP_AVStreamFlag: director's comments,
-# and an alternate set of them. DVDs mark these; most Blu-rays don't.
+# and an alternate set of them. Many discs mark neither: a real DVD with a commentary
+# track (English stereo beside English 5.1) had nothing to say so.
 _COMMENTARY = 1 | 2
 _FORCED = 4096
 
@@ -124,6 +127,11 @@ def _picker(langs):
     return _langs([l or "nolang" for l in sorted(langs)])
 
 
+def _is(lang, codes):
+    """Whether a disc's language is one of the wanted codes, whichever spelling it uses."""
+    return (code(lang) or lang) in codes
+
+
 def selection(tracks, settings):
     """(selection string, sentence for the log), or ("", "") to leave MakeMKV alone.
 
@@ -146,11 +154,11 @@ def selection(tracks, settings):
     # Audio. A track with no language is kept beside the wanted ones: it is usually the
     # only soundtrack of an old or home-made disc, and dropping it on a guess is not.
     have = {l for l, _ in audio}
-    pick = have if want_a is None else {l for l in have if l in want_a or l == ""}
+    pick = have if want_a is None else {l for l in have if _is(l, want_a) or l == ""}
     if audio and not any(l in pick for l, _ in audio):
         pick = have
         said.append("none of the audio is in a language you asked for, so all of it is kept")
-    if want_a is not None and not (pick & set(want_a)) and pick != have:
+    if want_a is not None and not any(_is(l, want_a) for l in pick) and pick != have:
         # Only unlabelled tracks matched; a labelled one may be the real soundtrack.
         pick = have
     if audio:
@@ -170,7 +178,7 @@ def selection(tracks, settings):
     elif want_s is None:
         spick = shave
     else:
-        spick = {l for l in shave if l in want_s}
+        spick = {l for l in shave if _is(l, want_s)}
     if spick:
         rules.append("+sel:subtitle" if spick == shave
                      else "+sel:(subtitle&%s)" % _picker(spick))
@@ -181,7 +189,7 @@ def selection(tracks, settings):
     else:
         # The subtitles for a film's foreign dialogue, in whichever language you watch
         # it in -- which is the audio's, even with subtitles off altogether.
-        extra = {l for l in has_forced - spick if l in (want_a or [])}
+        extra = {l for l in has_forced - spick if _is(l, want_a or [])}
         if extra:
             rules.append("+sel:(subtitle&forced&%s)" % _picker(extra))
 

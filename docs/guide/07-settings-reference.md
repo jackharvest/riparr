@@ -143,7 +143,7 @@ backup is the whole disc.
 | **Audio languages** | Empty — every language. List the ones you want as codes or names (`eng, fra` or `English, French`). A disc with none of them keeps all its audio, so nothing comes out silent |
 | **Subtitle languages** | Empty — every language. `none` for no subtitles |
 | **Keep forced subtitles** | On — these are the subtitles for alien/foreign dialogue. Kept in your audio languages as well as your subtitle languages |
-| **Keep commentary tracks** | On. Off leaves out the tracks the disc marks as commentary. DVDs usually mark them; most Blu-rays don't, and those stay |
+| **Keep commentary tracks** | On. Off leaves out the tracks the disc marks as commentary. Many discs don't mark theirs, and those stay |
 | **Minimum title length** | 120 seconds — filters menus and logo stings |
 | **Rip mode** | Main title *(default)* / All titles / **Full disc backup** — the whole disc as a `VIDEO_TS` or `BDMV` folder, menus and all. DVDs need two extra tools, which install by themselves; until they have, DVDs are ripped as MKV and the job says so / **Main title and full disc backup** — both from one insert; the disc is read twice and ejected at the end |
 | **Save a full disc backup as** | **A folder** *(default)* / **One ISO file**, packed after the disc is out. It needs room for the disc twice over while it works |

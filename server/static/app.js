@@ -2334,7 +2334,7 @@ settingsPages.ripping = async (s) => {
     ${sw("keep_forced_subtitles", "Keep forced subtitles", s.keep_forced_subtitles,
         "The subtitles for alien or foreign dialogue. Almost always wanted. Kept in your audio languages too.")}
     ${sw("keep_commentary", "Keep commentary tracks", s.keep_commentary,
-        "Off leaves out the tracks a disc marks as commentary. DVDs usually mark them; most Blu-rays don't, and those stay.")}
+        "Off leaves out the tracks a disc marks as commentary. Many discs don't mark theirs, and those stay.")}
   </div></div>
 
   <div class="section"><h2>Transfer</h2><div>

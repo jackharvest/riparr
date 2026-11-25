@@ -63,6 +63,14 @@ check("an unlabelled track stays with a wanted one", sel(UN, audio_languages=["e
 check("but doesn't stand in for one", sel(UN, audio_languages=["jpn"]), "")
 check("'none' can't silence a film", sel(BD, audio_languages=["none"]), "")
 
+print("one language, two spellings")
+DVDFR = {"audio": [["eng", 0], ["fre", 0]], "subtitle": [["eng", 0], ["fre", 0], ["ger", 0]]}
+check("a DVD's French is French", sel(DVDFR, audio_languages=["French"]),
+      "-sel:all,+sel:video,+sel:(audio&(fre)),+sel:subtitle")
+check("subtitles too, however it's typed",
+      sel(DVDFR, subtitle_languages=["fra", "de"]),
+      "-sel:all,+sel:video,+sel:audio,+sel:(subtitle&(fre|ger))")
+
 print("commentary")
 DVD = {"audio": [["eng", 0], ["eng", 1], ["fra", 0]], "subtitle": [["eng", 0]]}
 check("dropped when marked", sel(DVD, keep_commentary=False),
