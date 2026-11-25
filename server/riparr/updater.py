@@ -89,6 +89,9 @@ SERVER_ASSET = "riparr-server.tar.gz"
 # permission to create anything. See install().
 VENV_DIR = ".venv"
 PREV_DIR = ".previous"
+# Where a folder goes when it cannot go into .previous, and where a download is unpacked.
+OLD_PREFIX = ".old-"
+STAGE_PREFIX = ".staging-"
 
 
 def _pick_asset(assets):
@@ -158,10 +161,15 @@ def install(repo=REPO):
     except OSError:
         pass
 
-    tmp = tempfile.mkdtemp(prefix="riparr-update-")
     backup = os.path.join(INSTALL_DIR, PREV_DIR)
-    swapped = False
+    moved, placed = [], []          # what the swap has done so far, for putting it back
+    tmp = None
     try:
+        _clear_leftovers()
+        # Unpacked beside what it replaces, not in /tmp. The last step is then a rename
+        # on one filesystem, which either happens or does not: a card that fills up
+        # fills up here, before anything has been moved.
+        tmp = tempfile.mkdtemp(prefix=STAGE_PREFIX, dir=INSTALL_DIR)
         archive = os.path.join(tmp, asset["name"])
         _download(asset["url"], archive)
 
@@ -210,18 +218,20 @@ def install(repo=REPO):
         # update took the interpreter with it. The box kept serving, because the running
         # process holds its own files open, and would not have come back from the next
         # restart. It stays exactly where it is now, and a failed update cannot reach it.
-        keep = {VENV_DIR, PREV_DIR}
-        shutil.rmtree(backup, ignore_errors=True)
+        #
+        # Nothing is ever copied: every move is a rename inside one directory tree, and
+        # each is written down as it happens so a failure at any point can be undone.
+        if os.path.lexists(backup):
+            _discard(backup)
         os.makedirs(backup)
-        for name in os.listdir(INSTALL_DIR):
-            if name in keep:
-                continue
-            shutil.move(os.path.join(INSTALL_DIR, name), os.path.join(backup, name))
+        for name in _installed():
+            _park(name, backup, moved)
         for name in os.listdir(root):
-            if name in keep:
+            if name in (VENV_DIR, PREV_DIR):
                 continue
-            shutil.move(os.path.join(root, name), os.path.join(INSTALL_DIR, name))
-        swapped = True
+            dest = os.path.join(INSTALL_DIR, name)
+            placed.append(dest)
+            os.rename(os.path.join(root, name), dest)
 
         # A release may add a dependency, and the venv that just came across predates
         # it. Failing here is recoverable and rolling back is the right answer, because
@@ -237,7 +247,7 @@ def install(repo=REPO):
                                capture_output=True, text=True, timeout=600,
                                cwd=INSTALL_DIR)
             if p.returncode != 0:
-                _rollback(backup)
+                _rollback(moved, placed)
                 return {"ok": False,
                         "message": "The new version could not install what it needs, "
                                    "so the previous one was put back.",
@@ -275,39 +285,116 @@ def install(repo=REPO):
                 "restarted": how, "needs_restart": how is None,
                 "provisioned": provisioned}
     except Exception as e:
-        if swapped:
-            _rollback(backup)
+        if moved or placed:
+            # Any move at all, not just a finished swap. The old code only undid a swap
+            # that had completed, so one that failed half way left part of Riparr in
+            # .previous, said "Nothing was changed", and the retry deleted .previous.
+            stuck = _rollback(moved, placed)
+            if stuck:
+                return {"ok": False,
+                        "message": "The update failed and the previous version could "
+                                   "not all be put back. Don't restart the box before "
+                                   "repairing it with the Preparer.",
+                        "detail": "%s; still out of place: %s"
+                                  % (e, ", ".join(stuck))}
             return {"ok": False,
                     "message": "The update failed and the previous version was put "
                                "back.", "detail": str(e)}
         return {"ok": False, "message": "The update failed. Nothing was changed.",
                 "detail": str(e)}
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _rollback(backup):
-    """Put the previous contents back. Best effort, and better than leaving a hole.
+def _installed():
+    """The top-level entries of the running version: everything that is not ours."""
+    return [n for n in os.listdir(INSTALL_DIR)
+            if n not in (VENV_DIR, PREV_DIR)
+            and not n.startswith((OLD_PREFIX, STAGE_PREFIX))]
 
-    Contents, not the directory: the same permission that stops the swap renaming
-    /opt/riparr stops the rollback renaming it back. The virtualenv is untouched by
-    either direction, because it never left.
+
+def _park(name, backup, moved):
+    """Move one installed entry out of the way, and record where it went.
+
+    Renaming a directory into a *different* parent needs write permission on that
+    directory itself, because its ".." changes. So one folder inside /opt/riparr that
+    another account owns -- anything copied in as root, or kept its owner from the
+    machine it came from -- made the rename fail, and shutil.move quietly fell back to
+    copying the folder and deleting the original, which failed too:
+    "[Errno 13] Permission denied: '/opt/riparr/packaging'".
+
+    Renaming it within the same parent needs permission on the parent only, and the
+    parent is ours. So that is where a folder we do not own goes instead.
     """
+    src = os.path.join(INSTALL_DIR, name)
+    dest = os.path.join(backup, name)
     try:
-        if not os.path.isdir(backup):
-            return
-        keep = {VENV_DIR, PREV_DIR}
-        for name in os.listdir(INSTALL_DIR):
-            if name in keep:
-                continue
-            target = os.path.join(INSTALL_DIR, name)
-            shutil.rmtree(target, ignore_errors=True)
-            if os.path.exists(target):
-                os.remove(target)
-        for name in os.listdir(backup):
-            shutil.move(os.path.join(backup, name), os.path.join(INSTALL_DIR, name))
-    except Exception:
-        pass
+        os.rename(src, dest)
+    except PermissionError:
+        dest = os.path.join(INSTALL_DIR, _unused(name))
+        os.rename(src, dest)
+    moved.append((src, dest))
+
+
+def _unused(name):
+    n = 0
+    while True:
+        out = "%s%s%s" % (OLD_PREFIX, name.lstrip("."), "-%d" % n if n else "")
+        if not os.path.lexists(os.path.join(INSTALL_DIR, out)):
+            return out
+        n += 1
+
+
+def _discard(path):
+    """Delete a directory, or move it aside when something in it cannot be deleted."""
+    shutil.rmtree(path, ignore_errors=True)
+    if os.path.lexists(path):
+        os.rename(path, os.path.join(INSTALL_DIR, _unused(os.path.basename(path))))
+
+
+def _clear_leftovers():
+    """Remove what earlier updates parked or left half unpacked. Best effort.
+
+    Something another account owns may refuse to go. The root side takes ownership of
+    /opt/riparr back after every update (apply-system.sh), so the next pass gets it.
+    """
+    for name in os.listdir(INSTALL_DIR):
+        if name.startswith((OLD_PREFIX, STAGE_PREFIX)):
+            path = os.path.join(INSTALL_DIR, name)
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+def _rollback(moved, placed):
+    """Undo a swap from the record of what it did. Returns what could not be put back.
+
+    Renames only, in the other direction, so anything that could be moved out can be
+    moved back. The virtualenv is untouched by either direction, because it never left.
+    """
+    stuck = []
+    for dest in placed:
+        try:
+            if os.path.isdir(dest) and not os.path.islink(dest):
+                shutil.rmtree(dest)
+            elif os.path.lexists(dest):
+                os.remove(dest)
+        except OSError:
+            pass
+    for src, parked in reversed(moved):
+        try:
+            if os.path.lexists(src):
+                os.rename(src, os.path.join(INSTALL_DIR,
+                                            _unused(os.path.basename(src))))
+            os.rename(parked, src)
+        except OSError:
+            stuck.append(os.path.basename(src))
+    return stuck
 
 
 def _arrange_restart():

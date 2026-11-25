@@ -171,6 +171,75 @@ with tempfile.TemporaryDirectory() as d:
     finally:
         os.chmod(inst, 0o755)
 
+# ── a folder inside the install that another account owns ──
+#
+# 0.6.1 -> 0.7.2 on the reference box: "[Errno 13] Permission denied:
+# '/opt/riparr/packaging'". The folder belonged to another account, so it could not be
+# renamed into .previous; shutil.move fell back to copy-and-delete and failed. Everything
+# moved before it stayed moved, the message said "Nothing was changed", and a retry would
+# have deleted the only copy.
+#
+# Read-only stands in for foreign-owned, which needs root to set up: both refuse a rename
+# to a different parent. macOS refuses a same-parent rename of one too, so only Linux can
+# run the first half -- CI does, and the real thing was run on the box.
+def tree_of(inst):
+    return sorted(os.path.relpath(os.path.join(r, f), inst)
+                  for r, _, fs in os.walk(inst) for f in fs
+                  if ".previous" not in r and ".old-" not in r and ".staging-" not in r)
+
+
+if sys.platform == "linux" and os.geteuid() != 0:
+    print("a folder in the install that cannot be moved into .previous")
+    with tempfile.TemporaryDirectory() as d:
+        archive = make_release(d, "NEW")
+        inst = make_install_dir(d, "OLD")
+        os.chmod(os.path.join(inst, "server"), 0o555)
+        r = run_install(inst, archive)
+        check("the update still succeeds", r.get("ok"), str(r))
+        check("the new version is in place", marker_of(inst) == "NEW")
+        parked = [n for n in os.listdir(inst) if n.startswith(".old-")]
+        check("the old folder is parked beside it", parked == [".old-server"], str(parked))
+        archive2 = make_release(d, "NEWER", name="two")
+        r = run_install(inst, archive2)
+        check("and the next update succeeds over the leftovers", r.get("ok"), str(r))
+        check("with the newer version", marker_of(inst) == "NEWER")
+        for n in os.listdir(inst):
+            if n.startswith(".old-"):
+                os.chmod(os.path.join(inst, n), 0o755)
+
+print("a swap that fails half way through")
+for when in ("parking", "placing"):
+    with tempfile.TemporaryDirectory() as d:
+        archive = make_release(d, "NEW")
+        inst = make_install_dir(d, "OLD")
+        os.makedirs(os.path.join(inst, "packaging"))
+        open(os.path.join(inst, "packaging", "unit"), "w").write("x")
+        before = tree_of(inst)
+        real, seen = os.rename, []
+
+        def flaky(a, b):
+            out = os.path.dirname(a) == inst
+            if (out if when == "parking" else ".staging-" in a):
+                seen.append(a)
+                if len(seen) == 2:
+                    raise OSError(28, "No space left on device", b)
+            return real(a, b)
+        os.rename = flaky
+        try:
+            r = run_install(inst, archive)
+        finally:
+            os.rename = real
+        check("%s: reports failure" % when, not r.get("ok"), str(r))
+        check("%s: says the old version was put back" % when,
+              "put back" in (r.get("message") or ""), r.get("message", ""))
+        check("%s: every file is where it was" % when, tree_of(inst) == before,
+              str(set(before) ^ set(tree_of(inst))))
+        check("%s: nothing is left unpacked" % when,
+              not [n for n in os.listdir(inst) if n.startswith(".staging-")])
+        r = run_install(inst, archive)
+        check("%s: trying again works" % when,
+              r.get("ok") and marker_of(inst) == "NEW", str(r))
+
 # ── the update must not report a restart it did not arrange ──
 #
 # Three in-place updates in a row swapped the code correctly and restarted nothing,

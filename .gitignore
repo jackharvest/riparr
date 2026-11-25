@@ -52,3 +52,7 @@ tools/preparer/riparr.ico
 
 # debugfs built for the Windows Preparer by packaging/windows/build-debugfs.sh
 tools/preparer/debugfs/
+
+# ── CI scratch ────────────────────────────────────────────────────────
+flakes.txt
+undefined.txt

@@ -237,4 +237,15 @@ ExecStart=/bin/true'
     fi
 fi
 
+# ── everything in /opt/riparr belongs to the service ──
+# The web updater runs as that account. A folder in here that somebody else owns -- one
+# copied in by hand as root, or that kept its owner from the machine it came from -- is
+# one it cannot replace or clean up. -h so a symlink is re-owned, never followed.
+owner=$(stat -c '%U:%G' "$INSTALL_DIR" 2>/dev/null || echo root:root)
+if [ "${owner%%:*}" != root ] && [ "${owner%%:*}" != UNKNOWN ]; then
+    if [ -n "$(find "$INSTALL_DIR" -xdev ! -user "${owner%%:*}" -print -quit 2>/dev/null)" ]; then
+        chown -Rh "$owner" "$INSTALL_DIR" && say "Took back files in $INSTALL_DIR"
+    fi
+fi
+
 say "System units are up to date"
