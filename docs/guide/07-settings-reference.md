@@ -135,7 +135,8 @@ row says.
 
 ## Track selection
 
-Bigger effect on file size than anything else here.
+**The two language settings, forced subtitles and commentary tracks don't change a rip
+yet.** They're saved, but every rip keeps the tracks MakeMKV selects by default.
 
 | Setting | Default |
 |---|---|

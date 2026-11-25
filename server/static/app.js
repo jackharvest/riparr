@@ -2257,7 +2257,9 @@ settingsPages.ripping = async (s) => {
 
   <div class="section"><h2>Tracks
     <span class="grow"></span>
-    <span class="badge">Biggest effect on file size</span></h2><div>
+    <span class="badge warn">Not working yet</span></h2><div>
+    <p class="muted">These four settings are saved but don't change a rip yet. Every rip
+      keeps the tracks MakeMKV selects by default.</p>
     <label class="f"><span>Audio languages</span>
       <input data-set="audio_languages" data-list value="${esc((s.audio_languages || []).join(", "))}">
       <span class="help">Comma separated ISO codes, e.g. eng, fra.</span></label>

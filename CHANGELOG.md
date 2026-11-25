@@ -8,6 +8,36 @@ bother updating.
 
 ---
 
+## 0.7.2
+
+**Accented names reach your library intact.** Umlauts and other accented letters came
+out mangled in file names (`Ã¼` instead of `ü`), and the rip then failed its check.
+Thanks to Maxklos. Restart the box once after updating so its shares reconnect this
+way. Files that were already saved with a mangled name keep it.
+
+**Several discs waiting for a name no longer get mixed up.** With more than one waiting,
+the button on one disc could read another disc's boxes, so filing it failed with "Give it
+a season number" or "That order doesn't list the same episodes". Each disc now uses its
+own form. Thanks to Maxklos.
+
+**Folders can be typed with backslashes.** `Riparr\Movies` in a folder box is now read as
+`Riparr/Movies`. Before, the rip ran and then failed with "Invalid argument". If you
+already have one saved, updating fixes it.
+
+**A Wi-Fi name with a space no longer stops the installer.**
+
+**The Tracks settings say they don't work yet.** Audio languages, subtitle languages,
+forced subtitles and commentary are saved but don't change a rip. The page and the guide
+now say so.
+
+**Preparer:**
+
+- **Linux and Windows: updating from inside the app.** The download was deleted as the
+  window closed, before it could be installed. The old version can't fix itself, so
+  download 0.7.2 by hand this once.
+
+---
+
 ## 0.7.1
 
 **Shares on older NASes now connect.** Riparr used to try SMB 3.1.1, 3.0 and 2.1 when
