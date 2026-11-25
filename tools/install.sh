@@ -35,9 +35,14 @@ done
 
 PORT=9797
 if [ -n "$BOOT" ] && [ -f "$BOOT/riparr.conf" ]; then
-  # shellcheck disable=SC1090
-  . "$BOOT/riparr.conf"
-  PORT="${RIPARR_PORT:-9797}"
+  # Parsed, never sourced: `RIPARR_WIFI_SSID=Toucan Sandwich` run as shell executes
+  # `Sandwich`, and set -e then ends the install before it starts (#13). It also runs as
+  # root, from a partition anybody holding the card can edit. Same rule as conf_get in
+  # packaging/riparr-firstboot.sh: the value is everything after the first `=`. The port
+  # is the only line wanted here.
+  P=$(sed -n 's/^[[:space:]]*RIPARR_PORT=//p' "$BOOT/riparr.conf" 2>/dev/null \
+      | tail -n 1 | tr -d '\r' | sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/') || P=""
+  if [[ "$P" =~ ^[0-9]+$ ]]; then PORT="$P"; fi
 fi
 
 say "Installing Riparr"

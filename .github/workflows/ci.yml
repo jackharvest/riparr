@@ -251,6 +251,10 @@ jobs:
           fi
           echo "ok  no root helper can create riparr.db"
 
+      # Sourcing it ran a Wi-Fi name with a space in it as a command, as root.
+      - name: The installer reads riparr.conf without running it
+        run: python tools/install-conf.test.py
+
       - name: Shell parses
         run: |
           for f in $(git ls-files '*.sh'); do
