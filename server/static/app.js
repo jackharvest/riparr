@@ -2145,7 +2145,7 @@ function musicToolsLine(t) {
 /* Ripping — what comes off the disc, and how it gets out. */
 settingsPages.ripping = async (s) => {
   let tools = null, cdTools = null;
-  if (s.rip_mode === "backup") {
+  if (s.rip_mode === "backup" || s.rip_mode === "both") {
     try { tools = await api.get("/api/backup/tools"); } catch (e) { tools = null; }
   }
   let formats = [];
@@ -2201,14 +2201,31 @@ settingsPages.ripping = async (s) => {
         ${opt("main", "Main title (default)", s.rip_mode)}
         ${opt("all", "All titles", s.rip_mode)}
         ${opt("backup", "Full disc backup", s.rip_mode)}
+        ${opt("both", "Main title and full disc backup", s.rip_mode)}
       </select>
       <span class="help"><b>Full disc backup</b> keeps the whole disc instead of one
         film file: a <code>VIDEO_TS</code> or <code>BDMV</code> folder with the menus,
         extras and every audio track, decrypted, so it plays from the folder and can be
         made into an ISO later. It lands where the film would have, in
         <code>Movies/Film (Year)/</code>. Expect the size of the disc itself: around
-        4–8 GB for a DVD, 25–50 GB for a Blu-ray.</span>
+        4–8 GB for a DVD, 25–50 GB for a Blu-ray. <b>Main title and full disc backup</b>
+        makes both from one insert: the film or season first, then the whole disc, and
+        ejects at the end. It reads the disc twice, so allow about double the time.</span>
       <div class="btn-row" id="backup-tools">${backupToolsLine(tools)}</div></label>
+    <label class="f"><span>Save a full disc backup as</span>
+      <select data-set="backup_format">
+        ${opt("folder", "A folder (default)", s.backup_format || "folder")}
+        ${opt("iso", "One ISO file", s.backup_format || "folder")}
+      </select>
+      <span class="help">An ISO is one tidy file that opens in VLC, Kodi or Jellyfin with
+        its menus. It's packed after the disc is out, which needs room for the disc twice
+        over while it works and adds roughly the time of another copy.</span></label>
+    <label class="f"><span>Folder for backups made alongside an MKV</span>
+      <input data-set="backup_folder" value="${esc(s.backup_folder || "")}"
+             placeholder="Disc Backups">
+      <span class="help">On your films share, outside the films folder, so your media
+        server doesn't list the film twice. Only for <b>Main title and full disc
+        backup</b>.</span></label>
     <label class="f"><span>Minimum title length (seconds)</span>
       <input type="number" data-set="min_title_seconds" value="${s.min_title_seconds}">
       <span class="help">Filters menus and logo stings.</span></label>

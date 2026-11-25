@@ -59,6 +59,8 @@ DEFAULT_MIN_TITLE = 120
 # which may have changed since.
 BACKUP = "backup"
 MKV = "mkv"
+# Not an output but a `rip_mode`: one of each, from one insert. See _chain_backup.
+BOTH = "both"
 
 
 def _already_have(known, want=None):
@@ -70,10 +72,21 @@ def _already_have(known, want=None):
     """
     if not known or not known.get("ripped_at"):
         return False
-    if want is None:
-        want = BACKUP if (_settings() or {}).get("rip_mode") == BACKUP else MKV
     prior = db.get_job(known["job_id"]) if known.get("job_id") else None
-    return ((prior or {}).get("output") or MKV) == want
+    made = (prior or {}).get("output") or MKV
+    if want is None:
+        mode = (_settings() or {}).get("rip_mode")
+        if mode == BOTH:
+            # A film or season is done when it has both. Anything else (a data disc, a
+            # disc of music) only ever makes one thing.
+            have = _made(known.get("fingerprint")) | {made}
+            return {MKV, BACKUP} <= have or not have & {MKV, BACKUP}
+        want = BACKUP if mode == BACKUP else MKV
+    return made == want
+
+
+def _made(fingerprint):
+    return set(db.outputs_done(fingerprint))
 
 _wake = threading.Event()
 _send_wake = threading.Event()
@@ -331,9 +344,82 @@ def enqueue(force=False, expect=None, manual=False):
     # `_identify` reopens it for its own pass, which is a cache hit and costs seconds;
     # the two runs sum to the truth.
     db.stage_end(job_id)
-    db.update_job(job_id, state="queued", phase="Waiting to start")
+    fields = {}
+    if not force and _settings().get("rip_mode") == BOTH:
+        have = _made(fp)
+        if MKV in have and BACKUP not in have:
+            # The MKV is in the library already, so only the backup is missing.
+            mkv = db.job_for_fingerprint(fp, states=["done"])
+            fields = {"output": BACKUP, "beside": (mkv or {}).get("id"),
+                      "title": _disc_title(mkv) if mkv else None, "confirmed": 1}
+    db.update_job(job_id, state="queued", phase="Waiting to start", **fields)
     _wake.set()
     return job_id, None
+
+
+def _disc_title(job):
+    """What to call the whole disc a finished job came from."""
+    title = job.get("title") or job.get("disc_label") or "Unknown"
+    if (job.get("kind") or "movie") == "tv":
+        plan = db.episode_plan(job)
+        bits = [plan.get("series") or title]
+        if job.get("season") is not None:
+            bits.append("Season %d" % int(job["season"]))
+        if plan.get("disc"):
+            bits.append("Disc %d" % int(plan["disc"]))
+        elif job.get("disc_label"):
+            bits.append("(%s)" % pretty_label(job["disc_label"]))
+        return " ".join(bits)
+    return "%s (%s)" % (title, job["year"]) if job.get("year") else title
+
+
+def _chain_backup(job, s):
+    """Queue the whole-disc backup that goes with an MKV, while the disc is still in.
+
+    A second job rather than a second half of this one, so each keeps its own progress,
+    its own verification and its own retry: a backup that fails costs the backup, and
+    the film is already in the library. It reads the disc a second time. Making the MKV
+    out of the backup instead would read the disc once, but on this hardware the backup
+    is on the NAS by then, and reading it back while writing the MKV over the same Wi-Fi
+    is slower than the drive.
+    """
+    if (s.get("rip_mode") != BOTH or (job.get("output") or MKV) != MKV
+            or (job.get("kind") or "movie") not in ("movie", "tv")):
+        return False
+    fp = job.get("fingerprint") or ""
+    family = job.get("disc_family")
+    have = _made(fp)
+    if BACKUP in have and MKV not in have:
+        return False                 # the backup was made before; this was the missing half
+    d = next((x for x in P.optical_drives() if x.get("present")), None)
+    ok, why = BK.can_backup(family) if d else (False, "the disc was taken out")
+    if not ok:
+        row = db.get_job(job["id"]) or {}
+        db.update_job(job["id"], warning=" ".join(x for x in (
+            row.get("warning"), "The whole disc wasn't backed up as well, because %s. Put "
+            "it back in and Riparr makes just the backup." % why) if x))
+        log.warning("Job %d: no backup beside it: %s", job["id"], why)
+        return False
+    row = db.get_job(job["id"]) or job
+    bid = db.create_job(
+        title=_disc_title(row), disc_label=row.get("disc_label"), kind="movie",
+        fingerprint=fp, state="queued", phase="Waiting to start", output=BACKUP,
+        beside=job["id"], disc_family=family, confirmed=1,
+        manual=row.get("manual") or 0, disc_bytes=row.get("disc_bytes") or 0,
+        bytes_total=row.get("disc_bytes") or 0)
+    log.info("Job %d: keeping the disc in for its backup, job %d.", job["id"], bid)
+    _wake.set()
+    return True
+
+
+def _give_back(job, s):
+    """The disc has been read: eject it, unless its backup comes next. True if it stays."""
+    if job.get("_ejected"):
+        return False
+    if _chain_backup(job, s):
+        return True
+    P.eject()
+    return False
 
 
 # ─────────────────────────── "you already have this" ───────────────────────────
@@ -2459,10 +2545,13 @@ def _identify(job, s):
     # DVD tools have not installed yet), it is ripped as a film instead and the user is
     # told: on an auto-ripping box a refused disc is one somebody has to come back for.
     fallback = None
-    if s.get("rip_mode") == BACKUP:
+    if s.get("rip_mode") == BACKUP or job.get("output") == BACKUP:
         ok, why = BK.can_backup(disc_family(d))
         if ok:
             return _identify_backup(job, s, d)
+        if job.get("beside"):
+            # There is an MKV of this disc already; another is not a fallback.
+            raise RipFailed("The whole disc couldn't be backed up, because %s." % why)
         fallback = ("Rips are set to full-disc backup, but %s, so this disc was ripped "
                     "as a film file instead." % why)
         log.warning("Job %d: %s", job["id"], fallback)
@@ -3755,7 +3844,7 @@ def _verify(job, s, transport, name, local_path):
 def _finish(job, s, transport, name, local_path, sent_from_card=False):
     now = int(time.time())
     db.stage_end(job["id"], at=now)
-    if job.get("fingerprint"):
+    if job.get("fingerprint") and not job.get("beside"):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind=job.get("kind") or "movie",
                        ripped_at=now,
@@ -3776,7 +3865,7 @@ def _finish(job, s, transport, name, local_path, sent_from_card=False):
     # very likely already back on a shelf -- or replaced by the next one, which would
     # be spat out by an eject that thinks it is being helpful.
     if not sent_from_card:
-        P.eject()
+        _give_back(job, s)
     log.info("Job %d finished: %s", job["id"], transport.describe(name))
     try:
         sweep_incoming()
@@ -4027,7 +4116,7 @@ def _rip_backup(job, s, cancel_ev):
     """Copy the whole disc into the job's scratch folder. Returns the folder."""
     direct = use_direct(s, "movie")
     job_dir = _job_dir(job["id"], direct=direct, kind="movie")
-    if job.get("fingerprint"):
+    if job.get("fingerprint") and not job.get("beside"):
         db.record_disc(job["fingerprint"], label=job.get("disc_label"),
                        title=job.get("title"), kind="movie",
                        size_bytes=job.get("disc_bytes") or 0,
@@ -4052,6 +4141,10 @@ def _rip_backup(job, s, cancel_ev):
     except BK.BackupFailed as e:
         raise RipFailed(str(e))
 
+    if s.get("backup_format") == "iso":
+        said = _backup_to_iso(job, s, job_dir, folder, cancel_ev)
+        warning = " ".join(x for x in (warning, said) if x) or None
+
     size = BK.tree_size(folder)
     db.stage_end(job["id"])
     fields = {"local_path": folder, "bytes_ripped": size, "bytes_total": size,
@@ -4061,6 +4154,43 @@ def _rip_backup(job, s, cancel_ev):
         fields["warning"] = " ".join(w for w in (job.get("warning"), warning) if w)
     db.update_job(job["id"], **fields)
     return folder
+
+
+def _backup_to_iso(job, s, job_dir, folder, cancel_ev):
+    """Replace a finished backup folder's contents with one image of them. Returns a
+    warning when it was left as it is.
+
+    The image sits in the same folder the disc's files were in, so everything after this
+    -- sending, verifying, filing, the purge -- is the same tree of files it always was,
+    and it lands as `Film (Year)/Film (Year).iso`, which is where media servers look.
+    """
+    if not BK.iso_tool():
+        return ("Kept as a folder: the tool that makes disc images isn't installed yet "
+                "(Settings → Ripping).")
+    # Nothing more is needed from the disc, and packing 40 GB takes a while.
+    job["_ejected"] = True
+    P.eject()
+    name = sanitise(os.path.basename(_backup_name(job, s))) or "Disc"
+    out = os.path.join(job_dir, "image", name + ".iso")
+    total = BK.tree_size(folder)
+
+    def progress(done, eta):
+        db.update_job(job["id"], phase="Packing the disc into one ISO file",
+                      eta_seconds=eta, bytes_ripped=done,
+                      stage_pct=round((done / total) if total else 0, 4))
+
+    try:
+        BK.make_iso(folder, out, job.get("disc_family") or "bluray",
+                    job.get("disc_label"), cancel_ev, progress, log)
+    except BK.BackupCancelled:
+        raise Cancelled()
+    except BK.BackupFailed as e:
+        shutil.rmtree(os.path.join(job_dir, "image"), ignore_errors=True)
+        log.warning("Job %d: %s", job["id"], e)
+        return "Kept as a folder. %s" % e
+    shutil.rmtree(folder)
+    os.rename(os.path.join(job_dir, "image"), folder)
+    return None
 
 
 def _backup_name(job, s):
@@ -4073,6 +4203,8 @@ def _backup_name(job, s):
     rel = _render_template(s.get("movie_template") or _TEMPLATES["movie"][1],
                            title, job.get("_year"), source=job.get("disc_family"))
     base = os.path.dirname(rel) or os.path.splitext(rel)[0] or sanitise(title)
+    if job.get("beside"):
+        folder = db.clean_folder(s.get("backup_folder")) or "Disc Backups"
     return "%s/%s" % (folder, base) if folder else base
 
 
@@ -4907,8 +5039,10 @@ def _run_job(job):
         if job is None:
             return                       # needs_input, skipped, or ejected
 
-        mode, refusal = _plan_transfer(job.get("bytes_total") or 0,
-                                       job.get("kind") or "movie")
+        need = job.get("bytes_total") or 0
+        if job.get("output") == BACKUP and s.get("backup_format") == "iso":
+            need *= 2                        # the folder and its image, for a while
+        mode, refusal = _plan_transfer(need, job.get("kind") or "movie")
         if refusal:
             raise RipFailed(refusal)
         db.update_job(job["id"], mode=mode)
@@ -4939,7 +5073,7 @@ def _run_job(job):
         # moment mid-job where the tray is free.
         if job.get("kind") == "tv" and job.get("_plan"):
             base = _rip_season(job, s, cancel_ev)
-            P.eject()
+            _give_back(job, s)
             if job["_plan"].get("hold"):
                 _hold_after_rip(job)
                 return
@@ -4961,11 +5095,13 @@ def _run_job(job):
         if not use_direct(s, job.get("kind") or "movie"):
             db.update_job(job["id"], state="transferring", bytes_sent=0,
                           phase="Waiting to send to your library")
-            P.eject()
-            log.info("Job %d: disc read and ejected; sending in the background.",
-                     job["id"])
+            kept = _give_back(job, s)
+            log.info("Job %d: disc read%s; sending in the background.", job["id"],
+                     "" if kept else " and ejected")
             notify.send("ripped", title=job.get("title") or "A disc",
-                        body="Read and ejected. It's crossing to your library now — "
+                        body="Read. It's crossing to your library now, and the whole "
+                             "disc is being backed up next." if kept else
+                             "Read and ejected. It's crossing to your library now — "
                              "you can put the next disc in.")
             _send_wake.set()
             return

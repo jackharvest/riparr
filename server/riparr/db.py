@@ -111,6 +111,9 @@ ADDED_COLUMNS = {
         # as its own folder (rip.BACKUP). NULL on every job from before backups existed,
         # which all made an MKV, so readers treat NULL as mkv.
         ("output", "TEXT"),
+        # On a backup made alongside an MKV of the same disc, that MKV's job. Set, it
+        # files under `backup_folder` and leaves the disc's own record alone.
+        ("beside", "INTEGER"),
         # The year, kept apart from `title` because identify strips it out of the title.
         # A staged rip is filed by the sender, later, from the database -- and the year
         # used to live only in memory on the worker's copy of the job, so every staged
@@ -272,7 +275,15 @@ DEFAULTS = {
     "keep_forced_subtitles": True,
     "keep_commentary": True,
     "min_title_seconds": 120,
+    # main | all | backup | both. Both is the MKV and then the whole disc, from one
+    # insert: rip._chain_backup queues the second while the disc is still in.
     "rip_mode": "main",
+    # A full disc backup as the disc's own folder, or packed into one .iso.
+    "backup_format": "folder",
+    # Where the backup goes when there is an MKV of the same disc as well. Not the film's
+    # own folder: a media server that finds BDMV in a folder reads the whole folder as
+    # that disc, and hides the MKV beside it.
+    "backup_folder": "Disc Backups",
     # "auto" | "burst" | "stream" | "direct". Direct points MakeMKV at the library
     # share itself, so nothing is staged on the card. On the reference board that is
     # ~18 MB/s against the card's ~9.4, it removes the card as a size limit (a 22 GiB
@@ -1120,6 +1131,14 @@ def job_for_fingerprint(fingerprint, states=None):
     q += " ORDER BY id DESC LIMIT 1"
     row = conn().execute(q, args).fetchone()
     return dict(row) if row else None
+
+
+def outputs_done(fingerprint):
+    """What has been made from this disc and is in the library: {"mkv", "backup", ...}."""
+    if not fingerprint:
+        return frozenset()
+    return frozenset((r["output"] or "mkv") for r in conn().execute(
+        "SELECT output FROM jobs WHERE fingerprint=? AND state='done'", (fingerprint,)))
 
 
 def get_disc(fingerprint):

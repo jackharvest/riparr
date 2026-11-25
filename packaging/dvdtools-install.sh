@@ -69,6 +69,13 @@ if ! command -v dvdbackup >/dev/null 2>&1; then
   apt_install dvdbackup || fail "dvdbackup couldn't be installed."
 fi
 
+# Packs a backup into one .iso. Not worth failing the rest over: without it a backup is
+# kept as a folder, and the job says so.
+if ! command -v genisoimage >/dev/null 2>&1; then
+  say installing 0.25 "Installing genisoimage"
+  apt_install genisoimage || true
+fi
+
 if ! has_lib; then
   need=()
   for p in build-essential meson ninja-build pkg-config xz-utils curl ca-certificates; do

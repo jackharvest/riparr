@@ -87,6 +87,91 @@ def dvd_tools():
     return {"dvdbackup": has_tool, "libdvdcss": has_lib, "ready": has_tool and has_lib}
 
 
+def iso_tool():
+    """genisoimage, which packs a disc folder into one image. None when not installed.
+
+    It writes the UDF a disc player expects beside ISO 9660, and it is the one tool in
+    Debian that does both and takes files over 4 GB -- xorriso has no UDF at all.
+    """
+    if P.MOCK:
+        return "genisoimage" if os.environ.get("RIPARR_MOCK_ISO", "1") == "1" else None
+    return shutil.which("genisoimage") or shutil.which("mkisofs")
+
+
+def iso_label(label):
+    """A volume label ISO 9660 will take: 32 characters, A-Z 0-9 _."""
+    return (re.sub(r"[^A-Z0-9_]+", "_", (label or "").upper()).strip("_") or "DISC")[:32]
+
+
+def iso_command(folder, out, family, label):
+    """The command that packs `folder` (VIDEO_TS or BDMV at its root) into `out`.
+
+    -dvd-video lays a DVD's files out the way a DVD player needs them. A Blu-ray's film
+    is one 20-40 GB file, which ISO 9660 cannot describe: -allow-limited-size gives it
+    its true size in the UDF half, the half anything that plays a Blu-ray reads.
+    """
+    base = [iso_tool() or "genisoimage", "-quiet", "-V", iso_label(label), "-o", out]
+    if family == "dvd":
+        return base + ["-dvd-video", "-udf", folder]
+    return base + ["-udf", "-iso-level", "3", "-allow-limited-size", folder]
+
+
+def make_iso(folder, out, family, label, cancel_ev, on_progress=None, log=None):
+    """Pack a finished backup folder into one image. Returns its size."""
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    total = tree_size(folder)
+    if P.MOCK:
+        with open(out, "wb") as f:
+            for rel, _ in tree_files(folder):
+                with open(os.path.join(folder, *rel.split("/")), "rb") as src:
+                    shutil.copyfileobj(src, f)
+        return os.path.getsize(out)
+    cmd = iso_command(folder, out, family, label)
+    if log:
+        log.info("Making the disc image: %s", " ".join(cmd))
+    logpath = out + ".log"
+    started = time.time()
+    with open(logpath, "w") as err:
+        proc = subprocess.Popen(cmd, stdout=err, stderr=subprocess.STDOUT,
+                                stdin=subprocess.DEVNULL)
+    try:
+        while proc.poll() is None:
+            if cancel_ev.is_set():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise BackupCancelled()
+            time.sleep(POLL)
+            try:
+                done = os.path.getsize(out)
+            except OSError:
+                done = 0
+            if on_progress:
+                frac = min(0.99, done / total) if total else 0
+                el = time.time() - started
+                on_progress(done, int(el / frac - el) if frac > 0.02 else None)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    text = _read(logpath)
+    try:
+        os.remove(logpath)
+    except OSError:
+        pass
+    size = os.path.getsize(out) if os.path.exists(out) else 0
+    # Everything in the folder is in the image, so an image smaller than the folder is
+    # not one, whatever the exit status says.
+    if proc.returncode != 0 or size < total:
+        raise BackupFailed("The disc image couldn't be made: %s"
+                           % ((text.strip().splitlines() or ["it came out %d of %d bytes"
+                                                             % (size, total)])[-1]))
+    if log:
+        log.info("Disc image made in %ds: %s", int(time.time() - started), out)
+    return size
+
+
 def can_backup(family):
     """(True, "") if a disc of this family can be backed up right now, else (False, why).
 
@@ -133,7 +218,7 @@ def status():
     """Everything the settings page shows about DVD backups."""
     t = dvd_tools()
     st = _read_state() or {}
-    return {"ready": t["ready"], "dvdbackup": t["dvdbackup"],
+    return {"ready": t["ready"], "dvdbackup": t["dvdbackup"], "iso": bool(iso_tool()),
             "libdvdcss": t["libdvdcss"], "installing": installing(),
             "phase": st.get("phase"), "message": st.get("message"),
             "detail": st.get("detail"),
@@ -145,7 +230,7 @@ def request_install():
     every other privileged action: the request carries nothing the root side reads."""
     if P.MOCK:
         return {"ok": True, "message": "Off-hardware: nothing to install."}
-    if dvd_tools()["ready"]:
+    if dvd_tools()["ready"] and iso_tool():
         return {"ok": True, "message": "Already installed."}
     if installing():
         return {"ok": True, "message": "Already installing."}
@@ -178,7 +263,7 @@ def start():
     def later():
         time.sleep(90)
         try:
-            if dvd_tools()["ready"] or _read_state() is not None:
+            if (dvd_tools()["ready"] and iso_tool()) or _read_state() is not None:
                 return
             if bridge_available():
                 request_install()

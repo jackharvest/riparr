@@ -57,6 +57,10 @@ and you can turn it into an ISO later without the drive. Plex doesn't play disc 
 so stick with MKV if Plex is your player. A backup always files as a film, box sets
 included — it's the disc, not its episodes.
 
+With **One ISO file** the folder holds `Film (Year).iso` instead of `BDMV` or `VIDEO_TS`.
+With **Main title and full disc backup** the MKV goes where it always does and the backup
+goes under `Disc Backups/`, so your media server doesn't list the film twice.
+
 A backup never goes into a folder that already has something in it. If you already have
 `Blade Runner (1982)/` from an MKV rip, the backup goes beside it as
 `Blade Runner (1982) - Bluray/`.

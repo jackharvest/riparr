@@ -123,6 +123,14 @@ db.set("on_unknown_disc", "label")
 
 # ── the command lines ────────────────────────────────────────────────────────
 
+print("the image commands")
+dv = BK.iso_command("/a/disc", "/a/x.iso", "dvd", "Ein Film: Teil 2")
+check("a DVD is laid out as one", "-dvd-video" in dv and "-udf" in dv, True)
+check("with a label ISO 9660 takes", dv[dv.index("-V") + 1], "EIN_FILM_TEIL_2")
+bv = BK.iso_command("/a/disc", "/a/x.iso", "bluray", "")
+check("a Blu-ray's big files are allowed", "-allow-limited-size" in bv, True)
+check("a disc with no label still gets one", bv[bv.index("-V") + 1], "DISC")
+
 print("each family gets the tool that can actually back it up")
 dvd = BK.command("dvd", "/dev/sr0", "/x")
 check("a DVD goes through dvdbackup's mirror mode", dvd[:2], ["dvdbackup", "-M"])
@@ -333,6 +341,79 @@ check("every file, by relative path, with its size", got, {
     "VIDEO_TS/VTS_01_1.VOB": 1073709056})
 
 shutil.rmtree(_tmp, ignore_errors=True)
+# ── one ISO file ─────────────────────────────────────────────────────────────
+
+print("a backup as one ISO file")
+for how in ("burst", "direct"):
+    fresh_share()
+    db.set("rip_mode", "backup")
+    db.set("backup_format", "iso")
+    db.set("transfer_mode", how)
+    ij = run(new_job("THE_MATRIX", fp="fp-iso-" + how))
+    check("%s: finished" % how, ij["state"], "done")
+    check("%s: one file in the film's folder" % how, share_files(),
+          ["The Matrix/The Matrix.iso"])
+    check("%s: verified" % how, ij["verified_mode"], "quick")
+os.environ["RIPARR_MOCK_ISO"] = "0"
+fresh_share()
+ij = run(new_job("THE_MATRIX", fp="fp-iso-none"))
+check("without the tool it stays a folder", "The Matrix/BDMV/index.bdmv" in share_files(),
+      True)
+contains("and says so", ij["warning"], "Kept as a folder")
+os.environ["RIPARR_MOCK_ISO"] = "1"
+db.set("backup_format", "folder")
+
+# ── both, from one insert ────────────────────────────────────────────────────
+
+print("the MKV and the whole disc, from one insert")
+ejects = []
+real_eject = P.eject
+P.eject = lambda *a, **k: (ejects.append(1), real_eject(*a, **k))[1]
+for how in ("burst", "direct"):
+    fresh_share()
+    del ejects[:]
+    db.set("rip_mode", "both")
+    db.set("transfer_mode", how)
+    fp = "fp-both-" + how
+    first = new_job("THE_MATRIX", fp=fp)
+    first = run(first)
+    check("%s: the film is done" % how, (first["state"], first["output"] or "mkv"),
+          ("done", "mkv"))
+    check("%s: the disc stayed in" % how, len(ejects), 0)
+    second = db.next_queued_job()
+    check("%s: its backup is queued" % how,
+          (second or {}).get("output"), "backup")
+    check("%s: not a duplicate yet" % how, rip._already_have(db.get_disc(fp)), False)
+    second = run(second)
+    check("%s: the backup is done" % how, second["state"], "done")
+    check("%s: and the disc came out once" % how, len(ejects), 1)
+    check("%s: the MKV is in Movies, alone" % how,
+          [f for f in share_files() if not f.endswith(".mkv")], [])
+    check("%s: the backup is beside it" % how,
+          "The Matrix/BDMV/index.bdmv" in share_files("nas/Media/Disc Backups"), True)
+    check("%s: no warning about a taken folder" % how, second["warning"], None)
+    check("%s: now it is a duplicate" % how, rip._already_have(db.get_disc(fp)), True)
+    check("%s: nothing else is queued" % how, db.next_queued_job(), None)
+    check("%s: the disc is still remembered as its MKV" % how,
+          db.get_disc(fp)["job_id"], first["id"])
+    db.update_job(second["id"], state="failed")
+    check("%s: a failed backup is not a duplicate" % how,
+          rip._already_have(db.get_disc(fp)), False)
+
+print("a DVD that can't be backed up keeps its MKV")
+fresh_share()
+os.environ["RIPARR_MOCK_DISC"] = "dvd"
+os.environ["RIPARR_MOCK_DVDTOOLS"] = "0"
+del ejects[:]
+fj = run(new_job("ARRIVAL", fp="fp-both-dvd"))
+check("the film is done", fj["state"], "done")
+contains("the job says the backup wasn't made", fj["warning"], "wasn't backed up")
+check("and the disc came out", len(ejects), 1)
+check("with nothing queued", db.next_queued_job(), None)
+os.environ["RIPARR_MOCK_DVDTOOLS"] = "1"
+os.environ["RIPARR_MOCK_DISC"] = "bluray"
+P.eject = real_eject
+
 print()
 if failures:
     print("%d FAILED: %s" % (len(failures), ", ".join(failures)))
