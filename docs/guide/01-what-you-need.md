@@ -85,6 +85,34 @@ disc in a drive that cannot read it, Riparr says so and ejects it instead of fai
 minutes later. The same list lives in `server/riparr/drives.py`, so the advice above and
 the box's own diagnosis cannot disagree.
 
+### If you already have an external USB drive
+
+It works as it is. You don't need a case, the trigger board or the bucks: a board, a card
+and the drive are the whole box. Plug the board in, plug the drive into the board, and
+everything after that is the same.
+
+1. **Power the board** with a normal 5V USB-C supply, 3A if you have one.
+2. **Connect the drive to the board's other USB-C socket** (Orange Pi Zero 2W). The two
+   look identical and only one of them accepts a drive, so if nothing shows up, swap them.
+   A full-size Pi uses any of its USB-A sockets.
+3. **Use a USB-A adapter, not a straight C-to-C cable.** A small USB-C to USB-A adapter
+   (sold as "OTG"), with the drive's own USB-A cable in it, is the one that works.
+   Charge-only cables don't carry data and look exactly like a dead drive.
+4. **Check System → Status.** The drive appears within a few seconds, with no disc needed.
+
+**Power is what goes wrong.** A slim external drive takes all its power from the USB
+socket, and the moment a disc spins up it wants more than a small board can pass along.
+If the drive lights up and never appears, disappears when a disc goes in, or restarts the
+board:
+
+- put a **powered USB hub** between the board and the drive. That fixes nearly all of them;
+- if the drive came with a **second USB plug** or a power socket on the back, use it;
+- a full-size (5.25") external drive has its own power brick, and needs it plugged in.
+
+Any DVD or Blu-ray drive that a Mac or PC sees as an ordinary USB disc drive should work.
+For 4K discs the [list above](#the-list) still decides it: an external drive is one of
+those in a shell, and System → Status names the model inside.
+
 ### If your drive is SATA
 
 A drive that is natively USB plugs straight into the board and you can skip this whole

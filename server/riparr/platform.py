@@ -489,8 +489,10 @@ def optical_diagnosis():
     fixable = None
     if usb:
         hint = ("Something is attached to USB, but nothing is presenting itself as an "
-                "optical drive: %s. If that is the drive's adapter, it may need its own "
-                "power, or it may be in a mode that hides the disc."
+                "optical drive: %s. That is nearly always power: a USB drive or adapter "
+                "can wake up far enough to announce itself and no further. Put a powered "
+                "USB hub between the board and the drive, or use the drive's own power "
+                "supply or second USB plug if it has one."
                 % ", ".join("%s (%s)" % (d["name"], d["id"]) for d in usb))
     else:
         hint = ("Nothing at all is attached to the USB bus — not the drive, not "

@@ -83,6 +83,21 @@ disc.
 dashboard reports whether a drive is present at all. If it isn't, that's a cable or power
 problem inside the box.
 
+## My USB drive isn't found
+
+Open **System → Status**. What it says under the drive splits this in two:
+
+- **Nothing on the USB bus.** The cable or the socket. Swap the two USB-C sockets, use a
+  USB-C to USB-A adapter with the drive's own cable instead of a C-to-C cable, and try a
+  cable you know carries data.
+- **Something is there, but it isn't a drive.** Nearly always power. A bus-powered drive
+  can wake up far enough to announce itself and no further. Put a **powered USB hub**
+  between the board and the drive.
+
+[Setting up an external drive](01-what-you-need.md#if-you-already-have-an-external-usb-drive)
+has the rest. Still nothing: **System → Log Files → Download diagnostics**, and attach the
+file to an issue.
+
 ## The box resets when I insert a disc
 
 **Power problem, not software.** Optical drives pull a big surge when they spin up, and
