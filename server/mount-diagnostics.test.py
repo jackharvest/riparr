@@ -59,6 +59,8 @@ case "$MODE:$*" in
   linkstation:*vers=2.0*) exit 0 ;;
   linkstation:*) echo "mount error(112): Host is down"; exit 32 ;;
   badpw:*) echo "mount error(13): Permission denied"; exit 32 ;;
+  nocharset:*iocharset=utf8*) echo "mount error(79): Can not access a needed shared library"; exit 79 ;;
+  nocharset:*) exit 0 ;;
   gone:*) echo "mount error(115): Operation now in progress"; exit 32 ;;
 esac
 '''
@@ -113,6 +115,8 @@ def main():
               len(rows) == 3 and all(r[1] == "1" and r[3] == "2.0" for r in rows.values()),
               str(rows))
         check("2.0 is reached after 3.1.1, 3.0, 2.1", len(calls) == 12, "%d calls" % len(calls))
+        check("names are written as UTF-8", all("iocharset=utf8" in c for c in calls),
+              str(calls[:1]))
         check("password never on a command line",
               not any("pw-one-secret" in c for c in calls))
 
@@ -120,6 +124,11 @@ def main():
         check("wrong password: one try per share", len(calls) == 3, "%d calls" % len(calls))
         check("wrong password: error recorded",
               all(r[1] == "0" and "error(13)" in r[5] for r in rows.values()), str(rows))
+
+        out, calls, rows = run_script(tmp, "nocharset")
+        check("no utf8 in the kernel: mounts anyway, on the newest SMB",
+              len(rows) == 3 and all(r[1] == "1" and r[3] == "3.1.1" for r in rows.values()),
+              str(rows))
 
         out, calls, rows = run_script(tmp, "gone")
         check("unreachable: one try per share", len(calls) == 3, "%d calls" % len(calls))
@@ -146,6 +155,15 @@ def main():
 
         print("diagnostics")
         from riparr import db, diagnostics as D
+        # A Windows user types Windows slashes. Stored as typed, the mount refused the
+        # folder with [Errno 22] at the end of a rip (#31); cleaned on read, so a box
+        # that already stored one is fixed by updating.
+        for typed, want in (("Riparr\\Riparr Dumps\\Movies", "Riparr/Riparr Dumps/Movies"),
+                            ("\\Movies\\", "Movies"), ("/Movies//4K/", "Movies/4K"),
+                            ("", ""), (None, ""), ("Movies", "Movies")):
+            db.set("movie_folder", typed)
+            check("folder %r" % (typed,), db.destination("movie")[1] == want,
+                  repr(db.destination("movie")[1]))
         db.set("makemkv_key", "T-" + "x" * 64)
         db.set("discord_webhook", "https://discord.com/api/webhooks/1/TOKENVALUE123")
         name, data = D.build()

@@ -833,6 +833,9 @@ def get_settings(user=Depends(require_user)):
     return _redact(db.all_settings())
 
 
+FOLDER_SETTINGS = {folder_key for _, folder_key, _ in db.KINDS.values()}
+
+
 @app.put("/api/settings")
 async def put_settings(request: Request, user=Depends(require_user)):
     body = await request.json()
@@ -842,6 +845,11 @@ async def put_settings(request: Request, user=Depends(require_user)):
     for k, v in body.items():
         if k in SECRET_SETTINGS and v == SECRET_MASK:
             continue                      # unchanged; do not overwrite with the mask
+        if k in FOLDER_SETTINGS and isinstance(v, str):
+            v = db.clean_folder(v)
+            if ".." in v.split("/"):
+                raise HTTPException(status_code=400,
+                                    detail="A folder path can't contain '..'.")
         db.set(k, v)
 
     # The MakeMKV key is not an ordinary setting: storing it registers nothing. The

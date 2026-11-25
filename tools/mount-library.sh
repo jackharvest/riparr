@@ -226,7 +226,11 @@ PYEOF
   # character per byte. "Ein Münchner im Himmel" reached the NAS as "Ein MÃ¼nchner im
   # Himmel", and verification -- which goes through smbclient, in UTF-8 -- then could
   # not find the file it had just written and failed the rip.
-  BASE="credentials=$CRED,uid=$UID_R,gid=$GID_R,file_mode=0664,dir_mode=0775,soft,noatime,iocharset=utf8"
+  BASE="credentials=$CRED,uid=$UID_R,gid=$GID_R,file_mode=0664,dir_mode=0775,soft,noatime"
+  # With a way back: a kernel that has neither utf8 built in nor nls_utf8 to load refuses
+  # the whole mount over this one option, and a share that worked yesterday must not stop
+  # working over a name nobody on that box has typed.
+  CS=",iocharset=utf8"
   ADDR=$(resolve "$HOST")
   if [ -z "$ADDR" ]; then
     log "could not find $HOST by DNS or by network name — rips bound for it will stage on the card instead"
@@ -244,9 +248,18 @@ PYEOF
   DONE=0; ERR=""; ERRS=""; USED=""; FIRST=""
   for VERS in 3.1.1 3.0 2.1 2.0 1.0; do
     # Keep the error: thrown away, every failure here looked like a NAS that was off.
-    if ERR=$(mount -t cifs "//$HOST/$SHARE" "$TARGET" -o "$BASE,vers=$VERS" 2>&1); then
+    if ERR=$(mount -t cifs "//$HOST/$SHARE" "$TARGET" -o "$BASE$CS,vers=$VERS" 2>&1); then
       DONE=1; USED=$VERS; break
     fi
+    # error(79) is ELIBACC, which is how cifs says it could not load the character set.
+    case "$ERR" in
+      *"error(79)"*)
+        log "this kernel has no utf8 character set; mounting //$HOST/$SHARE without it, so accented names may come out wrong"
+        CS=""
+        if ERR=$(mount -t cifs "//$HOST/$SHARE" "$TARGET" -o "$BASE$CS,vers=$VERS" 2>&1); then
+          DONE=1; USED=$VERS; break
+        fi ;;
+    esac
     ERR=${ERR:-no error given}
     ERRS+="SMB $VERS: ${ERR//$'\n'/ }; "
     # The newest version's answer is the one to report: what SMB 1 says on a kernel

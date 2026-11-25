@@ -617,12 +617,24 @@ KINDS = {
 }
 
 
+def clean_folder(v):
+    """A typed folder as forward-slash segments: `Riparr\\Riparr Dumps\\Movies` from a
+    Windows user is three folders, not one name with backslashes in it. Through the
+    mount that name is an invalid one -- [Errno 22] at the very end of a rip (#31).
+    Share paths were always cleaned (shares.normalise); these never were.
+
+    Applied on read as well as on save, so a box that already stored one is fixed by
+    updating rather than by retyping.
+    """
+    parts = [p.strip() for p in str(v or "").replace("\\", "/").split("/")]
+    return "/".join(p for p in parts if p and p != ".")
+
+
 def destination(kind="movie"):
     """(share, folder) for this kind of disc. Folder may be empty; share may be None."""
     share_key, folder_key, _ = KINDS.get(kind) or KINDS["movie"]
     share = share_by_id(get(share_key)) or default_share()
-    folder = (get(folder_key) or "").strip("/")
-    return share, folder
+    return share, clean_folder(get(folder_key))
 
 
 def destinations():
